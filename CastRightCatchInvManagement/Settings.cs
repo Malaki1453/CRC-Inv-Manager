@@ -24,14 +24,35 @@ namespace CastRightCatchInvManagement
 
             lblTitle.Visible = false;
 
+            var introRow = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 44,
+                BackColor = Theme.Cream
+            };
+            var help = new Button
+            {
+                Text = "",
+                Size = new Size(36, 36),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                TabStop = false,
+                AccessibleName = "Controls"
+            };
+            Theme.StyleGoldButton(help);
+            help.Paint += (_, e) => ControlsGlyph.Paint(e.Graphics, help.ClientRectangle, Theme.NavyDark);
+            new ToolTip { ShowAlways = true }.SetToolTip(help, "Controls");
+            help.Click += (_, _) => Navigator.GoTo(AppPage.Help);
             var intro = new Label
             {
                 Text = "These details print on invoices. A data folder is required before the rest of the workspace will open.",
                 Font = Theme.Body,
                 ForeColor = Theme.Muted,
-                Dock = DockStyle.Top,
-                Height = 36
+                Dock = DockStyle.Fill,
+                Padding = new Padding(0, 8, 48, 0)
             };
+            introRow.Controls.Add(intro);
+            introRow.Controls.Add(help);
+            introRow.Resize += (_, _) => help.Location = new Point(Math.Max(8, introRow.Width - 40), 4);
 
             var company = new CardPanel { Dock = DockStyle.Top, Height = 300 };
             LayoutCompanyCard(company);
@@ -40,16 +61,26 @@ namespace CastRightCatchInvManagement
             LayoutDataCard(data);
 
             var spacer = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
+            var productNumber = new CardPanel { Dock = DockStyle.Top, Height = 168 };
+            LayoutProductNumberCard(productNumber);
+            var spacerPn = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
+            var salesOrder = new CardPanel { Dock = DockStyle.Top, Height = 168 };
+            LayoutSalesOrderCard(salesOrder);
+            var spacerSo = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
             var user = new CardPanel { Dock = DockStyle.Top, Height = 128 };
             LayoutUserCard(user);
             var spacerUser = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
 
             Controls.Add(user);
             Controls.Add(spacerUser);
+            Controls.Add(productNumber);
+            Controls.Add(spacerPn);
+            Controls.Add(salesOrder);
+            Controls.Add(spacerSo);
             Controls.Add(data);
             Controls.Add(spacer);
             Controls.Add(company);
-            Controls.Add(intro);
+            Controls.Add(introRow);
         }
 
         private void LayoutCompanyCard(CardPanel card)
@@ -136,6 +167,185 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        private TextBox _soPattern = null!;
+        private TextBox _soStart = null!;
+        private Label _soPreview = null!;
+        private TextBox _productPattern = null!;
+        private TextBox _productStart = null!;
+        private Label _productPreview = null!;
+
+        private void LayoutProductNumberCard(CardPanel card)
+        {
+            var heading = new Label
+            {
+                Text = "Product numbers",
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 14),
+                AutoSize = true
+            };
+            card.Controls.Add(heading);
+
+            var hint = new Label
+            {
+                Text = "Same as sales orders. CRC#### starts at CRC0001. CRC26-#### and start 10001 gives CRC26-10001. Leave blank to keep CRC26-10001, CRC26-10002, …",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 42),
+                AutoSize = true
+            };
+            card.Controls.Add(hint);
+
+            var lblPattern = new Label { Text = "PATTERN" };
+            Theme.StyleFieldLabel(lblPattern);
+            _productPattern = new TextBox
+            {
+                Text = AppState.ProductNumberPattern,
+                PlaceholderText = "CRC####"
+            };
+            Theme.StyleField(_productPattern);
+            PlaceField(card, lblPattern, _productPattern, 24, 64, 280);
+
+            var lblStart = new Label { Text = "START" };
+            Theme.StyleFieldLabel(lblStart);
+            _productStart = new TextBox
+            {
+                Text = AppState.ProductNumberStart,
+                PlaceholderText = "1"
+            };
+            Theme.StyleField(_productStart);
+            PlaceField(card, lblStart, _productStart, 324, 64, 140);
+
+            _productPreview = new Label
+            {
+                AutoSize = true,
+                Font = Theme.BodyBold,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 122)
+            };
+            card.Controls.Add(_productPreview);
+
+            void SaveAndPreview()
+            {
+                AppState.ProductNumberPattern = _productPattern.Text.Trim();
+                AppState.ProductNumberStart = _productStart.Text.Trim();
+                AppLock.SaveSettings();
+                UpdateProductNumberPreview();
+            }
+
+            _productPattern.Leave += (_, _) => SaveAndPreview();
+            _productStart.Leave += (_, _) => SaveAndPreview();
+            _productPattern.TextChanged += (_, _) => UpdateProductNumberPreview();
+            _productStart.TextChanged += (_, _) => UpdateProductNumberPreview();
+            UpdateProductNumberPreview();
+        }
+
+        private void UpdateProductNumberPreview()
+        {
+            if (_productPreview == null)
+                return;
+
+            string savedPattern = AppState.ProductNumberPattern;
+            string savedStart = AppState.ProductNumberStart;
+            AppState.ProductNumberPattern = _productPattern.Text.Trim();
+            AppState.ProductNumberStart = _productStart.Text.Trim();
+            try
+            {
+                _productPreview.Text = "Next product number:  " + DataFiles.PreviewProductNumber();
+            }
+            finally
+            {
+                AppState.ProductNumberPattern = savedPattern;
+                AppState.ProductNumberStart = savedStart;
+            }
+        }
+
+        private void LayoutSalesOrderCard(CardPanel card)
+        {
+            var heading = new Label
+            {
+                Text = "Sales order numbers",
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 14),
+                AutoSize = true
+            };
+            card.Controls.Add(heading);
+
+            var hint = new Label
+            {
+                Text = "Use # for digits. CRC#### starts at CRC0001. Add a start of 1000 to get CRC1000. Leave the pattern blank to keep 10001, 10002, …",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 42),
+                AutoSize = true
+            };
+            card.Controls.Add(hint);
+
+            var lblPattern = new Label { Text = "PATTERN" };
+            Theme.StyleFieldLabel(lblPattern);
+            _soPattern = new TextBox
+            {
+                Text = AppState.SalesOrderPattern,
+                PlaceholderText = "CRC####"
+            };
+            Theme.StyleField(_soPattern);
+            PlaceField(card, lblPattern, _soPattern, 24, 64, 280);
+
+            var lblStart = new Label { Text = "START" };
+            Theme.StyleFieldLabel(lblStart);
+            _soStart = new TextBox
+            {
+                Text = AppState.SalesOrderStart,
+                PlaceholderText = "1"
+            };
+            Theme.StyleField(_soStart);
+            PlaceField(card, lblStart, _soStart, 324, 64, 140);
+
+            _soPreview = new Label
+            {
+                AutoSize = true,
+                Font = Theme.BodyBold,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 122)
+            };
+            card.Controls.Add(_soPreview);
+
+            void SaveAndPreview()
+            {
+                AppState.SalesOrderPattern = _soPattern.Text.Trim();
+                AppState.SalesOrderStart = _soStart.Text.Trim();
+                AppLock.SaveSettings();
+                UpdateSalesOrderPreview();
+            }
+
+            _soPattern.Leave += (_, _) => SaveAndPreview();
+            _soStart.Leave += (_, _) => SaveAndPreview();
+            _soPattern.TextChanged += (_, _) => UpdateSalesOrderPreview();
+            _soStart.TextChanged += (_, _) => UpdateSalesOrderPreview();
+            UpdateSalesOrderPreview();
+        }
+
+        private void UpdateSalesOrderPreview()
+        {
+            if (_soPreview == null)
+                return;
+
+            string savedPattern = AppState.SalesOrderPattern;
+            string savedStart = AppState.SalesOrderStart;
+            AppState.SalesOrderPattern = _soPattern.Text.Trim();
+            AppState.SalesOrderStart = _soStart.Text.Trim();
+            try
+            {
+                _soPreview.Text = "Next sales order:  " + DataFiles.PreviewSalesOrderNumber();
+            }
+            finally
+            {
+                AppState.SalesOrderPattern = savedPattern;
+                AppState.SalesOrderStart = savedStart;
+            }
+        }
+
         private void LayoutUserCard(CardPanel card)
         {
             var heading = new Label
@@ -203,6 +413,18 @@ namespace CastRightCatchInvManagement
             txtFolderPath.Text = AppLock.HasFolder()
                 ? AppState.InventoryFolder
                 : "No folder selected — click Change Folder";
+
+            if (_soPattern != null)
+                _soPattern.Text = AppState.SalesOrderPattern;
+            if (_soStart != null)
+                _soStart.Text = AppState.SalesOrderStart;
+            UpdateSalesOrderPreview();
+
+            if (_productPattern != null)
+                _productPattern.Text = AppState.ProductNumberPattern;
+            if (_productStart != null)
+                _productStart.Text = AppState.ProductNumberStart;
+            UpdateProductNumberPreview();
         }
 
         private void ApplyLockState()
@@ -215,6 +437,14 @@ namespace CastRightCatchInvManagement
             txtEmail.Enabled = ready;
             txtEIN.Enabled = ready;
             txtPaymentTerms.Enabled = ready;
+            if (_soPattern != null)
+                _soPattern.Enabled = ready;
+            if (_soStart != null)
+                _soStart.Enabled = ready;
+            if (_productPattern != null)
+                _productPattern.Enabled = ready;
+            if (_productStart != null)
+                _productStart.Enabled = ready;
 
             txtFolderPath.ReadOnly = true;
             txtFolderPath.BackColor = ready ? Theme.Paper : Theme.DangerFill;

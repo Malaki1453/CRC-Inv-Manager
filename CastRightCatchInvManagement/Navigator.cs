@@ -22,7 +22,8 @@ namespace CastRightCatchInvManagement
             [AppPage.Credits]       = () => new Credits(),
             [AppPage.Banking]       = () => new Banking(),
             [AppPage.Reports]       = () => new Reports(),
-            [AppPage.Settings]      = () => new Settings()
+            [AppPage.Settings]      = () => new Settings(),
+            [AppPage.Help]          = () => new Help()
         };
 
         public static event Action<AppPage>? PageChanged;
@@ -52,6 +53,17 @@ namespace CastRightCatchInvManagement
         public static bool IsRegistered(AppPage page)
         {
             return _instances.TryGetValue(page, out var form) && form != null && !form.IsDisposed;
+        }
+
+        public static bool IsOpen(AppPage page)
+        {
+            foreach (var workspace in AllWorkspaces())
+            {
+                if (workspace.IsAlive && workspace.CurrentPage == page)
+                    return true;
+            }
+
+            return false;
         }
 
         public static T Ensure<T>(AppPage page) where T : Form

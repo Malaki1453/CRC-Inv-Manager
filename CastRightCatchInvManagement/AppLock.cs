@@ -43,6 +43,10 @@ namespace CastRightCatchInvManagement
                 AppState.CompanyEmail = settings.CompanyEmail ?? "";
                 AppState.Ein = settings.Ein ?? "";
                 AppState.PaymentTerms = settings.PaymentTerms ?? "";
+                AppState.SalesOrderPattern = settings.SalesOrderPattern ?? "";
+                AppState.SalesOrderStart = settings.SalesOrderStart ?? "";
+                AppState.ProductNumberPattern = settings.ProductNumberPattern ?? "";
+                AppState.ProductNumberStart = settings.ProductNumberStart ?? "";
             }
             catch
             {
@@ -71,7 +75,11 @@ namespace CastRightCatchInvManagement
                 Phone = AppState.Phone,
                 CompanyEmail = AppState.CompanyEmail,
                 Ein = AppState.Ein,
-                PaymentTerms = AppState.PaymentTerms
+                PaymentTerms = AppState.PaymentTerms,
+                SalesOrderPattern = AppState.SalesOrderPattern,
+                SalesOrderStart = AppState.SalesOrderStart,
+                ProductNumberPattern = AppState.ProductNumberPattern,
+                ProductNumberStart = AppState.ProductNumberStart
             };
 
             string json = JsonSerializer.Serialize(settings, new JsonSerializerOptions
@@ -116,6 +124,10 @@ namespace CastRightCatchInvManagement
         public string? CompanyEmail { get; set; }
         public string? Ein { get; set; }
         public string? PaymentTerms { get; set; }
+        public string? SalesOrderPattern { get; set; }
+        public string? SalesOrderStart { get; set; }
+        public string? ProductNumberPattern { get; set; }
+        public string? ProductNumberStart { get; set; }
     }
 
     public static class AppState
@@ -129,5 +141,9 @@ namespace CastRightCatchInvManagement
         public static string CompanyEmail { get; set; } = "";
         public static string Ein { get; set; } = "";
         public static string PaymentTerms { get; set; } = "";
+        public static string SalesOrderPattern { get; set; } = "";
+        public static string SalesOrderStart { get; set; } = "";
+        public static string ProductNumberPattern { get; set; } = "";
+        public static string ProductNumberStart { get; set; } = "";
     }
 }

@@ -16,6 +16,7 @@ namespace CastRightCatchInvManagement
         private readonly DataGridView _grid;
         private readonly ColumnJumpPicker? _jump;
         private readonly Dictionary<int, TextBox> _boxes = new();
+        public string? FileBaseName { get; set; }
         private int _openColumn = -1;
         private int _sortColumn = -1;
         private ListSortDirection _sortDirection = ListSortDirection.Ascending;
@@ -44,6 +45,8 @@ namespace CastRightCatchInvManagement
 
             foreach (DataGridViewColumn col in _grid.Columns)
             {
+                if (Theme.IsAddColumn(col))
+                    continue;
                 col.SortMode = DataGridViewColumnSortMode.Programmatic;
                 var box = CreateBox(col.Index);
                 _boxes[col.Index] = box;
@@ -108,7 +111,11 @@ namespace CastRightCatchInvManagement
             _grid.ColumnHeaderMouseClick += OnHeaderClick;
             _grid.ColumnWidthChanged += (_, _) => LayoutBoxes();
             _grid.Scroll += (_, _) => LayoutBoxes();
-            _grid.SizeChanged += (_, _) => LayoutBoxes();
+            _grid.SizeChanged += (_, _) =>
+            {
+                Theme.StretchVisibleColumns(_grid);
+                LayoutBoxes();
+            };
             if (_jump != null)
                 _jump.ColumnChosen += OnJumpChosen;
         }
@@ -153,10 +160,23 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        public void NotifyColumnsChanged()
+        {
+            LayoutBoxes();
+            RefreshJump();
+            _grid.Refresh();
+        }
+
         private void OnHeaderClick(object? sender, DataGridViewCellMouseEventArgs e)
         {
-            if (e.ColumnIndex < 0)
+            if (e.Button != MouseButtons.Left || e.ColumnIndex < 0)
                 return;
+
+            if (Theme.IsAddColumn(_grid.Columns[e.ColumnIndex]))
+            {
+                UiStyle.ShowAddColumnMenu(_grid);
+                return;
+            }
 
             if (e.Y > HeaderHeight)
                 return;
@@ -179,7 +199,7 @@ namespace CastRightCatchInvManagement
             var headers = _grid.Columns
                 .Cast<DataGridViewColumn>()
                 .OrderBy(c => c.DisplayIndex)
-                .Where(c => c.Visible)
+                .Where(c => c.Visible && !Theme.IsAddColumn(c))
                 .Select(c => c.HeaderText)
                 .ToList();
             _jump.SetColumns(headers);
@@ -333,6 +353,18 @@ namespace CastRightCatchInvManagement
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
             Theme.PaintHeaderBackground(g, e.CellBounds);
+
+            if (Theme.IsAddColumn(_grid.Columns[e.ColumnIndex]))
+            {
+                TextRenderer.DrawText(
+                    g,
+                    "+",
+                    Theme.BodyBold,
+                    e.CellBounds,
+                    Theme.GoldLight,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+                return;
+            }
 
             var titleBounds = new Rectangle(
                 e.CellBounds.X,

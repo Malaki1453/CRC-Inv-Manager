@@ -17,6 +17,7 @@
         Credits,
         Banking,
         Reports,
-        Settings
+        Settings,
+        Help
     }
 }

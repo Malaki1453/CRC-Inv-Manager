@@ -13,9 +13,10 @@ namespace CastRightCatchInvManagement
                 dataGridView1,
                 "Add Product",
                 (_, _) => AddSale.OpenNew());
-            UiStyle.BindRowEdit(dataGridView1, AddSale.OpenEdit);
+            UiStyle.BindRowEdit(dataGridView1, AddSale.OpenEdit, "Sale");
             DataFiles.DataChanged += LoadTable;
             dataGridView1.CellDoubleClick += dataGridView1_CellDoubleClick;
+            dataGridView1.CellMouseClick += dataGridView1_CellMouseClick;
             dataGridView1.CellMouseDown += dataGridView1_CellMouseDown;
             LoadTable();
         }
@@ -28,8 +29,20 @@ namespace CastRightCatchInvManagement
         {
             if (e.RowIndex < 0)
                 return;
+            if ((ModifierKeys & Keys.Shift) == Keys.Shift)
+                return;
 
-            AddSaleToDocument(e.RowIndex, invoice: true);
+            AddSaleToDocument(e.RowIndex, invoice: true, stayOnPage: Navigator.IsOpen(AppPage.InvoicePdf));
+        }
+
+        private void dataGridView1_CellMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || e.RowIndex < 0)
+                return;
+            if ((ModifierKeys & Keys.Shift) != Keys.Shift)
+                return;
+
+            AddSaleToDocument(e.RowIndex, invoice: true, stayOnPage: true);
         }
 
         private void dataGridView1_CellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
@@ -40,7 +53,7 @@ namespace CastRightCatchInvManagement
             AddSaleToDocument(e.RowIndex, invoice: false);
         }
 
-        private void AddSaleToDocument(int rowIndex, bool invoice)
+        private void AddSaleToDocument(int rowIndex, bool invoice, bool stayOnPage = false)
         {
             var record = DataFiles.GridRowToRecord(dataGridView1, rowIndex);
             string po = DataFiles.SalePo(record);
@@ -50,8 +63,12 @@ namespace CastRightCatchInvManagement
 
             if (!invoice && so.Length > 0)
             {
-                DataFiles.OpenStoredSalesOrder(so);
-                return;
+                string? existing = DataFiles.FindStoredSalesOrder(so);
+                if (existing != null)
+                {
+                    DataFiles.OpenPdf(existing);
+                    return;
+                }
             }
 
             var prefill = new InvoiceSalePrefill
@@ -66,7 +83,16 @@ namespace CastRightCatchInvManagement
             if (invoice)
             {
                 var form = Navigator.Ensure<InvoicePdf>(AppPage.InvoicePdf);
-                form.TryAddSale(prefill, ShowAddResultSafe);
+                form.TryAddSale(prefill, error =>
+                {
+                    if (error != null || stayOnPage)
+                    {
+                        ShowAddResultSafe(error);
+                        return;
+                    }
+
+                    Navigator.GoTo(AppPage.InvoicePdf);
+                });
                 return;
             }
 

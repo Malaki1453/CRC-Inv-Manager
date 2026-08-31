@@ -437,11 +437,23 @@ namespace CastRightCatchInvManagement
         public string ShipTo { get; set; } = "";
         public decimal Discount { get; set; }
         public decimal Freight { get; set; }
-        public decimal Tax { get; set; }
+        public decimal TaxRate { get; set; }
+        public bool TaxIsPercent { get; set; }
         public List<InvoiceLine> Lines { get; set; } = new();
 
         public decimal TotalWeight => Lines.Sum(line => InvoiceLineRow.ParseNumber(line.Weight));
         public decimal SubTotal => Lines.Sum(line => line.Amount);
+        public decimal Tax
+        {
+            get
+            {
+                if (!TaxIsPercent)
+                    return TaxRate;
+
+                decimal taxable = Math.Max(0m, SubTotal - Discount);
+                return Math.Round(taxable * TaxRate / 100m, 2, MidpointRounding.AwayFromZero);
+            }
+        }
         public decimal InvoiceTotal => SubTotal - Discount + Freight + Tax;
     }
 }

@@ -43,6 +43,19 @@ namespace CastRightCatchInvManagement
             RefreshLines();
         }
 
+        internal void BeginFromSale(InvoiceSalePrefill prefill, Action<string?> done)
+        {
+            if (OrderHasCustomer() && !PrefillMatchesCustomer(prefill))
+                ResetDraft();
+            TryAddSale(prefill, done);
+        }
+
+        internal string? CreateOrOpenPdf()
+        {
+            CreateSalesOrder();
+            return _soNo.Text.Trim();
+        }
+
         internal void TryAddSale(InvoiceSalePrefill prefill, Action<string?> done)
         {
             if (_lines.Count == 0)
@@ -53,6 +66,9 @@ namespace CastRightCatchInvManagement
                 done("Customer does not match. Please remove old data or pick a different sale.");
                 return;
             }
+
+            if (prefill.So.Length > 0)
+                _soNo.Text = prefill.So;
 
             string key = prefill.Po.Length > 0 ? prefill.Po : prefill.So;
             string code = OrderHasCustomer() ? CurrentCustomerCode() : prefill.CustomerCode;
@@ -98,7 +114,8 @@ namespace CastRightCatchInvManagement
             _customer = AddCustomer(card, "CUSTOMER", 144, 36, 250);
             _contact = AddField(card, "CONTACT", 408, 36, 180);
 
-            _address = AddMultiline(card, "ADDRESS", 20, 86, 250, 48);
+            _address = AddMultiline(card, "SHIP TO", 20, 86, 250, 48);
+            _address.PlaceholderText = "Not found, please input manually";
             _email = AddField(card, "EMAIL", 284, 86, 200);
             _contactPhone = AddField(card, "PHONE", 498, 86, 140);
             _customerPhone = AddField(card, "CUSTOMER PHONE", 284, 136, 140);
@@ -617,7 +634,7 @@ namespace CastRightCatchInvManagement
             _freightCo.Text = "";
             _freightTerms.Text = "";
             RefreshLookups();
-            _soNo.Text = DataFiles.NextNumber(DataFiles.Sales, "SO #", 10001);
+            _soNo.Text = DataFiles.NextSalesOrderNumber();
             _orderDate.Value = DateTime.Today;
             _releaseDate.Value = DateTime.Today;
             AddLine(lockPrevious: false);
@@ -724,7 +741,10 @@ namespace CastRightCatchInvManagement
             if (code.Length > 0)
                 _customerCode.Text = code;
             Put(_contact, contact);
-            Put(_address, address);
+            if (overwrite)
+                _address.Text = address;
+            else
+                Put(_address, address);
             Put(_email, email);
             Put(_contactPhone, phone);
             Put(_customerPhone, phone);
@@ -800,22 +820,42 @@ namespace CastRightCatchInvManagement
 
             try
             {
-                string pdfPath = SalesOrderDocument.Save(draft);
                 var pos = draft.Lines
                     .Select(line => line.PoNumber)
                     .Where(po => po.Length > 0)
                     .ToList();
                 if (draft.CustomerPo.Length > 0)
                     pos.Add(draft.CustomerPo);
+
+                string soNumber = draft.SoNumber;
+                string? existingSo = DataFiles.FindExistingSalesOrderNumber(
+                    pos,
+                    draft.CustomerCode,
+                    draft.CustomerName);
+                if (!string.IsNullOrWhiteSpace(existingSo))
+                    soNumber = existingSo;
+
+                string? pdfPath = DataFiles.FindStoredSalesOrder(soNumber);
+                bool created = false;
+                if (pdfPath == null)
+                {
+                    draft.SoNumber = soNumber;
+                    pdfPath = SalesOrderDocument.Save(draft);
+                    created = true;
+                }
+
                 DataFiles.AssignSalesOrderNumber(
                     pos,
                     draft.CustomerCode,
                     draft.CustomerName,
-                    draft.SoNumber);
+                    soNumber);
+                DataFiles.OpenPdf(pdfPath);
 
                 MessageBox.Show(
-                    $"Sales order {draft.SoNumber} was saved.\n\n{pdfPath}",
-                    "Sales Order Created",
+                    created
+                        ? $"Sales order {soNumber} was saved.\n\n{pdfPath}"
+                        : $"Sales order {soNumber} already has a PDF. Opened:\n\n{pdfPath}",
+                    created ? "Sales Order Created" : "Sales Order Found",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
                 ResetDraft();

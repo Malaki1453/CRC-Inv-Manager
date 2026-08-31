@@ -13,7 +13,7 @@ namespace CastRightCatchInvManagement
                 dataGridView1,
                 "Add Product",
                 (_, _) => AddPurchase.OpenNew());
-            UiStyle.BindRowEdit(dataGridView1, AddPurchase.OpenEdit);
+            UiStyle.BindRowEdit(dataGridView1, AddPurchase.OpenEdit, "Purchase");
             DataFiles.DataChanged += LoadTable;
             LoadTable();
         }

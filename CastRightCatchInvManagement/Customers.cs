@@ -5,7 +5,23 @@ namespace CastRightCatchInvManagement
         public Customers()
         {
             InitializeComponent();
-            UiStyle.ApplyDataPage(this, "Customers", lblTitle, btnUpload, dataGridView1);
+            UiStyle.ApplyDataPage(
+                this,
+                "Customers",
+                lblTitle,
+                btnUpload,
+                dataGridView1,
+                "Add Customer",
+                (_, _) => PartyEditForm.OpenCustomerNew());
+            UiStyle.BindRowEdit(dataGridView1, PartyEditForm.OpenCustomerEdit, "Customer", "Edit Customer");
+            dataGridView1.CellDoubleClick += (_, e) =>
+            {
+                if (e.RowIndex < 0)
+                    return;
+                CustomerHistoryForm.ShowFor(
+                    this,
+                    DataFiles.GridRowToRecord(dataGridView1, e.RowIndex));
+            };
             DataFiles.DataChanged += LoadTable;
             LoadTable();
         }

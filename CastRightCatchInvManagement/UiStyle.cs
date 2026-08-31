@@ -55,6 +55,27 @@ namespace CastRightCatchInvManagement
                 e.Graphics.FillRectangle(gold, 0, toolbar.Height - 2, toolbar.Width, 2);
             };
             toolbar.Controls.Add(jump);
+
+            var reset = new Button { Text = "Default columns", Dock = DockStyle.Fill, TabStop = false };
+            Theme.StyleOutlineButton(reset);
+            reset.Click += (_, _) => DataFiles.ResetGridColumns(grid);
+            var resetHost = new Panel
+            {
+                Dock = DockStyle.Left,
+                Width = 148,
+                Padding = new Padding(10, 0, 0, 0),
+                BackColor = Theme.Paper
+            };
+            resetHost.Controls.Add(reset);
+            toolbar.Controls.Add(resetHost);
+
+            grid.ColumnHeaderMouseClick += (_, e) =>
+            {
+                if (e.Button != MouseButtons.Right || e.ColumnIndex < 0)
+                    return;
+                ShowRemoveColumnMenu(grid, e.ColumnIndex);
+            };
+
             if (!string.IsNullOrWhiteSpace(actionText) && actionClick != null)
             {
                 var action = new Button { Text = actionText, Dock = DockStyle.Fill };
@@ -95,7 +116,11 @@ namespace CastRightCatchInvManagement
             form.Controls.Add(card);
         }
 
-        public static void BindRowEdit(DataGridView grid, Action<Dictionary<string, string>> onEdit)
+        public static void BindRowEdit(
+            DataGridView grid,
+            Action<Dictionary<string, string>> onEdit,
+            string detailsTitle = "Details",
+            string editText = "Edit Product")
         {
             grid.CellMouseClick += (_, e) =>
             {
@@ -106,7 +131,12 @@ namespace CastRightCatchInvManagement
                 grid.Rows[e.RowIndex].Selected = true;
                 try
                 {
-                    int col = Math.Max(0, e.ColumnIndex);
+                    int col = e.ColumnIndex;
+                    if (col < 0 || col >= grid.Columns.Count || !grid.Columns[col].Visible)
+                    {
+                        var first = grid.Columns.GetFirstColumn(DataGridViewElementStates.Visible);
+                        col = first?.Index ?? 0;
+                    }
                     if (col < grid.Columns.Count)
                         grid.CurrentCell = grid.Rows[e.RowIndex].Cells[col];
                 }
@@ -115,11 +145,68 @@ namespace CastRightCatchInvManagement
                     // row may not take a current cell
                 }
 
+                var record = DataFiles.GridRowToRecord(grid, e.RowIndex);
                 var menu = new ContextMenuStrip();
-                menu.Items.Add("Edit Product", null, (_, _) =>
-                    onEdit(DataFiles.GridRowToRecord(grid, e.RowIndex)));
+                menu.Items.Add("View Details", null, (_, _) =>
+                    RecordDetailsForm.ShowRecord(grid.FindForm(), detailsTitle, record));
+                menu.Items.Add(editText, null, (_, _) => onEdit(record));
                 menu.Show(grid, grid.PointToClient(Control.MousePosition));
             };
+        }
+
+        internal static void ShowAddColumnMenu(DataGridView grid)
+        {
+            var hidden = grid.Columns.Cast<DataGridViewColumn>()
+                .Where(c => !c.Visible && !Theme.IsAddColumn(c))
+                .OrderBy(c => c.DisplayIndex)
+                .ToList();
+
+            var menu = new ContextMenuStrip();
+            if (hidden.Count == 0)
+            {
+                menu.Items.Add("All columns are showing").Enabled = false;
+            }
+            else
+            {
+                foreach (var col in hidden)
+                {
+                    var column = col;
+                    menu.Items.Add(column.HeaderText, null, (_, _) =>
+                    {
+                        column.Visible = true;
+                        Theme.FitAllColumns(grid);
+                        if (grid.Tag is ColumnSearch search)
+                            search.NotifyColumnsChanged();
+                    });
+                }
+            }
+
+            menu.Show(grid, grid.PointToClient(Control.MousePosition));
+        }
+
+        private static void ShowRemoveColumnMenu(DataGridView grid, int columnIndex)
+        {
+            if (columnIndex < 0 || columnIndex >= grid.Columns.Count)
+                return;
+
+            var column = grid.Columns[columnIndex];
+            if (!column.Visible || Theme.IsAddColumn(column))
+                return;
+
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("Hide column", null, (_, _) =>
+            {
+                int visible = grid.Columns.Cast<DataGridViewColumn>()
+                    .Count(c => c.Visible && !Theme.IsAddColumn(c));
+                if (visible <= 1)
+                    return;
+
+                column.Visible = false;
+                Theme.FitAllColumns(grid);
+                if (grid.Tag is ColumnSearch search)
+                    search.NotifyColumnsChanged();
+            });
+            menu.Show(grid, grid.PointToClient(Control.MousePosition));
         }
 
         public static string PageTitle(AppPage page) => page switch
@@ -140,6 +227,7 @@ namespace CastRightCatchInvManagement
             AppPage.Banking => "Banking",
             AppPage.Reports => "Reports",
             AppPage.Settings => "Settings",
+            AppPage.Help => "Controls",
             _ => page.ToString()
         };
 

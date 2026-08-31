@@ -89,7 +89,7 @@ namespace CastRightCatchInvManagement
             g.Text(390, y, Clip(draft.Email, 36), 8, false, Theme.Ink);
 
             y += 14;
-            g.Text(36, y, "Address:", 8, true, Theme.Navy);
+            g.Text(36, y, "Ship To:", 8, true, Theme.Navy);
             var addressLines = (draft.Address ?? "").Replace("\r", "").Split('\n');
             g.Text(130, y, addressLines.Length > 0 ? addressLines[0] : "", 8, false, Theme.Ink);
             g.Text(330, y, "Phone:", 8, true, Theme.Navy);

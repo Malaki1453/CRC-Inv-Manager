@@ -24,6 +24,8 @@ namespace CastRightCatchInvManagement
         private TextBox _discount = null!;
         private TextBox _freight = null!;
         private TextBox _tax = null!;
+        private Button _taxMode = null!;
+        private bool _taxPercent;
         private Label _invoiceTotal = null!;
         private bool _loadingCustomer;
         private bool _busyAdding;
@@ -108,6 +110,7 @@ namespace CastRightCatchInvManagement
 
             _soldTo = AddMultiline(card, "SOLD TO", 564, 36, 220, 58);
             _shipTo = AddMultiline(card, "SHIP TO", 564, 110, 220, 58);
+            _shipTo.PlaceholderText = "Not found, please input manually";
 
             card.Resize += (_, _) =>
             {
@@ -217,7 +220,7 @@ namespace CastRightCatchInvManagement
             _subTotal = TotalLabel(card, "SUB TOTAL", 160, 16);
             _discount = AddField(card, "DISCOUNT", 300, 16, 90);
             _freight = AddField(card, "FREIGHT", 404, 16, 90);
-            _tax = AddField(card, "TAX", 508, 16, 90);
+            _tax = AddTaxField(card, 508, 16, 90);
             _invoiceTotal = TotalLabel(card, "INVOICE TOTAL", 20, 64);
             _invoiceTotal.Font = Theme.SectionTitle;
             _invoiceTotal.ForeColor = Theme.Navy;
@@ -338,7 +341,8 @@ namespace CastRightCatchInvManagement
                     DataFiles.GetRecord(record, "Code"),
                     DataFiles.GetRecord(record, "Name"),
                     DataFiles.GetRecord(record, "Terms"),
-                    DataFiles.GetRecord(record, "Contact Name")));
+                    DataFiles.GetRecord(record, "Contact Name"),
+                    DataFiles.GetRecord(record, "Address")));
             }
 
             if (!string.IsNullOrWhiteSpace(current))
@@ -583,6 +587,9 @@ namespace CastRightCatchInvManagement
             _discount.Text = "";
             _freight.Text = "";
             _tax.Text = "";
+            _taxPercent = false;
+            if (_taxMode != null)
+                _taxMode.Text = "#";
             AddLine(lockPrevious: false);
             UpdateTotals();
         }
@@ -592,7 +599,7 @@ namespace CastRightCatchInvManagement
             if (_loadingCustomer || _customer.SelectedItem is not CustomerChoice choice)
                 return;
 
-            FillCustomer(choice.Code, choice.Name, choice.Terms, choice.Contact);
+            FillCustomer(choice.Code, choice.Name, choice.Terms, choice.Contact, choice.Address);
         }
 
         private void ApplyCustomerFromPurchase(Dictionary<string, string> record)
@@ -630,11 +637,12 @@ namespace CastRightCatchInvManagement
                     match.Code,
                     match.Name,
                     terms.Length > 0 ? terms : match.Terms,
-                    match.Contact);
+                    match.Contact,
+                    match.Address);
             }
             else
             {
-                FillCustomer(code, name, terms, contact);
+                FillCustomer(code, name, terms, contact, "");
                 if (name.Length > 0)
                     _customer.Text = name;
             }
@@ -647,7 +655,7 @@ namespace CastRightCatchInvManagement
                 _shipDate.Value = shipDate;
         }
 
-        private void FillCustomer(string code, string name, string terms, string contact)
+        private void FillCustomer(string code, string name, string terms, string contact, string address)
         {
             if (code.Length > 0)
                 _customerCode.Text = code;
@@ -660,11 +668,9 @@ namespace CastRightCatchInvManagement
             if (contact.Length > 0)
                 sold.Add(contact);
             if (sold.Count > 0)
-            {
-                string block = string.Join(Environment.NewLine, sold);
-                _soldTo.Text = block;
-                _shipTo.Text = block;
-            }
+                _soldTo.Text = string.Join(Environment.NewLine, sold);
+
+            _shipTo.Text = address.Trim();
 
             RefreshPoSuggestions();
         }
@@ -686,7 +692,8 @@ namespace CastRightCatchInvManagement
                 ShipTo = _shipTo.Text.Trim(),
                 Discount = InvoiceLineRow.ParseNumber(_discount.Text),
                 Freight = InvoiceLineRow.ParseNumber(_freight.Text),
-                Tax = InvoiceLineRow.ParseNumber(_tax.Text),
+                TaxRate = InvoiceLineRow.ParseNumber(_tax.Text),
+                TaxIsPercent = _taxPercent,
                 Lines = _lines.Select(line => line.GetLine()).Where(line =>
                     line.PoNumber.Length > 0 ||
                     line.ProductId.Length > 0 ||
@@ -788,6 +795,39 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        private TextBox AddTaxField(Control parent, int x, int y, int width)
+        {
+            const int buttonWidth = 28;
+            var label = new Label { Text = "TAX" };
+            Theme.StyleFieldLabel(label);
+            label.Location = new Point(x, y);
+
+            var box = new TextBox();
+            Theme.StyleField(box);
+            box.Location = new Point(x, y + 16);
+            box.Size = new Size(Math.Max(40, width - buttonWidth - 4), 26);
+
+            _taxMode = new Button
+            {
+                Text = "#",
+                Location = new Point(x + width - buttonWidth, y + 16),
+                Size = new Size(buttonWidth, 26),
+                TabStop = false
+            };
+            Theme.StyleOutlineButton(_taxMode);
+            _taxMode.Click += (_, _) =>
+            {
+                _taxPercent = !_taxPercent;
+                _taxMode.Text = _taxPercent ? "%" : "#";
+                UpdateTotals();
+            };
+
+            parent.Controls.Add(label);
+            parent.Controls.Add(box);
+            parent.Controls.Add(_taxMode);
+            return box;
+        }
+
         private DateTimePicker AddDate(Control parent, string caption, int x, int y, int width)
         {
             var label = new Label { Text = caption };
@@ -865,13 +905,15 @@ namespace CastRightCatchInvManagement
             public string Name { get; }
             public string Terms { get; }
             public string Contact { get; }
+            public string Address { get; }
 
-            public CustomerChoice(string code, string name, string terms, string contact)
+            public CustomerChoice(string code, string name, string terms, string contact, string address)
             {
                 Code = code;
                 Name = name;
                 Terms = terms;
                 Contact = contact;
+                Address = address;
             }
 
             public override string ToString() => string.IsNullOrWhiteSpace(Name) ? Code : $"{Name} ({Code})";

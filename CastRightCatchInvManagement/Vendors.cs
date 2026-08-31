@@ -5,7 +5,15 @@ namespace CastRightCatchInvManagement
         public Vendors()
         {
             InitializeComponent();
-            UiStyle.ApplyDataPage(this, "Vendors", lblTitle, btnUpload, dataGridView1);
+            UiStyle.ApplyDataPage(
+                this,
+                "Vendors",
+                lblTitle,
+                btnUpload,
+                dataGridView1,
+                "Add Vendor",
+                (_, _) => PartyEditForm.OpenVendorNew());
+            UiStyle.BindRowEdit(dataGridView1, PartyEditForm.OpenVendorEdit, "Vendor", "Edit Vendor");
             DataFiles.DataChanged += LoadTable;
             LoadTable();
         }

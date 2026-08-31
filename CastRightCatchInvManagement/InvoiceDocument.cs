@@ -165,7 +165,10 @@ namespace CastRightCatchInvManagement
             g.Rect(422, ty, 154, 64);
             DrawTotalRow(g, ty, "Discount", draft.Discount);
             DrawTotalRow(g, ty + 16, "Freight", draft.Freight);
-            DrawTotalRow(g, ty + 32, "Tax Total", draft.Tax);
+            string taxLabel = draft.TaxIsPercent && draft.TaxRate != 0
+                ? $"Tax {draft.TaxRate.ToString("0.##", CultureInfo.InvariantCulture)}%"
+                : "Tax Total";
+            DrawTotalRow(g, ty + 32, taxLabel, draft.Tax);
             g.Fill(422, ty + 48, 154, 16, Theme.Navy);
             g.TextRight(528, ty + 59, "INVOICE TOTAL", 8, true, Theme.Cream);
             g.TextRight(572, ty + 59, FormatMoney(draft.InvoiceTotal), 8, true, Theme.Cream);

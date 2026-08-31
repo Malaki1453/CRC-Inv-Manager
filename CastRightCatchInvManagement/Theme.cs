@@ -208,7 +208,85 @@ namespace CastRightCatchInvManagement
 
             EnsureManualColumnWidths(grid);
             for (int i = 0; i < grid.Columns.Count; i++)
+            {
+                if (!grid.Columns[i].Visible || IsAddColumn(grid.Columns[i]))
+                    continue;
                 FitLongest(grid, i);
+            }
+
+            StretchVisibleColumns(grid);
+        }
+
+        public const string AddColumnTag = "__add_column__";
+        public const int AddColumnWidth = 42;
+
+        public static bool IsAddColumn(DataGridViewColumn? column)
+        {
+            return column != null &&
+                   string.Equals(column.Tag as string, AddColumnTag, StringComparison.Ordinal);
+        }
+
+        public static void EnsureAddColumn(DataGridView grid)
+        {
+            if (grid.Columns.Cast<DataGridViewColumn>().Any(IsAddColumn))
+                return;
+            if (grid.Columns.Count == 0)
+                return;
+            if (grid.Columns.Count == 1 &&
+                string.Equals(grid.Columns[0].HeaderText, "Status", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var add = new DataGridViewTextBoxColumn
+            {
+                Name = "AddColumn",
+                HeaderText = "+",
+                Tag = AddColumnTag,
+                Width = AddColumnWidth,
+                MinimumWidth = AddColumnWidth,
+                Resizable = DataGridViewTriState.False,
+                SortMode = DataGridViewColumnSortMode.NotSortable,
+                ReadOnly = true,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+            };
+            add.DefaultCellStyle.BackColor = Paper;
+            add.DefaultCellStyle.SelectionBackColor = Paper;
+            add.DefaultCellStyle.SelectionForeColor = Ink;
+            grid.Columns.Add(add);
+        }
+
+        public static void StretchVisibleColumns(DataGridView grid)
+        {
+            var visible = grid.Columns.Cast<DataGridViewColumn>()
+                .Where(c => c.Visible && !IsAddColumn(c))
+                .ToList();
+            if (visible.Count == 0)
+                return;
+
+            int used = 0;
+            foreach (var col in visible)
+                used += col.Width;
+            var add = grid.Columns.Cast<DataGridViewColumn>().FirstOrDefault(IsAddColumn);
+            if (add != null && add.Visible)
+            {
+                add.Width = AddColumnWidth;
+                used += add.Width;
+            }
+
+            int available = Math.Max(0, grid.ClientSize.Width - 2);
+            if (grid.Controls.OfType<VScrollBar>().Any(bar => bar.Visible))
+                available -= SystemInformation.VerticalScrollBarWidth;
+
+            int extra = available - used;
+            if (extra <= 0)
+                return;
+
+            int share = extra / visible.Count;
+            int remainder = extra % visible.Count;
+            for (int i = 0; i < visible.Count; i++)
+            {
+                int grow = share + (i == visible.Count - 1 ? remainder : 0);
+                visible[i].Width = Math.Max(48, visible[i].Width + grow);
+            }
         }
 
         public static void PaintHeaderBackground(Graphics g, Rectangle bounds)

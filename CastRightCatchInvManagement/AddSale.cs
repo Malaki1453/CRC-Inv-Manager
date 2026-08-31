@@ -76,8 +76,6 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            if (!_editing && string.IsNullOrWhiteSpace(_so.Text))
-                _so.Text = DataFiles.NextNumber(DataFiles.Sales, "SO #", 10001);
         }
 
         private void BuildUi()
@@ -109,6 +107,15 @@ namespace CastRightCatchInvManagement
             Theme.StyleNavyButton(_another);
             _another.Click += (_, _) => SaveSale(keepCustomer: true);
 
+            var pdf = new Button
+            {
+                Text = "Create Sales Order",
+                Size = new Size(168, 34),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            Theme.StyleNavyButton(pdf);
+            pdf.Click += (_, _) => CreateSalesOrderPdf();
+
             var clear = new Button
             {
                 Text = "Clear",
@@ -120,12 +127,14 @@ namespace CastRightCatchInvManagement
 
             actions.Controls.Add(_save);
             actions.Controls.Add(_another);
+            actions.Controls.Add(pdf);
             actions.Controls.Add(clear);
             actions.Resize += (_, _) =>
             {
-                _save.Location = new Point(Math.Max(280, actions.Width - 168), 8);
-                _another.Location = new Point(Math.Max(100, actions.Width - 308), 8);
-                clear.Location = new Point(Math.Max(8, actions.Width - 408), 8);
+                _save.Location = new Point(Math.Max(440, actions.Width - 168), 8);
+                _another.Location = new Point(Math.Max(300, actions.Width - 308), 8);
+                pdf.Location = new Point(Math.Max(120, actions.Width - 486), 8);
+                clear.Location = new Point(Math.Max(8, actions.Width - 586), 8);
             };
 
             var scroll = new Panel
@@ -174,6 +183,8 @@ namespace CastRightCatchInvManagement
             var card = MakeCard("Order", 168);
             _po = AddText(card, "PO #", 20, 48, 180);
             _so = AddText(card, "SO #", 220, 48, 120);
+            _so.ReadOnly = true;
+            _so.PlaceholderText = "Set on Create Sales Order";
             _customer = AddCombo(card, "CUSTOMER", 360, 48, 280);
             _customerCode = AddText(card, "CUSTOMER CODE", 20, 100, 140);
             _customerName = AddText(card, "CUSTOMER", 180, 100, 280);
@@ -409,6 +420,46 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        private void CreateSalesOrderPdf()
+        {
+            string po = _po.Text.Trim();
+            if (po.Length == 0)
+            {
+                ToastAlert.Error(this, "Enter the customer PO # first.");
+                return;
+            }
+
+            if (_customerCode.Text.Trim().Length == 0 && _customerName.Text.Trim().Length == 0)
+            {
+                ToastAlert.Error(this, "Choose a customer first.");
+                return;
+            }
+
+            SaveSale(keepCustomer: true);
+            var prefill = new InvoiceSalePrefill
+            {
+                Po = po,
+                So = _so.Text.Trim(),
+                ItemCode = CurrentCode(_item),
+                CustomerCode = _customerCode.Text.Trim(),
+                CustomerName = _customerName.Text.Trim()
+            };
+
+            var order = Navigator.Ensure<SalesOrder>(AppPage.SalesOrder);
+            order.BeginFromSale(prefill, error =>
+            {
+                if (error != null)
+                {
+                    ToastAlert.Error(this, error);
+                    return;
+                }
+
+                string? so = order.CreateOrOpenPdf();
+                if (!string.IsNullOrWhiteSpace(so))
+                    _so.Text = so;
+            });
+        }
+
         private void LoadRecord(Dictionary<string, string> record)
         {
             _loading = true;
@@ -452,7 +503,7 @@ namespace CastRightCatchInvManagement
             string po = keepCustomer ? _po.Text : "";
 
             _loading = true;
-            _so.Text = DataFiles.NextNumber(DataFiles.Sales, "SO #", 10001);
+            _so.Text = "";
             _po.Text = po;
             _lot.Text = "";
             _item.SelectedIndex = -1;

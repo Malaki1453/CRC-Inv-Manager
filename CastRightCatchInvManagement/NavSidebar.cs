@@ -17,10 +17,25 @@ namespace CastRightCatchInvManagement
             Theme.EnableDoubleBuffer(this);
 
             var brand = BuildBrandHeader();
+            var settingsRow = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 48,
+                BackColor = Theme.NavyDark
+            };
+            var help = new CrcControlsButton();
+            BindPageButton(help, AppPage.Help);
+            _buttons[AppPage.Help] = help;
+            help.Dock = DockStyle.Right;
+            help.Width = 52;
+            help.Name = "btnHelp";
+            var helpTip = new ToolTip { ShowAlways = true };
+            helpTip.SetToolTip(help, "Controls");
             var settings = BuildButton(AppPage.Settings, "Settings");
-            settings.Dock = DockStyle.Bottom;
-            settings.Height = 48;
+            settings.Dock = DockStyle.Fill;
             settings.Name = "btnSettings";
+            settingsRow.Controls.Add(settings);
+            settingsRow.Controls.Add(help);
 
             var navHost = new Panel
             {
@@ -102,7 +117,7 @@ namespace CastRightCatchInvManagement
             LayoutNav(navHost, items);
 
             Controls.Add(navHost);
-            Controls.Add(settings);
+            Controls.Add(settingsRow);
             Controls.Add(brand);
 
             AppLock.Changed += RefreshState;
@@ -130,7 +145,7 @@ namespace CastRightCatchInvManagement
             bool unlocked = AppLock.HasFolder();
             foreach (var pair in _buttons)
             {
-                bool isSettings = pair.Key == AppPage.Settings;
+                bool isSettings = pair.Key == AppPage.Settings || pair.Key == AppPage.Help;
                 pair.Value.Enabled = unlocked || isSettings;
                 pair.Value.Selected = pair.Key == _workspace.CurrentPage;
             }
@@ -416,7 +431,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
-    internal sealed class CrcNavButton : Button
+    internal class CrcNavButton : Button
     {
         private bool _selected;
 
@@ -480,6 +495,60 @@ namespace CastRightCatchInvManagement
                 BackColor = Theme.NavyDark;
                 ForeColor = Theme.Cream;
             }
+        }
+    }
+
+    internal sealed class CrcControlsButton : CrcNavButton
+    {
+        public CrcControlsButton()
+        {
+            Text = "";
+            Padding = new Padding(0);
+            TextAlign = ContentAlignment.MiddleCenter;
+            AccessibleName = "Controls";
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            ControlsGlyph.Paint(e.Graphics, ClientRectangle, ForeColor);
+        }
+    }
+
+    internal static class ControlsGlyph
+    {
+        public static void Paint(Graphics g, Rectangle bounds, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            int w = 22;
+            int h = 14;
+            int x = bounds.X + (bounds.Width - w) / 2;
+            int y = bounds.Y + (bounds.Height - h) / 2;
+
+            using var pen = new Pen(color, 1.6f);
+            using var fill = new SolidBrush(color);
+            using var body = Theme.RoundRect(new Rectangle(x, y, w, h), 2);
+            g.DrawPath(pen, body);
+
+            void Key(float kx, float ky, float kw, float kh)
+            {
+                g.FillRectangle(fill, x + kx, y + ky, kw, kh);
+            }
+
+            Key(3, 3, 2.2f, 2.1f);
+            Key(6.4f, 3, 2.2f, 2.1f);
+            Key(9.8f, 3, 2.2f, 2.1f);
+            Key(13.2f, 3, 2.2f, 2.1f);
+            Key(16.6f, 3, 2.2f, 2.1f);
+
+            Key(4.2f, 6.2f, 2.2f, 2.1f);
+            Key(7.6f, 6.2f, 2.2f, 2.1f);
+            Key(11f, 6.2f, 2.2f, 2.1f);
+            Key(14.4f, 6.2f, 2.2f, 2.1f);
+
+            Key(6.6f, 9.5f, 8.8f, 2.1f);
         }
     }
 }

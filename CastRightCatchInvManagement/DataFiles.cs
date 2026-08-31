@@ -225,44 +225,82 @@
             });
         }
 
-        public static void OpenStoredSalesOrder(string? soNumber)
+        public static string? FindStoredSalesOrder(string? soNumber)
         {
             EnsureStoredSalesOrdersFolder();
             string? folder = GetStoredSalesOrdersFolder();
             if (folder == null || !Directory.Exists(folder))
-            {
-                MessageBox.Show(
-                    "Select a data folder first. Stored sales orders live in a 'Stored Sales Orders' folder there.",
-                    "No Sales Order Folder",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
+                return null;
 
             string key = (soNumber ?? "").Trim();
             if (key.Length == 0)
-            {
-                MessageBox.Show(
-                    "This row has no sales order number.",
-                    "Sales Order",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-                return;
-            }
+                return null;
 
             string prefix = "Sales Order " + key;
-            var matches = Directory.GetFiles(folder, "*.pdf")
-                .Where(path =>
+            return Directory.GetFiles(folder, "*.pdf")
+                .FirstOrDefault(path =>
                 {
                     string name = Path.GetFileNameWithoutExtension(path);
                     return name.Equals(prefix, StringComparison.OrdinalIgnoreCase) ||
                            name.StartsWith(prefix + " ", StringComparison.OrdinalIgnoreCase) ||
                            name.StartsWith(prefix + " -", StringComparison.OrdinalIgnoreCase);
-                })
-                .ToList();
+                });
+        }
 
-            if (matches.Count == 0)
+        public static string? FindExistingSalesOrderNumber(
+            IEnumerable<string> purchaseOrders,
+            string? customerCode,
+            string? customerName)
+        {
+            var pos = new HashSet<string>(
+                purchaseOrders
+                    .Select(NormalizePo)
+                    .Where(po => po.Length > 0),
+                StringComparer.OrdinalIgnoreCase);
+            if (pos.Count == 0)
+                return null;
+
+            foreach (var record in ReadRecords(Sales))
             {
+                if (!MatchesCustomer(record, customerCode, customerName))
+                    continue;
+                if (!pos.Contains(NormalizePo(SalePo(record))))
+                    continue;
+
+                string so = GetRecord(record, "SO #").Trim();
+                if (so.Length > 0)
+                    return so;
+            }
+
+            return null;
+        }
+
+        public static void OpenPdf(string path)
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true
+            });
+        }
+
+        public static void OpenStoredSalesOrder(string? soNumber)
+        {
+            string? path = FindStoredSalesOrder(soNumber);
+            if (path == null)
+            {
+                string key = (soNumber ?? "").Trim();
+                if (key.Length == 0)
+                {
+                    MessageBox.Show(
+                        "This row has no sales order number.",
+                        "Sales Order",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                    return;
+                }
+
+                string? folder = GetStoredSalesOrdersFolder();
                 MessageBox.Show(
                     $"No stored PDF was found for sales order {key}.\n\nSave sales order PDFs in:\n{folder}",
                     "Sales Order Not Found",
@@ -271,11 +309,7 @@
                 return;
             }
 
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = matches[0],
-                UseShellExecute = true
-            });
+            OpenPdf(path);
         }
 
         public static string? GetStoredSalesOrdersFolder()
@@ -393,10 +427,10 @@
                     "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status",
 
                 Customers =>
-                    "Code,Name,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone",
+                    "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes",
 
                 Vendors =>
-                    "Code,Name,Type,Terms,Amount,Finalized",
+                    "Code,Name,Company,Type,Terms,Amount,Phone,Current Balance,Notes,Finalized",
 
                 ItemCodes =>
                     "Code,Description,COO,Farmed / Wild,Fresh / Frozen,Proc Country,Species,Scientific Name",
@@ -420,7 +454,9 @@
         public static List<Dictionary<string, string>> ReadRecords(string baseName)
         {
             if (baseName == Customers)
-                EnsureFileColumns(Customers, "Address", "Email", "Phone");
+                EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes");
+            if (baseName == Vendors)
+                EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes");
 
             var result = new List<Dictionary<string, string>>();
             var path = FindCurrentFile(baseName);
@@ -844,6 +880,10 @@
 
         public static string NextPurchasePo()
         {
+            string pattern = (AppState.ProductNumberPattern ?? "").Trim();
+            if (pattern.Length > 0)
+                return NextFromPattern(PurchaseSales, "PO #", pattern, AppState.ProductNumberStart);
+
             int year = (AppState.TermStartDate ?? DateTime.Today).Year % 100;
             string prefix = $"CRC{year:00}-";
             int max = 10000;
@@ -878,6 +918,83 @@
             }
 
             return (max + 1).ToString();
+        }
+
+        public static string NextSalesOrderNumber()
+        {
+            string pattern = (AppState.SalesOrderPattern ?? "").Trim();
+            if (pattern.Length == 0)
+                return NextNumber(Sales, "SO #", 10001);
+
+            return NextFromPattern(Sales, "SO #", pattern, AppState.SalesOrderStart);
+        }
+
+        public static string PreviewSalesOrderNumber() => NextSalesOrderNumber();
+
+        public static string PreviewProductNumber() => NextPurchasePo();
+
+        private static string NextFromPattern(string baseName, string column, string pattern, string? startText)
+        {
+            ParseHashPattern(pattern, out string prefix, out int width, out string suffix);
+            int floor = 1;
+            if (int.TryParse((startText ?? "").Trim(), out int start) && start > 0)
+                floor = start;
+
+            int max = floor - 1;
+            foreach (var record in ReadRecords(baseName))
+            {
+                if (!TryReadPatternNumber(GetRecord(record, column), prefix, suffix, out int n))
+                    continue;
+                if (n > max)
+                    max = n;
+            }
+
+            int next = max + 1;
+            string digits = next.ToString().PadLeft(width, '0');
+            return prefix + digits + suffix;
+        }
+
+        private static void ParseHashPattern(string pattern, out string prefix, out int width, out string suffix)
+        {
+            int hashEnd = pattern.LastIndexOf('#');
+            if (hashEnd < 0)
+            {
+                prefix = pattern;
+                width = 4;
+                suffix = "";
+                return;
+            }
+
+            int hashStart = hashEnd;
+            while (hashStart > 0 && pattern[hashStart - 1] == '#')
+                hashStart--;
+
+            prefix = pattern[..hashStart];
+            width = Math.Max(1, hashEnd - hashStart + 1);
+            suffix = pattern[(hashEnd + 1)..];
+        }
+
+        private static bool TryReadPatternNumber(string value, string prefix, string suffix, out int number)
+        {
+            number = 0;
+            value = (value ?? "").Trim();
+            if (value.Length == 0)
+                return false;
+
+            if (prefix.Length > 0 &&
+                !value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (suffix.Length > 0 &&
+                !value.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            int start = prefix.Length;
+            int end = value.Length - suffix.Length;
+            if (end <= start)
+                return false;
+
+            string digits = value[start..end];
+            return int.TryParse(digits, out number);
         }
 
         public static void AppendNamedRow(string baseName, Dictionary<string, string> values)
@@ -978,7 +1095,12 @@
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (DataGridViewColumn col in grid.Columns)
             {
-                map[col.HeaderText] = grid.Rows[rowIndex].Cells[col.Index].Value?.ToString() ?? "";
+                if (Theme.IsAddColumn(col))
+                    continue;
+                string key = col.Tag as string ?? col.Name;
+                if (string.IsNullOrWhiteSpace(key))
+                    key = col.HeaderText;
+                map[key] = grid.Rows[rowIndex].Cells[col.Index].Value?.ToString() ?? "";
             }
 
             return map;
@@ -1026,6 +1148,10 @@
         public static string DisplayColumnHeader(string baseName, string[] fileHeader, string name)
         {
             name = name.Trim();
+            if (baseName == PurchaseSales &&
+                name.Equals("Agreement Date", StringComparison.OrdinalIgnoreCase))
+                return "Order Date";
+
             if (baseName != Sales)
                 return name;
 
@@ -1046,24 +1172,31 @@
         {
             string[]? first = baseName switch
             {
-                Sales => new[]
+                PurchaseSales => new[]
                 {
                     "PO #",
+                    "Ship Date",
+                    "Order Date"
+                },
+                Sales => new[]
+                {
                     "SO #",
-                    "Customer Code",
-                    "Customer",
-                    "Customer Terms",
-                    "Item Code",
-                    "Lot #"
+                    "Ship Date",
+                    "PO #"
                 },
                 Customers => new[]
                 {
-                    "Code",
                     "Name",
-                    "Contact Name",
-                    "Address",
-                    "Email",
-                    "Phone"
+                    "Company",
+                    "Phone",
+                    "Current Balance"
+                },
+                Vendors => new[]
+                {
+                    "Name",
+                    "Company",
+                    "Phone",
+                    "Current Balance"
                 },
                 _ => null
             };
@@ -1097,6 +1230,42 @@
             return order.ToArray();
         }
 
+        public static void ResetGridColumns(DataGridView grid)
+        {
+            string? baseName = grid.Tag is ColumnSearch search ? search.FileBaseName : null;
+            foreach (DataGridViewColumn col in grid.Columns)
+            {
+                if (Theme.IsAddColumn(col))
+                {
+                    col.Visible = true;
+                    continue;
+                }
+
+                col.Visible = IsSummaryColumn(baseName ?? "", col.HeaderText);
+            }
+
+            Theme.FitAllColumns(grid);
+            if (grid.Tag is ColumnSearch layout)
+                layout.NotifyColumnsChanged();
+        }
+
+        private static bool IsSummaryColumn(string baseName, string displayHeader)
+        {
+            string[]? visible = baseName switch
+            {
+                PurchaseSales => new[] { "PO #", "Ship Date", "Order Date" },
+                Sales => new[] { "SO #", "Ship Date", "PO #" },
+                Customers => new[] { "Name", "Company", "Phone", "Current Balance" },
+                Vendors => new[] { "Name", "Company", "Phone", "Current Balance" },
+                _ => null
+            };
+            if (visible == null)
+                return true;
+
+            return visible.Any(name =>
+                name.Equals(displayHeader, StringComparison.OrdinalIgnoreCase));
+        }
+
         public static event Action? DataChanged;
 
         public static void NotifyDataChanged() => DataChanged?.Invoke();
@@ -1119,7 +1288,9 @@
             try
             {
                 if (baseName == Customers)
-                    EnsureFileColumns(Customers, "Address", "Email", "Phone");
+                    EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes");
+                if (baseName == Vendors)
+                    EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes");
 
                 if (!Exists(baseName))
                 {
@@ -1147,7 +1318,15 @@
                 var header = rows[0];
                 int[] order = ColumnDisplayOrder(baseName, header);
                 foreach (int c in order)
-                    grid.Columns.Add(header[c], DisplayColumnHeader(baseName, header, header[c]));
+                {
+                    string fileName = header[c].Trim();
+                    string display = DisplayColumnHeader(baseName, header, fileName);
+                    int index = grid.Columns.Add(fileName, display);
+                    grid.Columns[index].Tag = fileName;
+                    grid.Columns[index].Visible = IsSummaryColumn(baseName, display);
+                }
+
+                Theme.EnsureAddColumn(grid);
 
                 for (int i = 1; i < rows.Count; i++)
                 {
@@ -1164,7 +1343,10 @@
             finally
             {
                 if (grid.Tag is ColumnSearch search)
+                {
+                    search.FileBaseName = baseName;
                     search.Rebuild();
+                }
             }
         }
 
@@ -1207,7 +1389,8 @@
             bool exact = NormalizeHeader(string.Join(",", incomingHeader)) ==
                          NormalizeHeader(GetExpectedHeader(baseName));
             if (!exact &&
-                (baseName != Customers || !IncomingMapsToExpected(incomingHeader, expectedHeader)))
+                ((baseName != Customers && baseName != Vendors) ||
+                 !IncomingMapsToExpected(incomingHeader, expectedHeader)))
             {
                 message =
                     "The file headings do not match this page.\n\n" +
@@ -1217,7 +1400,9 @@
             }
 
             if (baseName == Customers)
-                EnsureFileColumns(Customers, "Address", "Email", "Phone");
+                EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes");
+            if (baseName == Vendors)
+                EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes");
 
             if (destPath == null)
             {
