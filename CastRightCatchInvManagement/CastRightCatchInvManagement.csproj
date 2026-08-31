@@ -1,0 +1,43 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <AssemblyTitle>Cast Right Catch Inventory</AssemblyTitle>
+    <Product>Cast Right Catch Inventory</Product>
+    <Authors>Cast Right Catch Co.</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="ItemCodes.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="Invoicing.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="Banking.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="PurchaseSales.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="Sales.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="Vendors.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="Customers.cs">
+      <SubType>Form</SubType>
+    </Compile>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,57 @@
+Code,Name,Type,Terms,Amount,Finalized
+ANDS,Andersons Seafoods,Product Supplier,30,72000,NO
+AQCH,Aquachile,Product Supplier,,0,
+AQUA,Aquagold,Product Supplier,14 (per invoice),Unknown,YES
+AZUS,Azure Seafoods,Product Supplier,UNDETERMINED,UNDETERMINED,
+BLUG,BluGlacier,Product Supplier,PREPAY,0,YES
+CAMA,Camanchaca,Product Supplier,COD,0,YES
+CAMT,Camtu's Alaska Wild,Product Supplier,21,50000,YES
+COLD,Cold Fish,Product Supplier,14,0,yes
+COOK,Cooke Aquaculture Chile,Product Supplier,TBD,TBD,NO
+DSEA,Deep Sea Atlantic,Product Supplier,TBD,0,NO
+FCAT,Fresh Catch USA,Product Supplier,COD,,YES
+FOOD,Foods In Season,Product Supplier,15,5000,YES
+FSEA,First Seafood,Product Supplier,TBD,TBD,NO
+INVE,Invermar,Product Supplier,TBD,TBD,NO
+LION,Lions Gate Fisheries LTD,Product Supplier,,,
+MULT,Multi X,Product Supplier,TBD,0,
+OCEA,Ocean Sky,Product Supplier,COD,0,
+PACG,Pacific Seafood Group,Product Supplier,COD,,
+PACI,Pacific Harvest,Product Supplier,14,0,NO
+PENI,Peninsula Seafood,Product Supplier,14,0,NO
+PESC,"Pescanova, Inc",Product Supplier,,,
+QUAL,Quality Seafood,Product Supplier,N/A,N/A,N/A
+RIDR,Rid of the Red,Product Supplier,14,0,YES
+SAAU,Salmones Austral,Product Supplier,COD,,
+SCAR,Scarlet Point,Product Supplier,30,Unknown,
+SEAF,Seafarers,Product Supplier,COD,0,NO
+SEVS,Seven Seas,Product Supplier,14,Unknown,YES
+SLGI,Sleeping Giant,Product Supplier,TBD,TBD,NO
+SOUT,South Bend Products,Product Supplier,14,0,
+TAMP,Tampa Bay Fisheries,Product Supplier,COD,0,YES
+TRID,Trident Seafoods,Product Supplier,TBD,0,NO
+COPP,Copper River Seafoods,Product Supplier,TBD,,
+BORN,Bornsteins Seafoods,Product Supplier,,,
+AITD,American International Trading,Forwarder,30,,YES
+EVOF,EVO Forwarders,Forwarder,TBD,,
+CFIA,Commodity Forwarders-Anchorage,Forwarder,30,,YES
+CFIB,Commodity Forwarders-Boston,Forwarder,30,,YES
+CFIS,Commodity Forwarders-Seattle,Forwarder,30,0,YES
+LCXF,LCX Fresh,Forwarder,,,
+RUBI,Rubicon Transport,Trucking,30 Days,5000,YES
+PANT,Panther,Trucking,,,
+BURN,Burnsed Trucking,Trucking,7,TBD,No
+TQLS,Total Quality Logistics,Trucking,,,
+HBAY,H&M Bay,Trucking,,,
+SCOT,Scotlynn,Trucking,,,
+PBXL,PBX,Trucking,30,TBD,YES
+CPXT,CPX,Trucking,,,
+FFGL,Freight Forwarding Group (FFG),Trucking,,,
+SOTR,Sorensons Transport,Trucking,,,
+CBTR,Claybell Transport,Trucking,30 Days,,NO
+BADG,Badger,Trucking,,,
+WFCL,WFC Logistics,Trucking,15 Days,,YES
+IMLO,IM Logistics,Trucking,COD,0,Yes
+SHOC,Shocker Transport,Trucking,,,
+PGTT,Pacific Group Trucking Transport,Trucking,,,
+FLEG,Fleigenheimer,Customs Broker,,,
