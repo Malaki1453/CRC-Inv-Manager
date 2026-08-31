@@ -17,7 +17,7 @@ namespace CastRightCatchInvManagement
 
             var intro = new Label
             {
-                Text = "Each report will use the current term’s CSV files.",
+                Text = "Each report will use the current term’s data.",
                 Font = Theme.Body,
                 ForeColor = Theme.Muted,
                 Dock = DockStyle.Top,

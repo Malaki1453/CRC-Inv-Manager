@@ -44,7 +44,7 @@ namespace CastRightCatchInvManagement
             help.Click += (_, _) => Navigator.GoTo(AppPage.Help);
             var intro = new Label
             {
-                Text = "These details print on invoices. A data folder is required before the rest of the workspace will open.",
+                Text = "These details print on invoices. Point every computer at the same shared data folder so they share the database and these settings.",
                 Font = Theme.Body,
                 ForeColor = Theme.Muted,
                 Dock = DockStyle.Fill,
@@ -57,7 +57,7 @@ namespace CastRightCatchInvManagement
             var company = new CardPanel { Dock = DockStyle.Top, Height = 300 };
             LayoutCompanyCard(company);
 
-            var data = new CardPanel { Dock = DockStyle.Top, Height = 168 };
+            var data = new CardPanel { Dock = DockStyle.Top, Height = 214 };
             LayoutDataCard(data);
 
             var spacer = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
@@ -67,7 +67,7 @@ namespace CastRightCatchInvManagement
             var salesOrder = new CardPanel { Dock = DockStyle.Top, Height = 168 };
             LayoutSalesOrderCard(salesOrder);
             var spacerSo = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
-            var user = new CardPanel { Dock = DockStyle.Top, Height = 128 };
+            var user = new CardPanel { Dock = DockStyle.Top, Height = 148 };
             LayoutUserCard(user);
             var spacerUser = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
 
@@ -140,20 +140,30 @@ namespace CastRightCatchInvManagement
             };
             card.Controls.Add(heading);
 
+            var note = new Label
+            {
+                Text = "Use one shared folder on every computer (a network drive, or a folder this PC shares). Inventory, settings, and PDFs live in crc_inventory.db. This PC only remembers the folder path.",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 42),
+                Size = new Size(640, 36)
+            };
+            card.Controls.Add(note);
+
             Theme.StyleFieldLabel(lblFolder);
             Theme.StyleField(txtFolderPath);
             Theme.StyleNavyButton(btnChangeFolder);
             Theme.StyleOutlineButton(btnRollToNextTerm);
 
-            PlaceField(card, lblFolder, txtFolderPath, 24, 50, 460);
+            PlaceField(card, lblFolder, txtFolderPath, 24, 82, 460);
             txtFolderPath.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 
             btnChangeFolder.Size = new Size(150, 34);
-            btnChangeFolder.Location = new Point(500, 68);
+            btnChangeFolder.Location = new Point(500, 100);
             btnChangeFolder.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 
             btnRollToNextTerm.Size = new Size(150, 34);
-            btnRollToNextTerm.Location = new Point(500, 108);
+            btnRollToNextTerm.Location = new Point(500, 140);
             btnRollToNextTerm.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 
             card.Controls.Add(btnChangeFolder);
@@ -161,6 +171,7 @@ namespace CastRightCatchInvManagement
 
             card.Resize += (_, _) =>
             {
+                note.Width = Math.Max(200, card.Width - 48);
                 txtFolderPath.Width = Math.Max(200, card.Width - 210);
                 btnChangeFolder.Left = card.Width - 174;
                 btnRollToNextTerm.Left = card.Width - 174;
@@ -173,6 +184,7 @@ namespace CastRightCatchInvManagement
         private TextBox _productPattern = null!;
         private TextBox _productStart = null!;
         private Label _productPreview = null!;
+        private TextBox _userEmail = null!;
 
         private void LayoutProductNumberCard(CardPanel card)
         {
@@ -361,24 +373,24 @@ namespace CastRightCatchInvManagement
             var lbl = new Label { Text = "EMAIL" };
             Theme.StyleFieldLabel(lbl);
 
-            var box = new TextBox
+            _userEmail = new TextBox
             {
                 Name = "txtUserEmail",
                 Text = AppState.UserEmail
             };
-            Theme.StyleField(box);
-            box.PlaceholderText = "you@example.com";
-            box.TextChanged += (_, _) =>
+            Theme.StyleField(_userEmail);
+            _userEmail.PlaceholderText = "you@example.com";
+            _userEmail.Leave += (_, _) =>
             {
-                AppState.UserEmail = box.Text;
+                AppState.UserEmail = _userEmail.Text.Trim();
                 AppLock.SaveSettings();
             };
 
-            PlaceField(card, lbl, box, 24, 48, 640);
-            box.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            PlaceField(card, lbl, _userEmail, 24, 48, 640);
+            _userEmail.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             card.Resize += (_, _) =>
             {
-                box.Width = Math.Max(200, card.Width - 48);
+                _userEmail.Width = Math.Max(200, card.Width - 48);
             };
         }
 
@@ -425,6 +437,9 @@ namespace CastRightCatchInvManagement
             if (_productStart != null)
                 _productStart.Text = AppState.ProductNumberStart;
             UpdateProductNumberPreview();
+
+            if (_userEmail != null)
+                _userEmail.Text = AppState.UserEmail;
         }
 
         private void ApplyLockState()
@@ -445,6 +460,8 @@ namespace CastRightCatchInvManagement
                 _productPattern.Enabled = ready;
             if (_productStart != null)
                 _productStart.Enabled = ready;
+            if (_userEmail != null)
+                _userEmail.Enabled = ready;
 
             txtFolderPath.ReadOnly = true;
             txtFolderPath.BackColor = ready ? Theme.Paper : Theme.DangerFill;
@@ -461,7 +478,7 @@ namespace CastRightCatchInvManagement
         {
             using var dialog = new FolderBrowserDialog
             {
-                Description = "Select the folder that contains your inventory CSV files",
+                Description = "Select the shared folder for the inventory database (same folder on every computer)",
                 UseDescriptionForTitle = true,
                 ShowNewFolderButton = true
             };
@@ -477,6 +494,7 @@ namespace CastRightCatchInvManagement
 
             ApplyLockState();
             DataFiles.EnsureFilesExistOrAsk();
+            AppLock.LoadSharedSettings();
             LoadCompanyInfo();
         }
 
@@ -493,7 +511,7 @@ namespace CastRightCatchInvManagement
             }
 
             var confirm = MessageBox.Show(
-                "This will archive the current CSV files into the 'old data' folder and start a new blank term.\n\nContinue?",
+                "This starts a new term. Purchases, sales, invoices, and other term data stay in the database under the previous term. Leftover CSV files move into 'old data'. Customers, vendors, and item codes stay current.\n\nContinue?",
                 "Roll to Next Term",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
@@ -505,7 +523,7 @@ namespace CastRightCatchInvManagement
             {
                 DataFiles.RollToNextTerm();
                 MessageBox.Show(
-                    "Current files were archived and a new term was started.",
+                    "A new term was started. Earlier rows stay in the database.",
                     "Term Rolled",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);

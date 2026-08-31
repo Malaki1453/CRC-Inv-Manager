@@ -13,6 +13,8 @@
         public const string Credits = "credits";
         public const string StoredInvoicesFolderName = "Stored Invoices";
         public const string StoredSalesOrdersFolderName = "Stored Sales Orders";
+        public const string PdfKindInvoice = "invoice";
+        public const string PdfKindSalesOrder = "sales_order";
 
         public static readonly string[] All =
         {
@@ -46,7 +48,8 @@
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 return false;
 
-            return FindCurrentFile(baseName) != null;
+            SqliteInventory.EnsureCreated();
+            return SqliteInventory.GetPath() != null;
         }
 
         public static string? FindCurrentFile(string baseName)
@@ -77,18 +80,20 @@
 
         public static void SyncTermStartFromFiles()
         {
-            DateTime? latest = null;
+            DateTime? latest = SqliteInventory.LatestTerm();
 
-            foreach (var baseName in All)
+            if (latest == null &&
+                !string.IsNullOrWhiteSpace(AppState.InventoryFolder) &&
+                Directory.Exists(AppState.InventoryFolder))
             {
-                var path = FindCurrentFile(baseName);
-                if (path == null)
-                    continue;
-
-                if (TryParseStartDate(Path.GetFileName(path), baseName, out var date))
+                foreach (var baseName in All)
                 {
-                    if (latest == null || date > latest)
-                        latest = date;
+                    foreach (var path in Directory.GetFiles(AppState.InventoryFolder, baseName + "_*.csv"))
+                    {
+                        if (TryParseStartDate(Path.GetFileName(path), baseName, out var date) &&
+                            (latest == null || date > latest))
+                            latest = date;
+                    }
                 }
             }
 
@@ -144,16 +149,13 @@
             if (string.IsNullOrWhiteSpace(baseName))
                 return null;
 
-            return Path.GetFileName(FindCurrentFile(baseName) ?? GetFileName(baseName));
+            string term = (AppState.TermStartDate ?? DateTime.Today).ToString("yyyy-MM-dd");
+            return $"{SqliteInventory.FileName}  ·  {baseName}  ·  {term}";
         }
 
         public static string? GetActiveFilePath()
         {
-            string baseName = GetPageFileBaseName(Navigator.CurrentPage);
-            if (string.IsNullOrWhiteSpace(baseName))
-                return null;
-
-            return FindCurrentFile(baseName);
+            return SqliteInventory.GetPath();
         }
 
         public static bool ActiveFileExists()
@@ -180,18 +182,6 @@
 
         public static void OpenStoredInvoice(string? invoiceNumber)
         {
-            EnsureStoredInvoicesFolder();
-            string? folder = GetStoredInvoicesFolder();
-            if (folder == null || !Directory.Exists(folder))
-            {
-                MessageBox.Show(
-                    "Select a data folder first. Stored invoices live in a 'Stored Invoices' folder there.",
-                    "No Invoice Folder",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
-
             string key = (invoiceNumber ?? "").Trim();
             if (key.Length == 0)
             {
@@ -203,48 +193,114 @@
                 return;
             }
 
-            var matches = Directory.GetFiles(folder, "*.pdf")
-                .Where(path => Path.GetFileNameWithoutExtension(path)
-                    .Contains(key, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            if (matches.Count == 0)
+            string? path = FindStoredPdf(PdfKindInvoice, key);
+            if (path == null)
             {
                 MessageBox.Show(
-                    $"No stored PDF was found for invoice {key}.\n\nSave invoice PDFs in:\n{folder}",
+                    $"No stored PDF was found for invoice {key}.",
                     "Invoice Not Found",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
                 return;
             }
 
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = matches[0],
-                UseShellExecute = true
-            });
+            OpenPdf(path);
         }
 
         public static string? FindStoredSalesOrder(string? soNumber)
         {
-            EnsureStoredSalesOrdersFolder();
-            string? folder = GetStoredSalesOrdersFolder();
+            return FindStoredPdf(PdfKindSalesOrder, soNumber);
+        }
+
+        public static string SaveStoredPdf(string kind, string key, string fileName, byte[] content)
+        {
+            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+                throw new InvalidOperationException("Select a data folder first.");
+
+            SqliteInventory.SavePdf(kind, key, fileName, content);
+
+            string? folder = kind == PdfKindInvoice
+                ? GetStoredInvoicesFolder()
+                : GetStoredSalesOrdersFolder();
+            if (folder == null)
+                throw new InvalidOperationException("Select a data folder first.");
+
+            Directory.CreateDirectory(folder);
+            string path = Path.Combine(folder, fileName);
+            File.WriteAllBytes(path, content);
+            return path;
+        }
+
+        public static string? FindStoredPdf(string kind, string? key)
+        {
+            key = (key ?? "").Trim();
+            if (key.Length == 0 || string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+                return null;
+
+            var stored = SqliteInventory.TryGetPdf(kind, key);
+            if (stored != null)
+                return WritePdfCopy(kind, stored.Value.FileName, stored.Value.Content);
+
+            string? disk = FindPdfOnDisk(kind, key);
+            if (disk == null)
+                return null;
+
+            try
+            {
+                SqliteInventory.SavePdf(kind, key, Path.GetFileName(disk), File.ReadAllBytes(disk));
+            }
+            catch
+            {
+                // still open the file even if the database write fails
+            }
+
+            return disk;
+        }
+
+        private static string? FindPdfOnDisk(string kind, string key)
+        {
+            string? folder = kind == PdfKindInvoice
+                ? GetStoredInvoicesFolder()
+                : GetStoredSalesOrdersFolder();
             if (folder == null || !Directory.Exists(folder))
                 return null;
 
-            string key = (soNumber ?? "").Trim();
-            if (key.Length == 0)
-                return null;
+            var files = Directory.GetFiles(folder, "*.pdf");
+            if (kind == PdfKindInvoice)
+            {
+                return files.FirstOrDefault(path =>
+                    Path.GetFileNameWithoutExtension(path)
+                        .Contains(key, StringComparison.OrdinalIgnoreCase));
+            }
 
             string prefix = "Sales Order " + key;
-            return Directory.GetFiles(folder, "*.pdf")
-                .FirstOrDefault(path =>
-                {
-                    string name = Path.GetFileNameWithoutExtension(path);
-                    return name.Equals(prefix, StringComparison.OrdinalIgnoreCase) ||
-                           name.StartsWith(prefix + " ", StringComparison.OrdinalIgnoreCase) ||
-                           name.StartsWith(prefix + " -", StringComparison.OrdinalIgnoreCase);
-                });
+            return files.FirstOrDefault(path =>
+            {
+                string name = Path.GetFileNameWithoutExtension(path);
+                return name.Equals(prefix, StringComparison.OrdinalIgnoreCase) ||
+                       name.StartsWith(prefix + " ", StringComparison.OrdinalIgnoreCase) ||
+                       name.StartsWith(prefix + " -", StringComparison.OrdinalIgnoreCase);
+            });
+        }
+
+        private static string WritePdfCopy(string kind, string fileName, byte[] content)
+        {
+            string? folder = kind == PdfKindInvoice
+                ? GetStoredInvoicesFolder()
+                : GetStoredSalesOrdersFolder();
+            if (folder != null)
+            {
+                Directory.CreateDirectory(folder);
+                string path = Path.Combine(folder, fileName);
+                File.WriteAllBytes(path, content);
+                return path;
+            }
+
+            string temp = Path.Combine(Path.GetTempPath(), "CRC-Inv-Manager");
+            Directory.CreateDirectory(temp);
+            string tempPath = Path.Combine(temp, fileName);
+            File.WriteAllBytes(tempPath, content);
+            return tempPath;
         }
 
         public static string? FindExistingSalesOrderNumber(
@@ -300,9 +356,8 @@
                     return;
                 }
 
-                string? folder = GetStoredSalesOrdersFolder();
                 MessageBox.Show(
-                    $"No stored PDF was found for sales order {key}.\n\nSave sales order PDFs in:\n{folder}",
+                    $"No stored PDF was found for sales order {key}.",
                     "Sales Order Not Found",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
@@ -336,42 +391,23 @@
 
             EnsureStoredInvoicesFolder();
             EnsureStoredSalesOrdersFolder();
-            SyncTermStartFromFiles();
-
-            var missing = GetMissingFiles();
-            if (missing.Count == 0)
-                return;
-
-            string message =
-                "These data files were not found in the selected folder:\n\n" +
-                string.Join("\n", missing) +
-                "\n\nDo you want to create blank files for them now?";
-
-            var result = MessageBox.Show(
-                message,
-                "Missing Data Files",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-
-            if (result != DialogResult.Yes)
-                return;
-
-            CreateMissingFiles(All.Where(name => !Exists(name)));
-        }
-
-        public static void CreateMissingFiles(IEnumerable<string> missingBaseNames)
-        {
             if (AppState.TermStartDate == null)
             {
                 AppState.TermStartDate = DateTime.Today;
                 AppLock.SaveSettings();
             }
 
+            SqliteInventory.EnsureCreated();
+            SqliteInventory.ImportCsvsIfEmpty();
+            SqliteInventory.ImportPdfsFromFolders();
+            SyncTermStartFromFiles();
+        }
+
+        public static void CreateMissingFiles(IEnumerable<string> missingBaseNames)
+        {
+            SqliteInventory.EnsureCreated();
             foreach (var baseName in missingBaseNames)
-            {
-                string path = GetPath(baseName);
-                File.WriteAllText(path, GetExpectedHeader(baseName) + Environment.NewLine);
-            }
+                SqliteInventory.EnsureColumns(baseName);
         }
 
         public static void RollToNextTerm()
@@ -392,28 +428,19 @@
 
             foreach (var baseName in All)
             {
-                string? currentPath = FindCurrentFile(baseName);
-                if (currentPath == null)
-                    continue;
-
-                string archivedName = $"{baseName}_{start:yyyy-MM-dd}_{end:yyyy-MM-dd}.csv";
-                string archivePath = Path.Combine(archiveFolder, archivedName);
-
-                if (File.Exists(archivePath))
-                    File.Delete(archivePath);
-
-                File.Move(currentPath, archivePath);
+                foreach (var currentPath in Directory.GetFiles(AppState.InventoryFolder, baseName + "_*.csv"))
+                {
+                    string archivedName = $"{baseName}_{start:yyyy-MM-dd}_{end:yyyy-MM-dd}.csv";
+                    string archivePath = Path.Combine(archiveFolder, Path.GetFileName(currentPath));
+                    if (File.Exists(archivePath))
+                        File.Delete(archivePath);
+                    File.Move(currentPath, archivePath);
+                }
             }
 
             AppState.TermStartDate = DateTime.Today;
             AppLock.SaveSettings();
-
-            foreach (var baseName in All)
-            {
-                File.WriteAllText(
-                    GetPath(baseName),
-                    GetExpectedHeader(baseName) + Environment.NewLine);
-            }
+            SqliteInventory.EnsureCreated();
         }
 
         public static string GetExpectedHeader(string baseName)
@@ -453,30 +480,15 @@
 
         public static List<Dictionary<string, string>> ReadRecords(string baseName)
         {
+            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+                return new List<Dictionary<string, string>>();
+
             if (baseName == Customers)
                 EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes");
             if (baseName == Vendors)
                 EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes");
 
-            var result = new List<Dictionary<string, string>>();
-            var path = FindCurrentFile(baseName);
-            if (path == null || !File.Exists(path))
-                return result;
-
-            var rows = CsvIO.Read(path);
-            if (rows.Count == 0)
-                return result;
-
-            var header = rows[0];
-            for (int i = 1; i < rows.Count; i++)
-            {
-                var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                for (int c = 0; c < header.Length; c++)
-                    map[header[c].Trim()] = c < rows[i].Length ? rows[i][c] : "";
-                result.Add(map);
-            }
-
-            return result;
+            return SqliteInventory.Read(baseName);
         }
 
         public static string GetRecord(Dictionary<string, string> record, string column)
@@ -669,74 +681,30 @@
             Func<Dictionary<string, string>, bool> match,
             Action<Dictionary<string, string>> mutate)
         {
-            string path = FindCurrentFile(baseName) ?? GetPath(baseName);
-            if (!File.Exists(path))
+            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 return 0;
 
-            var rows = CsvIO.Read(path);
-            if (rows.Count == 0)
-                return 0;
-
-            var header = rows[0];
             int updated = 0;
-            for (int i = 1; i < rows.Count; i++)
+            foreach (var (id, map) in SqliteInventory.ReadWithIds(baseName))
             {
-                var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                for (int c = 0; c < header.Length; c++)
-                    map[header[c].Trim()] = c < rows[i].Length ? rows[i][c] : "";
                 if (!match(map))
                     continue;
 
                 mutate(map);
-                var cells = new string[header.Length];
-                for (int c = 0; c < header.Length; c++)
-                    cells[c] = GetRecord(map, header[c].Trim());
-                rows[i] = cells;
-                updated++;
+                if (SqliteInventory.UpdateById(baseName, id, map))
+                    updated++;
             }
 
             if (updated == 0)
                 return 0;
 
-            CsvIO.Write(path, header, rows.Skip(1));
             NotifyDataChanged();
             return updated;
         }
 
         public static void EnsureFileColumns(string baseName, params string[] columns)
         {
-            string? path = FindCurrentFile(baseName);
-            if (path == null || !File.Exists(path) || columns.Length == 0)
-                return;
-
-            var rows = CsvIO.Read(path);
-            if (rows.Count == 0)
-                return;
-
-            var header = rows[0].Select(h => h.Trim()).ToList();
-            bool added = false;
-            foreach (var column in columns)
-            {
-                if (header.Any(h => h.Equals(column, StringComparison.OrdinalIgnoreCase)))
-                    continue;
-                header.Add(column);
-                added = true;
-            }
-
-            if (!added)
-                return;
-
-            var headerArr = header.ToArray();
-            var body = new List<string[]>(rows.Count - 1);
-            for (int i = 1; i < rows.Count; i++)
-            {
-                var cells = new string[headerArr.Length];
-                for (int c = 0; c < headerArr.Length; c++)
-                    cells[c] = c < rows[i].Length ? rows[i][c] : "";
-                body.Add(cells);
-            }
-
-            CsvIO.Write(path, headerArr, body);
+            SqliteInventory.EnsureColumns(baseName, columns);
         }
 
         private static Dictionary<string, string> MergeSaleAndPurchase(
@@ -999,41 +967,13 @@
 
         public static void AppendNamedRow(string baseName, Dictionary<string, string> values)
         {
-            if (AppState.TermStartDate == null)
-            {
-                AppState.TermStartDate = DateTime.Today;
-                AppLock.SaveSettings();
-            }
-
-            string path = FindCurrentFile(baseName) ?? GetPath(baseName);
-            string[] header;
-            if (File.Exists(path))
-            {
-                var existing = CsvIO.Read(path);
-                header = existing.Count > 0 ? existing[0] : GetExpectedHeader(baseName).Split(',');
-            }
-            else
-            {
-                header = GetExpectedHeader(baseName).Split(',');
-                File.WriteAllText(path, GetExpectedHeader(baseName) + Environment.NewLine);
-            }
-
-            File.AppendAllText(path, CsvIO.Join(MapNamedRow(header, values)) + Environment.NewLine);
+            SqliteInventory.Insert(baseName, values);
             NotifyDataChanged();
         }
 
         public static string[] NamedRow(string baseName, Dictionary<string, string> values)
         {
-            string? path = FindCurrentFile(baseName);
-            string[] header = GetExpectedHeader(baseName).Split(',');
-            if (path != null && File.Exists(path))
-            {
-                var existing = CsvIO.Read(path);
-                if (existing.Count > 0)
-                    header = existing[0];
-            }
-
-            return MapNamedRow(header, values);
+            return MapNamedRow(SqliteInventory.Headers(baseName), values);
         }
 
         private static string[] MapNamedRow(string[] header, Dictionary<string, string> values)
@@ -1076,17 +1016,12 @@
 
         public static void AppendRow(string baseName, IEnumerable<string> fields)
         {
-            if (AppState.TermStartDate == null)
-            {
-                AppState.TermStartDate = DateTime.Today;
-                AppLock.SaveSettings();
-            }
-
-            string path = FindCurrentFile(baseName) ?? GetPath(baseName);
-            if (!File.Exists(path))
-                File.WriteAllText(path, GetExpectedHeader(baseName) + Environment.NewLine);
-
-            File.AppendAllText(path, CsvIO.Join(fields) + Environment.NewLine);
+            var header = SqliteInventory.Headers(baseName);
+            var cells = fields.ToList();
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < header.Length; i++)
+                values[header[i]] = i < cells.Count ? cells[i] ?? "" : "";
+            SqliteInventory.Insert(baseName, values);
             NotifyDataChanged();
         }
 
@@ -1111,38 +1046,25 @@
             Func<Dictionary<string, string>, bool> match,
             IReadOnlyList<string> fields)
         {
-            string path = FindCurrentFile(baseName) ?? GetPath(baseName);
-            if (!File.Exists(path))
+            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 return false;
 
-            var rows = CsvIO.Read(path);
-            if (rows.Count == 0)
-                return false;
+            var header = SqliteInventory.Headers(baseName);
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < header.Length; i++)
+                values[header[i]] = i < fields.Count ? fields[i] ?? "" : "";
 
-            var header = rows[0];
-            int found = -1;
-            for (int i = 1; i < rows.Count; i++)
+            foreach (var (id, map) in SqliteInventory.ReadWithIds(baseName))
             {
-                var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                for (int c = 0; c < header.Length; c++)
-                    map[header[c].Trim()] = c < rows[i].Length ? rows[i][c] : "";
                 if (!match(map))
                     continue;
-                found = i;
-                break;
+
+                SqliteInventory.UpdateById(baseName, id, values);
+                NotifyDataChanged();
+                return true;
             }
 
-            if (found < 0)
-                return false;
-
-            var cells = new string[header.Length];
-            for (int c = 0; c < header.Length; c++)
-                cells[c] = c < fields.Count ? fields[c] ?? "" : "";
-            rows[found] = cells;
-
-            CsvIO.Write(path, header, rows.Skip(1));
-            NotifyDataChanged();
-            return true;
+            return false;
         }
 
         public static string DisplayColumnHeader(string baseName, string[] fileHeader, string name)
@@ -1272,12 +1194,10 @@
 
         public static int CountDataRows(string baseName)
         {
-            var path = FindCurrentFile(baseName);
-            if (path == null || !File.Exists(path))
+            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 return 0;
 
-            var rows = CsvIO.Read(path);
-            return Math.Max(0, rows.Count - 1);
+            return SqliteInventory.Count(baseName);
         }
 
         public static void FillGrid(DataGridView grid, string baseName)
@@ -1292,30 +1212,15 @@
                 if (baseName == Vendors)
                     EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes");
 
-                if (!Exists(baseName))
+                if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) || !Exists(baseName))
                 {
                     grid.Columns.Add("Status", "Status");
-                    grid.Rows.Add("No file for this option");
+                    grid.Rows.Add("Select a data folder in Settings");
                     return;
                 }
 
-                var path = FindCurrentFile(baseName);
-                if (path == null)
-                {
-                    grid.Columns.Add("Status", "Status");
-                    grid.Rows.Add("No file for this option");
-                    return;
-                }
-
-                var rows = CsvIO.Read(path);
-                if (rows.Count == 0)
-                {
-                    grid.Columns.Add("Status", "Status");
-                    grid.Rows.Add("File is empty");
-                    return;
-                }
-
-                var header = rows[0];
+                var header = SqliteInventory.Headers(baseName);
+                var records = ReadRecords(baseName);
                 int[] order = ColumnDisplayOrder(baseName, header);
                 foreach (int c in order)
                 {
@@ -1328,14 +1233,13 @@
 
                 Theme.EnsureAddColumn(grid);
 
-                for (int i = 1; i < rows.Count; i++)
+                foreach (var record in records)
                 {
-                    var row = rows[i];
                     var cells = new object[order.Length];
                     for (int n = 0; n < order.Length; n++)
                     {
                         int c = order[n];
-                        cells[n] = c < row.Length ? row[c] : "";
+                        cells[n] = GetRecord(record, header[c]);
                     }
                     grid.Rows.Add(cells);
                 }
@@ -1352,12 +1256,17 @@
 
         public static bool TryImportCsv(string sourcePath, out string message)
         {
-            string? destPath = GetActiveFilePath();
             string baseName = GetPageFileBaseName(Navigator.CurrentPage);
 
             if (string.IsNullOrWhiteSpace(baseName))
             {
-                message = "This page does not have a data file.";
+                message = "This page does not have a table in the database.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            {
+                message = "Select a data folder in Settings first.";
                 return false;
             }
 
@@ -1404,14 +1313,7 @@
             if (baseName == Vendors)
                 EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes");
 
-            if (destPath == null)
-            {
-                if (AppState.TermStartDate == null)
-                    AppState.TermStartDate = DateTime.Today;
-
-                destPath = GetPath(baseName);
-                File.WriteAllText(destPath, GetExpectedHeader(baseName) + Environment.NewLine);
-            }
+            SqliteInventory.EnsureCreated();
 
             if (sourceRows.Count < 2)
             {
@@ -1419,19 +1321,17 @@
                 return false;
             }
 
-            var destRows = CsvIO.Read(destPath);
-            string[] destHeader = destRows.Count > 0 ? destRows[0] : expectedHeader;
-            var mapped = new List<string>();
+            var batch = new List<Dictionary<string, string>>();
             for (int i = 1; i < sourceRows.Count; i++)
             {
                 var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 for (int c = 0; c < incomingHeader.Length; c++)
                     values[incomingHeader[c].Trim()] = c < sourceRows[i].Length ? sourceRows[i][c] : "";
-                mapped.Add(CsvIO.Join(MapNamedRow(destHeader, values)));
+                batch.Add(values);
             }
 
-            File.AppendAllLines(destPath, mapped);
-            message = $"{mapped.Count} row(s) imported into {Path.GetFileName(destPath)}.";
+            int imported = SqliteInventory.InsertMany(baseName, batch);
+            message = $"{imported} row(s) imported into {SqliteInventory.FileName} ({baseName}).";
             NotifyDataChanged();
             return true;
         }
@@ -1453,7 +1353,7 @@
             return true;
         }
 
-        private static bool TryParseStartDate(string fileName, string baseName, out DateTime date)
+        internal static bool TryParseStartDate(string fileName, string baseName, out DateTime date)
         {
             date = default;
             string noExt = Path.GetFileNameWithoutExtension(fileName);

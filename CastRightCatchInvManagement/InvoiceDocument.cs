@@ -7,18 +7,15 @@ namespace CastRightCatchInvManagement
     {
         public static string Save(InvoiceDraft draft)
         {
-            DataFiles.EnsureStoredInvoicesFolder();
-            string? folder = DataFiles.GetStoredInvoicesFolder();
-            if (folder == null)
-                throw new InvalidOperationException("Select a data folder first.");
-
             string customer = string.IsNullOrWhiteSpace(draft.CustomerCode)
                 ? draft.CustomerName
                 : draft.CustomerCode;
             string fileName = SanitizeFile($"Invoice {draft.InvoiceNumber} - {customer}.pdf");
-            string path = Path.Combine(folder, fileName);
-            File.WriteAllBytes(path, Build(draft));
-            return path;
+            return DataFiles.SaveStoredPdf(
+                DataFiles.PdfKindInvoice,
+                draft.InvoiceNumber.Trim(),
+                fileName,
+                Build(draft));
         }
 
         private static byte[] Build(InvoiceDraft draft)

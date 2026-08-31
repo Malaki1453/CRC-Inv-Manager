@@ -9,7 +9,10 @@ namespace CastRightCatchInvManagement
             AppLock.LoadSavedFolder();
 
             if (AppLock.HasFolder())
+            {
                 DataFiles.EnsureFilesExistOrAsk();
+                AppLock.LoadSharedSettings();
+            }
 
             Application.Run(new InventoryAppContext());
         }

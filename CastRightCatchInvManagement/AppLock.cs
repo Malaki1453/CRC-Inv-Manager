@@ -1,5 +1,4 @@
-﻿using System.Text.Json;
-using System.Text.RegularExpressions;
+using System.Text.Json;
 
 namespace CastRightCatchInvManagement
 {
@@ -9,6 +8,8 @@ namespace CastRightCatchInvManagement
             Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory,
                 $"settings_{SanitizeUserName(Environment.UserName)}.json");
+
+        private static bool _loadingShared;
 
         public static bool HasFolder()
         {
@@ -33,24 +34,46 @@ namespace CastRightCatchInvManagement
                     AppState.InventoryFolder = settings.InventoryFolder;
                 }
 
-                if (DateTime.TryParse(settings.TermStartDate, out var start))
-                    AppState.TermStartDate = start;
-
-                AppState.UserEmail = settings.UserEmail ?? "";
-                AppState.BusinessName = settings.BusinessName ?? "";
-                AppState.Address = settings.Address ?? "";
-                AppState.Phone = settings.Phone ?? "";
-                AppState.CompanyEmail = settings.CompanyEmail ?? "";
-                AppState.Ein = settings.Ein ?? "";
-                AppState.PaymentTerms = settings.PaymentTerms ?? "";
-                AppState.SalesOrderPattern = settings.SalesOrderPattern ?? "";
-                AppState.SalesOrderStart = settings.SalesOrderStart ?? "";
-                AppState.ProductNumberPattern = settings.ProductNumberPattern ?? "";
-                AppState.ProductNumberStart = settings.ProductNumberStart ?? "";
+                ApplyLocalFallback(settings);
             }
             catch
             {
                 // ignore bad settings file
+            }
+        }
+
+        public static void LoadSharedSettings()
+        {
+            if (!HasFolder())
+                return;
+
+            try
+            {
+                _loadingShared = true;
+                SqliteInventory.EnsureCreated();
+                var shared = SqliteInventory.ReadSettings();
+                if (shared.Count == 0)
+                {
+                    _loadingShared = false;
+                    SaveSettings();
+                    return;
+                }
+
+                ApplyShared(shared);
+
+                string? email = SqliteInventory.ReadUserEmail(Environment.UserName);
+                if (email != null)
+                    AppState.UserEmail = email;
+                else if (!string.IsNullOrWhiteSpace(AppState.UserEmail))
+                    SqliteInventory.WriteUserEmail(Environment.UserName, AppState.UserEmail);
+            }
+            catch
+            {
+                // keep whatever was loaded from the local file
+            }
+            finally
+            {
+                _loadingShared = false;
             }
         }
 
@@ -61,33 +84,26 @@ namespace CastRightCatchInvManagement
             AppState.InventoryFolder = folder;
             SaveSettings();
             DataFiles.EnsureStoredInvoicesFolder();
+            DataFiles.EnsureStoredSalesOrdersFolder();
         }
 
         public static void SaveSettings()
         {
-            var settings = new AppSettings
-            {
-                InventoryFolder = AppState.InventoryFolder,
-                TermStartDate = AppState.TermStartDate?.ToString("yyyy-MM-dd"),
-                UserEmail = AppState.UserEmail,
-                BusinessName = AppState.BusinessName,
-                Address = AppState.Address,
-                Phone = AppState.Phone,
-                CompanyEmail = AppState.CompanyEmail,
-                Ein = AppState.Ein,
-                PaymentTerms = AppState.PaymentTerms,
-                SalesOrderPattern = AppState.SalesOrderPattern,
-                SalesOrderStart = AppState.SalesOrderStart,
-                ProductNumberPattern = AppState.ProductNumberPattern,
-                ProductNumberStart = AppState.ProductNumberStart
-            };
+            WriteLocalJson();
 
-            string json = JsonSerializer.Serialize(settings, new JsonSerializerOptions
+            if (!_loadingShared && HasFolder())
             {
-                WriteIndented = true
-            });
+                try
+                {
+                    SqliteInventory.WriteSettings(CurrentShared());
+                    SqliteInventory.WriteUserEmail(Environment.UserName, AppState.UserEmail);
+                }
+                catch
+                {
+                    // keep the local folder pointer even if the database is busy
+                }
+            }
 
-            File.WriteAllText(SettingsPath, json);
             Changed?.Invoke();
         }
 
@@ -102,6 +118,80 @@ namespace CastRightCatchInvManagement
 
                 btn.Enabled = unlocked;
             }
+        }
+
+        private static void WriteLocalJson()
+        {
+            var settings = new AppSettings
+            {
+                InventoryFolder = AppState.InventoryFolder
+            };
+
+            string json = JsonSerializer.Serialize(settings, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(SettingsPath, json);
+        }
+
+        private static Dictionary<string, string> CurrentShared()
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["term_start"] = AppState.TermStartDate?.ToString("yyyy-MM-dd") ?? "",
+                ["business_name"] = AppState.BusinessName ?? "",
+                ["address"] = AppState.Address ?? "",
+                ["phone"] = AppState.Phone ?? "",
+                ["company_email"] = AppState.CompanyEmail ?? "",
+                ["ein"] = AppState.Ein ?? "",
+                ["payment_terms"] = AppState.PaymentTerms ?? "",
+                ["sales_order_pattern"] = AppState.SalesOrderPattern ?? "",
+                ["sales_order_start"] = AppState.SalesOrderStart ?? "",
+                ["product_number_pattern"] = AppState.ProductNumberPattern ?? "",
+                ["product_number_start"] = AppState.ProductNumberStart ?? ""
+            };
+        }
+
+        private static void ApplyShared(Dictionary<string, string> shared)
+        {
+            if (shared.TryGetValue("term_start", out var term) &&
+                DateTime.TryParse(term, out var start))
+                AppState.TermStartDate = start;
+
+            AppState.BusinessName = Get(shared, "business_name", AppState.BusinessName);
+            AppState.Address = Get(shared, "address", AppState.Address);
+            AppState.Phone = Get(shared, "phone", AppState.Phone);
+            AppState.CompanyEmail = Get(shared, "company_email", AppState.CompanyEmail);
+            AppState.Ein = Get(shared, "ein", AppState.Ein);
+            AppState.PaymentTerms = Get(shared, "payment_terms", AppState.PaymentTerms);
+            AppState.SalesOrderPattern = Get(shared, "sales_order_pattern", AppState.SalesOrderPattern);
+            AppState.SalesOrderStart = Get(shared, "sales_order_start", AppState.SalesOrderStart);
+            AppState.ProductNumberPattern = Get(shared, "product_number_pattern", AppState.ProductNumberPattern);
+            AppState.ProductNumberStart = Get(shared, "product_number_start", AppState.ProductNumberStart);
+        }
+
+        private static void ApplyLocalFallback(AppSettings settings)
+        {
+            if (DateTime.TryParse(settings.TermStartDate, out var start))
+                AppState.TermStartDate = start;
+
+            AppState.UserEmail = settings.UserEmail ?? AppState.UserEmail;
+            AppState.BusinessName = settings.BusinessName ?? AppState.BusinessName;
+            AppState.Address = settings.Address ?? AppState.Address;
+            AppState.Phone = settings.Phone ?? AppState.Phone;
+            AppState.CompanyEmail = settings.CompanyEmail ?? AppState.CompanyEmail;
+            AppState.Ein = settings.Ein ?? AppState.Ein;
+            AppState.PaymentTerms = settings.PaymentTerms ?? AppState.PaymentTerms;
+            AppState.SalesOrderPattern = settings.SalesOrderPattern ?? AppState.SalesOrderPattern;
+            AppState.SalesOrderStart = settings.SalesOrderStart ?? AppState.SalesOrderStart;
+            AppState.ProductNumberPattern = settings.ProductNumberPattern ?? AppState.ProductNumberPattern;
+            AppState.ProductNumberStart = settings.ProductNumberStart ?? AppState.ProductNumberStart;
+        }
+
+        private static string Get(Dictionary<string, string> map, string key, string fallback)
+        {
+            return map.TryGetValue(key, out var value) ? value ?? "" : fallback;
         }
 
         private static string SanitizeUserName(string userName)

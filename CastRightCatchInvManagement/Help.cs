@@ -61,7 +61,7 @@ namespace CastRightCatchInvManagement
                 "If you close the original window while extras are open, a remaining window becomes the main one.");
 
             AddSection(stack, "Tables", "Tables",
-                "Upload CSV imports rows into the current page’s file. Headings must match that page.",
+                "Upload CSV imports rows into this page’s table in the database. Headings must match that page.",
                 "Click a column heading (not the sort arrows) to open a filter box under that header. Type to hide rows that do not contain that text. Matching is not case-sensitive and can be any part of the cell, not the whole value.",
                 "You can open and type in more than one column. A row stays visible only if it matches every filter that has text.",
                 "Clear a filter box and click away to close it. Leave a value in the box to keep that filter on.",
@@ -76,7 +76,7 @@ namespace CastRightCatchInvManagement
             AddSection(stack, "Purchases", "Purchases",
                 "Purchases lists purchase rows for the term.",
                 "Purchase Form / Add Product creates or edits a purchase line.",
-                "Vendor, item code, lot (PO #), costs, and dates on that form save back to the purchases file.");
+                "Vendor, item code, lot (PO #), costs, and dates on that form save back to purchases.");
 
             AddSection(stack, "Sales", "Sales",
                 "Sales lists sold product rows.",
@@ -89,14 +89,14 @@ namespace CastRightCatchInvManagement
                 "Create Sales Order is a pick ticket: customer, ship-to, warehouse, freight, item, lot, cases, and volume.",
                 "Ship To uses the customer Address. If none is on file, the field says “Not found, please input manually.”",
                 "Enter a customer PO, or middle-click a sale, to add every matching line.",
-                "Create Sales Order opens an existing PDF when those sales already have one. Otherwise it builds a PDF, writes the SO # onto those sales lines, and opens the file.");
+                "Create Sales Order opens an existing PDF when those sales already have one. Otherwise it builds a PDF, stores it in the database, writes the SO # onto those sales lines, and opens the file.");
 
             AddSection(stack, "Invoices", "Invoices",
                 "Invoices lists invoice records. Create Invoice builds a PDF.",
                 "Double-click or Shift+click sales to fill lines, or type a customer PO on a line. Locked lines cannot be edited.",
                 "Ship To is the customer address. Sold To is the name and contact.",
                 "Tax has a # / % button. # is a flat amount. % is a percent of the subtotal after discount.",
-                "Create Invoice writes a PDF into Stored Invoices.");
+                "Create Invoice stores the PDF in the database and also writes a copy into Stored Invoices.");
 
             AddSection(stack, "Customers", "Customers",
                 "The customer table shows name, company, phone, and current balance. Right-click View Details for the rest of the record, or Edit Customer to change it.",
@@ -106,13 +106,13 @@ namespace CastRightCatchInvManagement
             AddSection(stack, "Lookups", "Vendors, item codes, and other lists",
                 "The vendor table shows name, company, phone, and current balance. Right-click View Details or Edit Vendor for the rest.",
                 "Vendors and Item Codes are lookup tables used on purchase and sales forms.",
-                "Debits, Credits, and Banking are term CSV tables like the other data pages.",
-                "Reports will use the current term’s files.");
+                "Debits, Credits, and Banking are term tables like the other data pages.",
+                "Reports will use the current term’s data.");
 
             AddSection(stack, "Settings", "Settings",
                 "Information for invoices prints on PDFs: business name, address, phone, email, EIN, and terms.",
-                "Data folder points at your CSV files. Roll to Next Term archives the current files and starts a blank term.",
-                "User email is used as the sales rep on invoices.",
+                "Point every computer at the same shared data folder. Inventory, settings, and invoice/sales-order PDFs live in crc_inventory.db. Copies of those PDFs are also written to Stored Invoices and Stored Sales Orders so you can open them in Explorer. This PC only stores the folder path. A network share is more reliable than OneDrive or Dropbox if two people might work at the same time. Roll to Next Term starts a new term without deleting earlier rows.",
+                "User email is this Windows user’s sales-rep address. It is stored in the shared database, so the same person keeps it on any computer.",
                 "Sales order numbers can use a pattern such as CRC#### and a start number. CRC#### starts at CRC0001. CRC#### with start 1000 starts at CRC1000. Leave the pattern blank to keep 10001, 10002, and so on.",
                 "Product numbers (purchase PO #) use the same kind of pattern. Leave that pattern blank to keep CRC26-10001, CRC26-10002, and so on.",
                 "The ? button next to Settings opens this Controls page.");
