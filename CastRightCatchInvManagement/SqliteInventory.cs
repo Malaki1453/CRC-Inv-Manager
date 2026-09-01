@@ -55,6 +55,8 @@ namespace CastRightCatchInvManagement
                 defs.AddRange(columns.Select(c => $"{Quote(c)} TEXT"));
                 cmd.CommandText = $"CREATE TABLE IF NOT EXISTS {Quote(table)} ({string.Join(", ", defs)});";
                 cmd.ExecuteNonQuery();
+                foreach (var column in columns)
+                    EnsureTextColumn(table, column);
             }
 
             cmd.CommandText =
@@ -88,6 +90,28 @@ namespace CastRightCatchInvManagement
                 );
                 """;
             cmd.ExecuteNonQuery();
+
+            cmd.CommandText =
+                """
+                CREATE TABLE IF NOT EXISTS app_accounts (
+                    username TEXT PRIMARY KEY NOT NULL COLLATE NOCASE,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    password_hash TEXT NOT NULL,
+                    password_salt TEXT NOT NULL,
+                    email TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+                """;
+            cmd.ExecuteNonQuery();
+            EnsureAccountColumn("is_it", "INTEGER NOT NULL DEFAULT 0");
+            EnsureAccountColumn("is_admin", "INTEGER NOT NULL DEFAULT 0");
+            EnsureAccountColumn("must_change_password", "INTEGER NOT NULL DEFAULT 0");
+            EnsureAccountColumn("security_q1", "TEXT NOT NULL DEFAULT ''");
+            EnsureAccountColumn("security_a1", "TEXT NOT NULL DEFAULT ''");
+            EnsureAccountColumn("security_q2", "TEXT NOT NULL DEFAULT ''");
+            EnsureAccountColumn("security_a2", "TEXT NOT NULL DEFAULT ''");
+            EnsureAccountColumn("security_q3", "TEXT NOT NULL DEFAULT ''");
+            EnsureAccountColumn("security_a3", "TEXT NOT NULL DEFAULT ''");
         }
 
         public static void ImportCsvsIfEmpty()
@@ -439,6 +463,356 @@ namespace CastRightCatchInvManagement
             cmd.Parameters.AddWithValue("$user", windowsUser);
             cmd.Parameters.AddWithValue("$email", email ?? "");
             cmd.Parameters.AddWithValue("$at", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            cmd.ExecuteNonQuery();
+        }
+
+        public static int CountAccounts()
+        {
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM app_accounts;";
+            return Convert.ToInt32(cmd.ExecuteScalar());
+        }
+
+        public static bool TryGetAccount(
+            string username,
+            out string passwordHash,
+            out string passwordSalt,
+            out string displayName,
+            out string email,
+            out bool mustChangePassword)
+        {
+            passwordHash = "";
+            passwordSalt = "";
+            displayName = "";
+            email = "";
+            mustChangePassword = false;
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return false;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                """
+                SELECT password_hash, password_salt, display_name, email,
+                       COALESCE(must_change_password, 0)
+                FROM app_accounts WHERE username = $user;
+                """;
+            cmd.Parameters.AddWithValue("$user", username);
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+                return false;
+
+            passwordHash = reader.IsDBNull(0) ? "" : reader.GetString(0);
+            passwordSalt = reader.IsDBNull(1) ? "" : reader.GetString(1);
+            displayName = reader.IsDBNull(2) ? "" : reader.GetString(2);
+            email = reader.IsDBNull(3) ? "" : reader.GetString(3);
+            mustChangePassword = !reader.IsDBNull(4) && reader.GetInt32(4) != 0;
+            return true;
+        }
+
+        public static bool InsertAccount(
+            string username,
+            string displayName,
+            string passwordHash,
+            string passwordSalt,
+            string email)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return false;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                """
+                INSERT INTO app_accounts
+                    (username, display_name, password_hash, password_salt, email, created_at)
+                VALUES ($user, $name, $hash, $salt, $email, $at);
+                """;
+            cmd.Parameters.AddWithValue("$user", username);
+            cmd.Parameters.AddWithValue("$name", displayName ?? "");
+            cmd.Parameters.AddWithValue("$hash", passwordHash ?? "");
+            cmd.Parameters.AddWithValue("$salt", passwordSalt ?? "");
+            cmd.Parameters.AddWithValue("$email", email ?? "");
+            cmd.Parameters.AddWithValue("$at", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            try
+            {
+                return cmd.ExecuteNonQuery() > 0;
+            }
+            catch (SqliteException)
+            {
+                return false;
+            }
+        }
+
+        public static List<(string Username, string DisplayName, string Email, bool IsAdmin, bool IsIt)> ListAccounts()
+        {
+            EnsureCreated();
+            var list = new List<(string, string, string, bool, bool)>();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                """
+                SELECT username, display_name, email,
+                       COALESCE(is_admin, 0), COALESCE(is_it, 0)
+                FROM app_accounts
+                ORDER BY username COLLATE NOCASE;
+                """;
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                list.Add((
+                    reader.IsDBNull(0) ? "" : reader.GetString(0),
+                    reader.IsDBNull(1) ? "" : reader.GetString(1),
+                    reader.IsDBNull(2) ? "" : reader.GetString(2),
+                    !reader.IsDBNull(3) && reader.GetInt32(3) != 0,
+                    !reader.IsDBNull(4) && reader.GetInt32(4) != 0));
+            }
+
+            return list;
+        }
+
+        public static bool UpdateAccount(
+            string username,
+            string displayName,
+            string email)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return false;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                """
+                UPDATE app_accounts
+                SET display_name = $name, email = $email
+                WHERE username = $user;
+                """;
+            cmd.Parameters.AddWithValue("$name", displayName ?? "");
+            cmd.Parameters.AddWithValue("$email", email ?? "");
+            cmd.Parameters.AddWithValue("$user", username);
+            return cmd.ExecuteNonQuery() > 0;
+        }
+
+        public static bool UpdateAccountPassword(string username, string passwordHash, string passwordSalt)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return false;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                """
+                UPDATE app_accounts
+                SET password_hash = $hash, password_salt = $salt
+                WHERE username = $user;
+                """;
+            cmd.Parameters.AddWithValue("$hash", passwordHash ?? "");
+            cmd.Parameters.AddWithValue("$salt", passwordSalt ?? "");
+            cmd.Parameters.AddWithValue("$user", username);
+            return cmd.ExecuteNonQuery() > 0;
+        }
+
+        public static void SetMustChangePassword(string username, bool mustChange)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "UPDATE app_accounts SET must_change_password = $flag WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$flag", mustChange ? 1 : 0);
+            cmd.Parameters.AddWithValue("$user", username);
+            cmd.ExecuteNonQuery();
+        }
+
+        public static bool RenameAccount(string oldUsername, string newUsername)
+        {
+            oldUsername = (oldUsername ?? "").Trim();
+            newUsername = (newUsername ?? "").Trim();
+            if (oldUsername.Length == 0 || newUsername.Length == 0)
+                return false;
+            if (oldUsername.Equals(newUsername, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "UPDATE app_accounts SET username = $new WHERE username = $old;";
+            cmd.Parameters.AddWithValue("$new", newUsername);
+            cmd.Parameters.AddWithValue("$old", oldUsername);
+            try
+            {
+                return cmd.ExecuteNonQuery() > 0;
+            }
+            catch (SqliteException)
+            {
+                return false;
+            }
+        }
+
+        public static void UpdateAccountEmail(string username, string email)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "UPDATE app_accounts SET email = $email WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$email", email ?? "");
+            cmd.Parameters.AddWithValue("$user", username);
+            cmd.ExecuteNonQuery();
+        }
+
+        public static bool TryGetSecurityQuestions(
+            string username,
+            out string q1,
+            out string q2,
+            out string q3)
+        {
+            q1 = q2 = q3 = "";
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return false;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "SELECT security_q1, security_q2, security_q3 FROM app_accounts WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$user", username);
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+                return false;
+
+            q1 = reader.IsDBNull(0) ? "" : reader.GetString(0);
+            q2 = reader.IsDBNull(1) ? "" : reader.GetString(1);
+            q3 = reader.IsDBNull(2) ? "" : reader.GetString(2);
+            return q1.Length > 0 && q2.Length > 0 && q3.Length > 0;
+        }
+
+        public static bool TryGetSecurityAnswerHashes(
+            string username,
+            out string a1,
+            out string a2,
+            out string a3)
+        {
+            a1 = a2 = a3 = "";
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return false;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "SELECT security_a1, security_a2, security_a3 FROM app_accounts WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$user", username);
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+                return false;
+
+            a1 = reader.IsDBNull(0) ? "" : reader.GetString(0);
+            a2 = reader.IsDBNull(1) ? "" : reader.GetString(1);
+            a3 = reader.IsDBNull(2) ? "" : reader.GetString(2);
+            return true;
+        }
+
+        public static void SetSecurityQuestions(
+            string username,
+            string q1, string a1,
+            string q2, string a2,
+            string q3, string a3)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                """
+                UPDATE app_accounts SET
+                    security_q1 = $q1, security_a1 = $a1,
+                    security_q2 = $q2, security_a2 = $a2,
+                    security_q3 = $q3, security_a3 = $a3
+                WHERE username = $user;
+                """;
+            cmd.Parameters.AddWithValue("$q1", q1 ?? "");
+            cmd.Parameters.AddWithValue("$a1", a1 ?? "");
+            cmd.Parameters.AddWithValue("$q2", q2 ?? "");
+            cmd.Parameters.AddWithValue("$a2", a2 ?? "");
+            cmd.Parameters.AddWithValue("$q3", q3 ?? "");
+            cmd.Parameters.AddWithValue("$a3", a3 ?? "");
+            cmd.Parameters.AddWithValue("$user", username);
+            cmd.ExecuteNonQuery();
+        }
+
+        public static bool DeleteAccount(string username)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return false;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "DELETE FROM app_accounts WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$user", username);
+            return cmd.ExecuteNonQuery() > 0;
+        }
+
+        public static void SetAccountRoles(string username, bool isAdmin, bool isIt)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "UPDATE app_accounts SET is_admin = $admin, is_it = $it WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$admin", isAdmin ? 1 : 0);
+            cmd.Parameters.AddWithValue("$it", isIt ? 1 : 0);
+            cmd.Parameters.AddWithValue("$user", username);
+            cmd.ExecuteNonQuery();
+        }
+
+        private static void EnsureTextColumn(string table, string column)
+        {
+            EnsureAccountColumn(table, column, "TEXT");
+        }
+
+        private static void EnsureAccountColumn(string column, string definition)
+        {
+            EnsureAccountColumn("app_accounts", column, definition);
+        }
+
+        private static void EnsureAccountColumn(string table, string column, string definition)
+        {
+            var existing = new HashSet<string>(TableColumns(table), StringComparer.OrdinalIgnoreCase);
+            if (existing.Contains(column))
+                return;
+
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE {Quote(table)} ADD COLUMN {Quote(column)} {definition};";
             cmd.ExecuteNonQuery();
         }
 

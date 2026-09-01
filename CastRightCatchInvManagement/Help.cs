@@ -58,7 +58,8 @@ namespace CastRightCatchInvManagement
             AddSection(stack, "Windows", "Windows",
                 "Middle-click a sidebar tab to open that page in another window. Each page is still one shared form, so Sales and Create Invoice stay linked.",
                 "Left-click a tab in a window to show that page there.",
-                "If you close the original window while extras are open, a remaining window becomes the main one.");
+                "If you close the original window while extras are open, a remaining window becomes the main one.",
+                "PDFs open in a separate viewer window, not a sidebar tab.");
 
             AddSection(stack, "Tables", "Tables",
                 "Upload CSV imports rows into this page’s table in the database. Headings must match that page.",
@@ -67,7 +68,7 @@ namespace CastRightCatchInvManagement
                 "Clear a filter box and click away to close it. Leave a value in the box to keep that filter on.",
                 "Click the arrows on a heading to sort that column A–Z or Z–A.",
                 "Jump to column scrolls the table sideways to that heading without changing the filters.",
-                "Purchases starts with PO #, ship date, and order date. Sales starts with SO #, ship date, and PO #. Click the + header on the table to add columns. Right-click a column heading to hide it. Default columns on the toolbar puts the table back to that starting set. The table stretches to fill the window.",
+                "Purchases starts with PO #, ship date, and order date. Sales starts with SO #, ship date, and PO #. Invoices starts with SO #, customer, ship date, due date, status, and paid. Click the + header on the table to add columns. Right-click a column heading to hide it. Default columns on the toolbar puts the table back to that starting set. The columns you show, hide, and rearrange are remembered the next time you open the app. The table stretches to fill the window.",
                 "Right-click a row for View Details (a popup with every field) or Edit Product. That details popup is not a workspace window and cannot become the main window.");
 
             AddSection(stack, "Dashboard", "Dashboard",
@@ -83,20 +84,21 @@ namespace CastRightCatchInvManagement
                 "Sales Form / Add Product creates or edits a sale. Create Sales Order on that form builds or opens the sales-order PDF for the customer PO. SO # is written onto the sale when that PDF is created.",
                 "Double-click a row to add every line on that customer PO to Create Invoice and open that page, unless Create Invoice is already open in another window.",
                 "Shift+click a row to add those lines without leaving Sales.",
-                "Middle-click a row to work with a sales order. If that sale already has an SO # and a PDF, the PDF opens. If not, Create Sales Order fills from that PO.");
+                "Middle-click a row to work with a sales order. If that sale already has an SO # and a PDF, the PDF opens in the app. If not, Create Sales Order fills from that PO.");
 
             AddSection(stack, "SalesOrder", "Sales orders",
                 "Create Sales Order is a pick ticket: customer, ship-to, warehouse, freight, item, lot, cases, and volume.",
                 "Ship To uses the customer Address. If none is on file, the field says “Not found, please input manually.”",
                 "Enter a customer PO, or middle-click a sale, to add every matching line.",
-                "Create Sales Order opens an existing PDF when those sales already have one. Otherwise it builds a PDF, stores it in the database, writes the SO # onto those sales lines, and opens the file.");
+                "Create Sales Order opens an existing PDF when those sales already have one. Otherwise it builds a PDF, stores it in the database, writes the SO # onto those sales lines, and opens it in the PDF window.");
 
             AddSection(stack, "Invoices", "Invoices",
                 "Invoices lists invoice records. Create Invoice builds a PDF.",
                 "Double-click or Shift+click sales to fill lines, or type a customer PO on a line. Locked lines cannot be edited.",
                 "Ship To is the customer address. Sold To is the name and contact.",
                 "Tax has a # / % button. # is a flat amount. % is a percent of the subtotal after discount.",
-                "Create Invoice stores the PDF in the database and also writes a copy into Stored Invoices.");
+                "Create Invoice stores the PDF in the database, writes a copy into Stored Invoices, and opens it in the PDF window. Double-click an invoice row to open that PDF. If it has no PDF, you can create one from the sales on that invoice.",
+                "PDFs open in their own window. Save to database keeps markups. Save as copies a file. Print, Replace, and Edit invoice / Edit sales order are on the toolbar. That window is not a workspace tab.");
 
             AddSection(stack, "Customers", "Customers",
                 "The customer table shows name, company, phone, and current balance. Right-click View Details for the rest of the record, or Edit Customer to change it.",
@@ -108,6 +110,14 @@ namespace CastRightCatchInvManagement
                 "Vendors and Item Codes are lookup tables used on purchase and sales forms.",
                 "Debits, Credits, and Banking are term tables like the other data pages.",
                 "Reports will use the current term’s data.");
+
+            AddSection(stack, "SignIn", "Sign in",
+                "The app asks you to sign in after the shared data folder is chosen.",
+                "If admins.json has no IT user, the sign-in screen lets you create one. That person is always IT so they can add more users later.",
+                "Passwords are hashed with Argon2id (current standard) and stored in the database, never as plain text. Older passwords are upgraded on the next sign-in.",
+                "IT users see a monitor button next to Controls. That opens Users (add people, reset passwords) and IT & admins (who is an administrator or IT). Those names live in admins.json so every computer shares them.",
+                "In Settings, Your account lets you change username, name, email, and password. Company information, numbering, SMTP, and rolling the term are admin-only. Sign out is in Settings.",
+                "When IT adds a user, a random 6-character password is created and emailed with the username. That person must choose a new password and three security questions on first sign-in. Forgot password on the sign-in screen uses those questions. SMTP for login emails is in Settings.");
 
             AddSection(stack, "Settings", "Settings",
                 "Information for invoices prints on PDFs: business name, address, phone, email, EIN, and terms.",

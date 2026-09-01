@@ -18,6 +18,8 @@
         Banking,
         Reports,
         Settings,
-        Help
+        Help,
+        ItUsers,
+        ItAccess
     }
 }

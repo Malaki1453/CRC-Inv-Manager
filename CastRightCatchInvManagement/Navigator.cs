@@ -23,7 +23,9 @@ namespace CastRightCatchInvManagement
             [AppPage.Banking]       = () => new Banking(),
             [AppPage.Reports]       = () => new Reports(),
             [AppPage.Settings]      = () => new Settings(),
-            [AppPage.Help]          = () => new Help()
+            [AppPage.Help]          = () => new Help(),
+            [AppPage.ItUsers]       = () => new ItUsersForm(),
+            [AppPage.ItAccess]      = () => new ItAccessForm()
         };
 
         public static event Action<AppPage>? PageChanged;
@@ -92,6 +94,9 @@ namespace CastRightCatchInvManagement
             workspace ??= _active ?? _main;
             if (workspace == null || !workspace.IsAlive)
                 throw new InvalidOperationException("Navigator host has not been set.");
+
+            if ((page == AppPage.ItUsers || page == AppPage.ItAccess) && !AppState.IsIt)
+                page = AppPage.Settings;
 
             ShowIn(workspace, page);
         }

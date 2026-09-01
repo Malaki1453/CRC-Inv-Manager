@@ -333,11 +333,49 @@
 
         public static void OpenPdf(string path)
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            DescribePdf(path, out string title, out string? kind, out string? key);
+            PdfViewForm.ShowDocument(path, title, kind, key);
+        }
+
+        public static void DescribePdf(string path, out string title, out string? kind, out string? key)
+        {
+            string stem = Path.GetFileNameWithoutExtension(path) ?? "";
+            string folder = Path.GetFileName(Path.GetDirectoryName(path) ?? "") ?? "";
+            title = stem.Length > 0 ? stem : "PDF";
+            kind = null;
+            key = null;
+
+            bool invoice = folder.Equals(StoredInvoicesFolderName, StringComparison.OrdinalIgnoreCase) ||
+                           stem.StartsWith("Invoice ", StringComparison.OrdinalIgnoreCase);
+            bool salesOrder = folder.Equals(StoredSalesOrdersFolderName, StringComparison.OrdinalIgnoreCase) ||
+                              stem.StartsWith("Sales Order ", StringComparison.OrdinalIgnoreCase);
+
+            if (invoice)
             {
-                FileName = path,
-                UseShellExecute = true
-            });
+                kind = PdfKindInvoice;
+                key = KeyAfterPrefix(stem, "Invoice ");
+                if (key.Length > 0)
+                    title = "Invoice " + key;
+            }
+            else if (salesOrder)
+            {
+                kind = PdfKindSalesOrder;
+                key = KeyAfterPrefix(stem, "Sales Order ");
+                if (key.Length > 0)
+                    title = "Sales Order " + key;
+            }
+        }
+
+        private static string KeyAfterPrefix(string stem, string prefix)
+        {
+            if (!stem.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return "";
+
+            string rest = stem[prefix.Length..].Trim();
+            int dash = rest.IndexOf(" - ", StringComparison.Ordinal);
+            if (dash >= 0)
+                rest = rest[..dash];
+            return rest.Trim();
         }
 
         public static void OpenStoredSalesOrder(string? soNumber)
@@ -391,6 +429,7 @@
 
             EnsureStoredInvoicesFolder();
             EnsureStoredSalesOrdersFolder();
+            Accounts.EnsureFile();
             if (AppState.TermStartDate == null)
             {
                 AppState.TermStartDate = DateTime.Today;
@@ -454,10 +493,10 @@
                     "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status",
 
                 Customers =>
-                    "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes",
+                    "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes,Description",
 
                 Vendors =>
-                    "Code,Name,Company,Type,Terms,Amount,Phone,Current Balance,Notes,Finalized",
+                    "Code,Name,Company,Type,Terms,Amount,Phone,Current Balance,Notes,Description,Finalized",
 
                 ItemCodes =>
                     "Code,Description,COO,Farmed / Wild,Fresh / Frozen,Proc Country,Species,Scientific Name",
@@ -484,9 +523,9 @@
                 return new List<Dictionary<string, string>>();
 
             if (baseName == Customers)
-                EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes");
+                EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes", "Description");
             if (baseName == Vendors)
-                EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes");
+                EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes", "Description");
 
             return SqliteInventory.Read(baseName);
         }
@@ -579,6 +618,64 @@
 
             return all.FirstOrDefault(record =>
                 GetRecord(record, "Item Code").Equals(item, StringComparison.OrdinalIgnoreCase));
+        }
+
+        public static bool InvoiceNumberExists(string? invoiceNumber)
+        {
+            string needle = (invoiceNumber ?? "").Trim();
+            if (needle.Length == 0)
+                return false;
+
+            foreach (var record in ReadRecords(Invoices))
+            {
+                if (GetRecord(record, "Invoice #").Trim()
+                    .Equals(needle, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        public static List<Dictionary<string, string>> FindInvoiceSourcesForInvoice(
+            string? invoiceNumber,
+            string? soNumber,
+            string? customerCode = null,
+            string? customerName = null)
+        {
+            var result = new List<Dictionary<string, string>>();
+            string invoice = (invoiceNumber ?? "").Trim();
+            string so = NormalizePo(soNumber);
+            if (invoice.Length == 0 && so.Length == 0)
+                return result;
+
+            var seenItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var sale in ReadRecords(Sales))
+            {
+                if (!MatchesCustomer(sale, customerCode, customerName))
+                    continue;
+
+                string saleInvoice = GetRecord(sale, "Invoice #").Trim();
+                string saleSo = NormalizePo(GetRecord(sale, "SO #"));
+                bool matchInvoice = invoice.Length > 0 &&
+                    saleInvoice.Equals(invoice, StringComparison.OrdinalIgnoreCase);
+                bool matchSo = so.Length > 0 &&
+                    saleSo.Equals(so, StringComparison.OrdinalIgnoreCase);
+                if (!matchInvoice && !matchSo)
+                    continue;
+
+                var purchase = FindPurchaseByPo(SaleLot(sale));
+                string item = GetRecord(sale, "Item Code").Trim();
+                string distinct = item.Length > 0 ? item : GetRecord(sale, "Description").Trim();
+                if (distinct.Length == 0)
+                    distinct = result.Count.ToString();
+                if (!seenItems.Add(distinct))
+                    continue;
+
+                result.Add(MergeSaleAndPurchase(sale, purchase));
+            }
+
+            return result;
         }
 
         public static List<Dictionary<string, string>> FindInvoiceSourcesForKey(
@@ -1120,6 +1217,15 @@
                     "Phone",
                     "Current Balance"
                 },
+                Invoices => new[]
+                {
+                    "SO #",
+                    "Customer",
+                    "Ship Date",
+                    "Due Date",
+                    "Status",
+                    "Paid"
+                },
                 _ => null
             };
 
@@ -1169,6 +1275,7 @@
             Theme.FitAllColumns(grid);
             if (grid.Tag is ColumnSearch layout)
                 layout.NotifyColumnsChanged();
+            GridLayout.Save(grid);
         }
 
         private static bool IsSummaryColumn(string baseName, string displayHeader)
@@ -1179,6 +1286,7 @@
                 Sales => new[] { "SO #", "Ship Date", "PO #" },
                 Customers => new[] { "Name", "Company", "Phone", "Current Balance" },
                 Vendors => new[] { "Name", "Company", "Phone", "Current Balance" },
+                Invoices => new[] { "SO #", "Customer", "Ship Date", "Due Date", "Status", "Paid" },
                 _ => null
             };
             if (visible == null)
@@ -1205,12 +1313,13 @@
             grid.Columns.Clear();
             grid.Rows.Clear();
 
+            GridLayout.BeginUpdate();
             try
             {
                 if (baseName == Customers)
-                    EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes");
+                    EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes", "Description");
                 if (baseName == Vendors)
-                    EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes");
+                    EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes", "Description");
 
                 if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) || !Exists(baseName))
                 {
@@ -1232,6 +1341,7 @@
                 }
 
                 Theme.EnsureAddColumn(grid);
+                GridLayout.Apply(grid, baseName);
 
                 foreach (var record in records)
                 {
@@ -1246,6 +1356,7 @@
             }
             finally
             {
+                GridLayout.EndUpdate();
                 if (grid.Tag is ColumnSearch search)
                 {
                     search.FileBaseName = baseName;
@@ -1309,9 +1420,9 @@
             }
 
             if (baseName == Customers)
-                EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes");
+                EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes", "Description");
             if (baseName == Vendors)
-                EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes");
+                EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes", "Description");
 
             SqliteInventory.EnsureCreated();
 

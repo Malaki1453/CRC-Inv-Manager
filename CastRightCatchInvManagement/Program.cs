@@ -12,6 +12,13 @@ namespace CastRightCatchInvManagement
             {
                 DataFiles.EnsureFilesExistOrAsk();
                 AppLock.LoadSharedSettings();
+                Accounts.EnsureFile();
+            }
+
+            using (var login = new SignInForm())
+            {
+                if (login.ShowDialog() != DialogResult.OK || !AppState.SignedIn)
+                    return;
             }
 
             Application.Run(new InventoryAppContext());

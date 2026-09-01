@@ -21,15 +21,47 @@ namespace CastRightCatchInvManagement
             if (e.RowIndex < 0)
                 return;
 
-            DataGridViewColumn? col = dataGridView1.Columns
-                .Cast<DataGridViewColumn>()
-                .FirstOrDefault(c => c.HeaderText.Equals("Invoice #", StringComparison.OrdinalIgnoreCase));
+            var record = DataFiles.GridRowToRecord(dataGridView1, e.RowIndex);
+            string invoiceNumber = DataFiles.GetRecord(record, "Invoice #").Trim();
+            if (invoiceNumber.Length == 0)
+            {
+                MessageBox.Show(
+                    "This row has no invoice number.",
+                    "Invoice",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
 
-            string? invoiceNumber = col == null
-                ? dataGridView1.Rows[e.RowIndex].Cells[0].Value?.ToString()
-                : dataGridView1.Rows[e.RowIndex].Cells[col.Index].Value?.ToString();
+            string? path = DataFiles.FindStoredPdf(DataFiles.PdfKindInvoice, invoiceNumber);
+            if (path != null)
+            {
+                DataFiles.OpenPdf(path);
+                return;
+            }
 
-            DataFiles.OpenStoredInvoice(invoiceNumber);
+            var ask = MessageBox.Show(
+                $"Invoice {invoiceNumber} does not have a PDF yet.\n\nCreate one from the sales on this invoice?",
+                "Create Invoice PDF",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (ask != DialogResult.Yes)
+                return;
+
+            var form = Navigator.Ensure<InvoicePdf>(AppPage.InvoicePdf);
+            form.CreatePdfFromInvoice(record, error =>
+            {
+                if (IsDisposed)
+                    return;
+                if (error != null)
+                {
+                    Navigator.GoTo(AppPage.InvoicePdf);
+                    ToastAlert.Error(this, error);
+                    return;
+                }
+
+                ToastAlert.Success(this, $"Invoice {invoiceNumber} PDF was created.");
+            });
         }
 
         private void btnUpload_Click(object sender, EventArgs e)

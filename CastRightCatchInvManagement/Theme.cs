@@ -134,6 +134,7 @@ namespace CastRightCatchInvManagement
         public static void StyleGrid(DataGridView grid)
         {
             grid.BackgroundColor = Paper;
+            grid.AllowUserToOrderColumns = true;
             grid.BorderStyle = BorderStyle.None;
             grid.CellBorderStyle = DataGridViewCellBorderStyle.None;
             grid.GridColor = GridLine;

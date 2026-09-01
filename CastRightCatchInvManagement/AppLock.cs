@@ -97,6 +97,8 @@ namespace CastRightCatchInvManagement
                 {
                     SqliteInventory.WriteSettings(CurrentShared());
                     SqliteInventory.WriteUserEmail(Environment.UserName, AppState.UserEmail);
+                    if (!string.IsNullOrWhiteSpace(AppState.CurrentUsername))
+                        SqliteInventory.UpdateAccountEmail(AppState.CurrentUsername, AppState.UserEmail);
                 }
                 catch
                 {
@@ -104,8 +106,10 @@ namespace CastRightCatchInvManagement
                 }
             }
 
-            Changed?.Invoke();
+            NotifyChanged();
         }
+
+        public static void NotifyChanged() => Changed?.Invoke();
 
         public static void ApplyNavLock(params Button[] buttons)
         {
@@ -149,7 +153,12 @@ namespace CastRightCatchInvManagement
                 ["sales_order_pattern"] = AppState.SalesOrderPattern ?? "",
                 ["sales_order_start"] = AppState.SalesOrderStart ?? "",
                 ["product_number_pattern"] = AppState.ProductNumberPattern ?? "",
-                ["product_number_start"] = AppState.ProductNumberStart ?? ""
+                ["product_number_start"] = AppState.ProductNumberStart ?? "",
+                ["smtp_host"] = AppState.SmtpHost ?? "",
+                ["smtp_port"] = AppState.SmtpPort.ToString(),
+                ["smtp_user"] = AppState.SmtpUser ?? "",
+                ["smtp_password"] = AppState.SmtpPassword ?? "",
+                ["smtp_ssl"] = AppState.SmtpSsl ? "1" : "0"
             };
         }
 
@@ -169,6 +178,12 @@ namespace CastRightCatchInvManagement
             AppState.SalesOrderStart = Get(shared, "sales_order_start", AppState.SalesOrderStart);
             AppState.ProductNumberPattern = Get(shared, "product_number_pattern", AppState.ProductNumberPattern);
             AppState.ProductNumberStart = Get(shared, "product_number_start", AppState.ProductNumberStart);
+            AppState.SmtpHost = Get(shared, "smtp_host", AppState.SmtpHost);
+            if (int.TryParse(Get(shared, "smtp_port", AppState.SmtpPort.ToString()), out int port) && port > 0)
+                AppState.SmtpPort = port;
+            AppState.SmtpUser = Get(shared, "smtp_user", AppState.SmtpUser);
+            AppState.SmtpPassword = Get(shared, "smtp_password", AppState.SmtpPassword);
+            AppState.SmtpSsl = Get(shared, "smtp_ssl", AppState.SmtpSsl ? "1" : "0") != "0";
         }
 
         private static void ApplyLocalFallback(AppSettings settings)
@@ -235,5 +250,24 @@ namespace CastRightCatchInvManagement
         public static string SalesOrderStart { get; set; } = "";
         public static string ProductNumberPattern { get; set; } = "";
         public static string ProductNumberStart { get; set; } = "";
+        public static string CurrentUsername { get; set; } = "";
+        public static string CurrentDisplayName { get; set; } = "";
+        public static bool IsAdmin { get; set; }
+        public static bool IsIt { get; set; }
+        public static string SmtpHost { get; set; } = "";
+        public static int SmtpPort { get; set; } = 587;
+        public static string SmtpUser { get; set; } = "";
+        public static string SmtpPassword { get; set; } = "";
+        public static bool SmtpSsl { get; set; } = true;
+
+        public static bool SignedIn => !string.IsNullOrWhiteSpace(CurrentUsername);
+
+        public static void SignOut()
+        {
+            CurrentUsername = "";
+            CurrentDisplayName = "";
+            IsAdmin = false;
+            IsIt = false;
+        }
     }
 }

@@ -15,6 +15,7 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _email;
         private readonly TextBox _terms;
         private readonly TextBox _extra;
+        private readonly Label _subtitle;
 
         public static void OpenCustomerNew() => ShowEdit(false, null);
 
@@ -35,55 +36,161 @@ namespace CastRightCatchInvManagement
             _vendor = vendor;
             _originalCode = record == null ? "" : DataFiles.GetRecord(record, "Code").Trim();
             bool editing = _originalCode.Length > 0;
+            string kind = vendor ? "Vendor" : "Customer";
 
-            Text = editing
-                ? (vendor ? "Edit Vendor" : "Edit Customer")
-                : (vendor ? "Add Vendor" : "Add Customer");
+            Text = editing ? "Edit " + kind : "Add " + kind;
             StartPosition = FormStartPosition.CenterParent;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MinimizeBox = false;
-            MaximizeBox = false;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            MinimizeBox = true;
+            MaximizeBox = true;
             ShowInTaskbar = false;
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(560, vendor ? 520 : 620);
+            AutoScaleDimensions = new SizeF(7F, 15F);
+            ClientSize = new Size(680, vendor ? 580 : 720);
+            MinimumSize = new Size(560, vendor ? 480 : 580);
             BackColor = Theme.Cream;
+            Font = Theme.Body;
+            ForeColor = Theme.Ink;
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
 
-            var card = new CardPanel
+            var header = new Panel
             {
-                Dock = DockStyle.Fill,
-                Padding = new Padding(20, 16, 20, 16)
+                Dock = DockStyle.Top,
+                Height = 72,
+                BackColor = Theme.Paper,
+                Padding = new Padding(24, 8, 24, 0)
+            };
+            var gold = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 3,
+                BackColor = Theme.Gold
+            };
+            var title = new Label
+            {
+                Text = Text,
+                Dock = DockStyle.Top,
+                Height = 36,
+                Font = Theme.PageTitle,
+                ForeColor = Theme.Navy,
+                TextAlign = ContentAlignment.BottomLeft
+            };
+            _subtitle = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 22,
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                TextAlign = ContentAlignment.TopLeft
+            };
+            header.Controls.Add(_subtitle);
+            header.Controls.Add(title);
+            header.Controls.Add(gold);
+
+            var save = new Button
+            {
+                Text = editing ? "Save" : "Add " + kind,
+                Size = new Size(editing ? 110 : 140, 34)
+            };
+            Theme.StyleGoldButton(save);
+            save.Click += (_, _) =>
+            {
+                if (SaveRecord())
+                    DialogResult = DialogResult.OK;
+            };
+            AcceptButton = save;
+
+            var cancel = new Button
+            {
+                Text = "Cancel",
+                Size = new Size(96, 34),
+                DialogResult = DialogResult.Cancel
+            };
+            Theme.StyleOutlineButton(cancel);
+            CancelButton = cancel;
+
+            var footer = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 60,
+                BackColor = Theme.Paper,
+                Padding = new Padding(20, 12, 20, 12)
+            };
+            footer.Paint += (_, e) =>
+            {
+                using var line = new SolidBrush(Theme.Gold);
+                e.Graphics.FillRectangle(line, 0, 0, footer.Width, 2);
+            };
+            footer.Controls.Add(save);
+            footer.Controls.Add(cancel);
+            footer.Resize += (_, _) =>
+            {
+                save.Location = new Point(Math.Max(140, footer.Width - save.Width - 128), 13);
+                cancel.Location = new Point(Math.Max(20, footer.Width - 116), 13);
             };
 
-            int y = 16;
-            _code = AddField(card, "CODE", 20, y, 160);
-            _name = AddField(card, "NAME", 200, y, 300);
-            y += 54;
-            _company = AddField(card, "COMPANY", 20, y, 300);
-            _phone = AddField(card, "PHONE", 340, y, 160);
-            y += 54;
-            _balance = AddField(card, "CURRENT BALANCE", 20, y, 160);
-            _terms = AddField(card, "TERMS", 200, y, 140);
-            _extra = AddField(card, vendor ? "TYPE" : "CREDIT LIMIT", 360, y, 140);
-            y += 54;
+            var body = new Panel
+            {
+                Dock = DockStyle.Fill,
+                AutoScroll = true,
+                BackColor = Theme.Cream,
+                Padding = new Padding(20, 16, 8, 16)
+            };
+
+            var identity = Section("Identity", 150, 2, out var identityGrid);
+            _code = PutField(identityGrid, 0, 0, "CODE");
+            _name = PutField(identityGrid, 1, 0, "NAME");
+            _company = PutField(identityGrid, 0, 1, "COMPANY");
+            _phone = PutField(identityGrid, 1, 1, "PHONE");
+            _code.PlaceholderText = vendor ? "V-1001" : "C-1001";
+            _name.PlaceholderText = vendor ? "Vendor name" : "Customer name";
+            _company.PlaceholderText = "Company";
+            _phone.PlaceholderText = "(253) 000-0000";
+
+            _contact = new TextBox { Visible = false };
+            _email = new TextBox { Visible = false };
+            _address = new TextBox { Visible = false };
+
+            CardPanel? contact = null;
             if (!vendor)
             {
-                _contact = AddField(card, "CONTACT NAME", 20, y, 240);
-                _email = AddField(card, "EMAIL", 280, y, 220);
-                y += 54;
-                _address = AddMultiline(card, "ADDRESS", 20, y, 480, 48);
-                y += 78;
+                contact = Section("Contact", 196, 2, out var contactGrid);
+                _contact = PutField(contactGrid, 0, 0, "CONTACT NAME");
+                _email = PutField(contactGrid, 1, 0, "EMAIL");
+                _address = PutField(contactGrid, 0, 1, "ADDRESS", colSpan: 2, multiline: true);
+                _contact.PlaceholderText = "Who we talk to";
+                _email.PlaceholderText = "name@company.com";
+                contactGrid.RowStyles.Clear();
+                contactGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+                contactGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            }
+
+            var account = Section("Account", vendor ? 160 : 108, 3, out var accountGrid);
+            _terms = PutField(accountGrid, 0, 0, "TERMS");
+            _extra = PutField(accountGrid, 1, 0, vendor ? "TYPE" : "CREDIT LIMIT");
+            if (vendor)
+            {
+                _contact = PutField(accountGrid, 2, 0, "AMOUNT");
+                _balance = PutField(accountGrid, 0, 1, "CURRENT BALANCE");
+                _contact.PlaceholderText = "0.00";
+                accountGrid.RowStyles.Clear();
+                accountGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+                accountGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             }
             else
             {
-                _contact = AddField(card, "AMOUNT", 20, y, 160);
-                _email = new TextBox { Visible = false };
-                _address = new TextBox { Visible = false };
-                y += 54;
+                _balance = PutField(accountGrid, 2, 0, "CURRENT BALANCE");
             }
+            _terms.PlaceholderText = "NET 15";
+            _extra.PlaceholderText = vendor ? "Processor" : "0.00";
+            _balance.PlaceholderText = "0.00";
 
-            _notes = AddMultiline(card, "NOTES", 20, y, 480, 72);
+            var notes = Section("Description", 180, 1, out var notesGrid);
+            _notes = PutField(notesGrid, 0, 0, "NOTES", multiline: true);
+            _notes.PlaceholderText = vendor
+                ? "Notes about this vendor"
+                : "Notes about this customer";
 
             if (record != null)
             {
@@ -93,7 +200,7 @@ namespace CastRightCatchInvManagement
                 _phone.Text = DataFiles.GetRecord(record, "Phone");
                 _balance.Text = DataFiles.GetRecord(record, "Current Balance");
                 _terms.Text = DataFiles.GetRecord(record, "Terms");
-                _notes.Text = DataFiles.GetRecord(record, "Notes");
+                _notes.Text = First(record, "Description", "Notes");
                 if (vendor)
                 {
                     _extra.Text = DataFiles.GetRecord(record, "Type");
@@ -108,44 +215,46 @@ namespace CastRightCatchInvManagement
                 }
             }
 
-            var save = new Button
-            {
-                Text = editing ? "Save" : "Add",
-                Size = new Size(110, 34),
-                DialogResult = DialogResult.None
-            };
-            Theme.StyleGoldButton(save);
-            save.Click += (_, _) =>
-            {
-                if (SaveRecord())
-                    DialogResult = DialogResult.OK;
-            };
+            UpdateSubtitle();
+            _name.TextChanged += (_, _) => UpdateSubtitle();
+            _code.TextChanged += (_, _) => UpdateSubtitle();
+            _company.TextChanged += (_, _) => UpdateSubtitle();
 
-            var cancel = new Button
-            {
-                Text = "Cancel",
-                Size = new Size(90, 34),
-                DialogResult = DialogResult.Cancel
-            };
-            Theme.StyleOutlineButton(cancel);
-            CancelButton = cancel;
+            var spacerNotes = Spacer();
+            var spacerAccount = Spacer();
+            var spacerMid = Spacer();
 
-            var footer = new Panel
+            body.Controls.Add(notes);
+            body.Controls.Add(spacerNotes);
+            body.Controls.Add(account);
+            body.Controls.Add(spacerAccount);
+            if (contact != null)
             {
-                Dock = DockStyle.Bottom,
-                Height = 56,
-                BackColor = Theme.Cream
-            };
-            footer.Controls.Add(save);
-            footer.Controls.Add(cancel);
-            footer.Resize += (_, _) =>
-            {
-                save.Location = new Point(Math.Max(120, footer.Width - 230), 10);
-                cancel.Location = new Point(Math.Max(20, footer.Width - 110), 10);
-            };
+                body.Controls.Add(contact);
+                body.Controls.Add(spacerMid);
+            }
+            body.Controls.Add(identity);
 
-            Controls.Add(card);
+            Controls.Add(body);
             Controls.Add(footer);
+            Controls.Add(header);
+        }
+
+        private void UpdateSubtitle()
+        {
+            string name = _name.Text.Trim();
+            string company = _company.Text.Trim();
+            string code = _code.Text.Trim();
+            var parts = new List<string>();
+            if (company.Length > 0 && !company.Equals(name, StringComparison.OrdinalIgnoreCase))
+                parts.Add(company);
+            else if (name.Length > 0)
+                parts.Add(name);
+            if (code.Length > 0)
+                parts.Add(code);
+            _subtitle.Text = parts.Count > 0
+                ? string.Join("  ·  ", parts)
+                : (_vendor ? "Vendor record" : "Customer record");
         }
 
         private bool SaveRecord()
@@ -181,6 +290,7 @@ namespace CastRightCatchInvManagement
                 ["Phone"] = _phone.Text.Trim(),
                 ["Current Balance"] = _balance.Text.Trim(),
                 ["Notes"] = _notes.Text.Trim(),
+                ["Description"] = _notes.Text.Trim(),
                 ["Terms"] = _terms.Text.Trim()
             };
 
@@ -238,35 +348,92 @@ namespace CastRightCatchInvManagement
             return "";
         }
 
-        private static TextBox AddField(Control parent, string caption, int x, int y, int width)
+        private static Panel Spacer()
         {
-            var label = new Label { Text = caption };
-            Theme.StyleFieldLabel(label);
-            label.Location = new Point(x, y);
-            var box = new TextBox();
-            Theme.StyleField(box);
-            box.Location = new Point(x, y + 16);
-            box.Size = new Size(width, 26);
-            parent.Controls.Add(label);
-            parent.Controls.Add(box);
-            return box;
+            return new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 12,
+                BackColor = Theme.Cream
+            };
         }
 
-        private static TextBox AddMultiline(Control parent, string caption, int x, int y, int width, int height)
+        private static CardPanel Section(string title, int height, int columns, out TableLayoutPanel grid)
         {
-            var label = new Label { Text = caption };
-            Theme.StyleFieldLabel(label);
-            label.Location = new Point(x, y);
+            var card = new CardPanel
+            {
+                Dock = DockStyle.Top,
+                Height = height
+            };
+            var heading = new Label
+            {
+                Text = title,
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                AutoSize = true,
+                Location = new Point(20, 12)
+            };
+            grid = new TableLayoutPanel
+            {
+                ColumnCount = columns,
+                RowCount = 1,
+                Location = new Point(12, 42)
+            };
+            float share = 100f / Math.Max(1, columns);
+            for (int i = 0; i < columns; i++)
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, share));
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            card.Controls.Add(heading);
+            card.Controls.Add(grid);
+            var table = grid;
+            card.Resize += (_, _) =>
+            {
+                table.Width = Math.Max(180, card.ClientSize.Width - 28);
+                table.Height = Math.Max(40, card.ClientSize.Height - 54);
+            };
+            return card;
+        }
+
+        private static TextBox PutField(
+            TableLayoutPanel grid,
+            int col,
+            int row,
+            string caption,
+            int colSpan = 1,
+            bool multiline = false)
+        {
+            while (grid.RowCount <= row)
+            {
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+                grid.RowCount++;
+            }
+
             var box = new TextBox
             {
-                Multiline = true,
-                ScrollBars = ScrollBars.Vertical,
-                Location = new Point(x, y + 16),
-                Size = new Size(width, height)
+                Multiline = multiline,
+                ScrollBars = multiline ? ScrollBars.Vertical : ScrollBars.None
             };
             Theme.StyleField(box);
-            parent.Controls.Add(label);
-            parent.Controls.Add(box);
+            var cell = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(8, 4, 8, 8)
+            };
+            var label = new Label
+            {
+                Text = caption,
+                Dock = DockStyle.Top,
+                Height = 18
+            };
+            Theme.StyleFieldLabel(label);
+            box.Dock = multiline ? DockStyle.Fill : DockStyle.Top;
+            if (!multiline)
+                box.Height = 28;
+            cell.Controls.Add(box);
+            cell.Controls.Add(label);
+            grid.Controls.Add(cell, col, row);
+            if (colSpan > 1)
+                grid.SetColumnSpan(cell, colSpan);
             return box;
         }
     }

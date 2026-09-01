@@ -104,6 +104,7 @@ namespace CastRightCatchInvManagement
 
             var columnSearch = new ColumnSearch(grid, jump);
             grid.Tag = columnSearch;
+            GridLayout.Attach(grid);
 
             var card = new CardPanel
             {
@@ -177,6 +178,7 @@ namespace CastRightCatchInvManagement
                         Theme.FitAllColumns(grid);
                         if (grid.Tag is ColumnSearch search)
                             search.NotifyColumnsChanged();
+                        GridLayout.Save(grid);
                     });
                 }
             }
@@ -205,6 +207,7 @@ namespace CastRightCatchInvManagement
                 Theme.FitAllColumns(grid);
                 if (grid.Tag is ColumnSearch search)
                     search.NotifyColumnsChanged();
+                GridLayout.Save(grid);
             });
             menu.Show(grid, grid.PointToClient(Control.MousePosition));
         }
@@ -228,6 +231,8 @@ namespace CastRightCatchInvManagement
             AppPage.Reports => "Reports",
             AppPage.Settings => "Settings",
             AppPage.Help => "Controls",
+            AppPage.ItUsers => "Users",
+            AppPage.ItAccess => "IT and admins",
             _ => page.ToString()
         };
 

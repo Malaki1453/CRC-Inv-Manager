@@ -850,14 +850,11 @@ namespace CastRightCatchInvManagement
                     draft.CustomerName,
                     soNumber);
                 DataFiles.OpenPdf(pdfPath);
-
-                MessageBox.Show(
+                ToastAlert.Success(
+                    this,
                     created
-                        ? $"Sales order {soNumber} was saved.\n\n{pdfPath}"
-                        : $"Sales order {soNumber} already has a PDF. Opened:\n\n{pdfPath}",
-                    created ? "Sales Order Created" : "Sales Order Found",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+                        ? $"Sales order {soNumber} was saved."
+                        : $"Sales order {soNumber} already has a PDF.");
                 ResetDraft();
             }
             catch (Exception ex)

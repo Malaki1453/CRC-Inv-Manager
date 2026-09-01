@@ -62,6 +62,74 @@ namespace CastRightCatchInvManagement
             StartAddItems(key, code, name, done);
         }
 
+        internal void CreatePdfFromInvoice(
+            Dictionary<string, string> invoice,
+            Action<string?> done)
+        {
+            if (_busyAdding)
+            {
+                done("Still adding lines to the invoice.");
+                return;
+            }
+
+            ResetDraft();
+            ApplyInvoiceHeader(invoice);
+
+            string invoiceNo = DataFiles.GetRecord(invoice, "Invoice #").Trim();
+            string so = DataFiles.GetRecord(invoice, "SO #").Trim();
+            string code = DataFiles.GetRecordAny(invoice, "Customer Code", "Cust ID");
+            string name = DataFiles.GetRecordAny(invoice, "Customer", "Customer Name");
+
+            _busyAdding = true;
+            Task.Run(() =>
+            {
+                try
+                {
+                    var sources = DataFiles.FindInvoiceSourcesForInvoice(
+                        invoiceNo, so, code, name);
+                    if (sources.Count == 0)
+                        sources = DataFiles.FindInvoiceSourcesForInvoice(
+                            invoiceNo, so, null, null);
+                    BeginInvoke(new Action(() =>
+                    {
+                        if (IsDisposed)
+                        {
+                            _busyAdding = false;
+                            done("Could not create that invoice PDF.");
+                            return;
+                        }
+
+                        var remaining = UnusedSources(sources);
+                        if (remaining.Count == 0)
+                        {
+                            _busyAdding = false;
+                            FinishCreatedPdf(done);
+                            return;
+                        }
+
+                        AddRecordsInBatches(remaining, 0, error =>
+                        {
+                            if (error != null)
+                            {
+                                done(error);
+                                return;
+                            }
+
+                            FinishCreatedPdf(done);
+                        });
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        _busyAdding = false;
+                        done(ex.Message);
+                    }));
+                }
+            });
+        }
+
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
@@ -420,6 +488,59 @@ namespace CastRightCatchInvManagement
             return used;
         }
 
+        private List<Dictionary<string, string>> UnusedSources(
+            List<Dictionary<string, string>> sources)
+        {
+            var used = UsedPoItemKeys();
+            return sources
+                .Where(record =>
+                {
+                    string po = DataFiles.SalePo(record);
+                    string item = DataFiles.GetRecord(record, "Item Code");
+                    string itemKey = PoItemKey(po, item);
+                    return itemKey.Length == 0 || !used.Contains(itemKey);
+                })
+                .ToList();
+        }
+
+        private void ApplyInvoiceHeader(Dictionary<string, string> invoice)
+        {
+            RefreshLookups();
+            string number = DataFiles.GetRecord(invoice, "Invoice #").Trim();
+            if (number.Length > 0)
+                _invoiceNo.Text = number;
+
+            ApplyCustomerFromPurchase(invoice);
+        }
+
+        private void FinishCreatedPdf(Action<string?> done)
+        {
+            var draft = CollectDraft();
+            if (draft.Lines.Count == 0)
+            {
+                done("No sales lines were found for this invoice. Add them here, then Create Invoice.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(draft.CustomerName) &&
+                string.IsNullOrWhiteSpace(draft.CustomerCode))
+            {
+                done("This invoice has no customer. Choose one here, then Create Invoice.");
+                return;
+            }
+
+            try
+            {
+                SaveInvoicePdf(draft);
+                ResetDraft();
+                done(null);
+            }
+            catch (Exception ex)
+            {
+                done(ex.Message);
+            }
+        }
+
         private static string PoItemKey(string? po, string? item)
         {
             string poKey = DataFiles.NormalizePo(po);
@@ -444,7 +565,6 @@ namespace CastRightCatchInvManagement
             }
 
             _busyAdding = true;
-            var used = UsedPoItemKeys();
 
             Task.Run(() =>
             {
@@ -462,15 +582,7 @@ namespace CastRightCatchInvManagement
                             .ToList();
                     }
 
-                    var remaining = sources
-                        .Where(record =>
-                        {
-                            string po = DataFiles.SalePo(record);
-                            string item = DataFiles.GetRecord(record, "Item Code");
-                            string itemKey = PoItemKey(po, item);
-                            return itemKey.Length == 0 || !used.Contains(itemKey);
-                        })
-                        .ToList();
+                    var remaining = UnusedSources(sources);
 
                     BeginInvoke(new Action(() =>
                     {
@@ -740,10 +852,24 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            DateTime due = DueDate(draft.ShipDate, draft.Terms);
             try
             {
-                string pdfPath = InvoiceDocument.Save(draft);
+                SaveInvoicePdf(draft);
+                ToastAlert.Success(this, $"Invoice {draft.InvoiceNumber} was saved.");
+                ResetDraft();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Invoice Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void SaveInvoicePdf(InvoiceDraft draft)
+        {
+            DateTime due = DueDate(draft.ShipDate, draft.Terms);
+            string pdfPath = InvoiceDocument.Save(draft);
+            if (!DataFiles.InvoiceNumberExists(draft.InvoiceNumber))
+            {
                 DataFiles.AppendRow(DataFiles.Invoices, new[]
                 {
                     draft.InvoiceNumber,
@@ -759,18 +885,9 @@ namespace CastRightCatchInvManagement
                     "",
                     ""
                 });
+            }
 
-                MessageBox.Show(
-                    $"Invoice {draft.InvoiceNumber} was saved.\n\n{pdfPath}",
-                    "Invoice Created",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-                ResetDraft();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(ex.Message, "Invoice Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
+            DataFiles.OpenPdf(pdfPath);
         }
 
         private static DateTime DueDate(DateTime ship, string terms)

@@ -75,7 +75,7 @@ namespace CastRightCatchInvManagement
             g.Fill(430, 36, 146, 14, Theme.Navy);
             g.Text(454, 46, "INVOICE NO.", 6.5f, true, Theme.Cream);
             g.Text(508, 46, "DATE", 6.5f, true, Theme.Cream);
-            g.Text(452, 66, draft.InvoiceNumber, 9, true, Theme.Ink, center: true, width: 52);
+            g.TextRight(490, 66, draft.InvoiceNumber, 9, true, Theme.Ink);
             g.Text(516, 66, draft.InvoiceDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink, center: true, width: 52);
             g.Line(494, 36, 494, 78);
             g.Text(430, 88, $"TAX ID# {ein}", 8, false, Theme.Ink);

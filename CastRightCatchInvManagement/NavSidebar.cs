@@ -17,6 +17,24 @@ namespace CastRightCatchInvManagement
             Theme.EnableDoubleBuffer(this);
 
             var brand = BuildBrandHeader();
+            var userRow = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 36,
+                BackColor = Theme.NavyDark,
+                Name = "userRow"
+            };
+            var userLabel = new Label
+            {
+                Name = "lblNavUser",
+                Dock = DockStyle.Fill,
+                Font = Theme.Small,
+                ForeColor = Theme.GoldLight,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(18, 0, 12, 0)
+            };
+            userRow.Controls.Add(userLabel);
+
             var settingsRow = new Panel
             {
                 Dock = DockStyle.Bottom,
@@ -31,11 +49,23 @@ namespace CastRightCatchInvManagement
             help.Name = "btnHelp";
             var helpTip = new ToolTip { ShowAlways = true };
             helpTip.SetToolTip(help, "Controls");
+
+            var it = new CrcItButton();
+            it.Dock = DockStyle.Right;
+            it.Width = 52;
+            it.Name = "btnIt";
+            it.Visible = false;
+            var itTip = new ToolTip { ShowAlways = true };
+            itTip.SetToolTip(it, "IT");
+            it.Click += (_, _) => ShowItMenu(it);
+            _buttons[AppPage.ItUsers] = it;
+
             var settings = BuildButton(AppPage.Settings, "Settings");
             settings.Dock = DockStyle.Fill;
             settings.Name = "btnSettings";
             settingsRow.Controls.Add(settings);
             settingsRow.Controls.Add(help);
+            settingsRow.Controls.Add(it);
 
             var navHost = new Panel
             {
@@ -118,6 +148,7 @@ namespace CastRightCatchInvManagement
 
             Controls.Add(navHost);
             Controls.Add(settingsRow);
+            Controls.Add(userRow);
             Controls.Add(brand);
 
             AppLock.Changed += RefreshState;
@@ -146,12 +177,44 @@ namespace CastRightCatchInvManagement
             foreach (var pair in _buttons)
             {
                 bool isSettings = pair.Key == AppPage.Settings || pair.Key == AppPage.Help;
+                bool isIt = pair.Key == AppPage.ItUsers || pair.Key == AppPage.ItAccess;
+                if (isIt)
+                {
+                    pair.Value.Visible = AppState.IsIt;
+                    pair.Value.Enabled = unlocked && AppState.IsIt;
+                    pair.Value.Selected =
+                        _workspace.CurrentPage == AppPage.ItUsers ||
+                        _workspace.CurrentPage == AppPage.ItAccess;
+                    continue;
+                }
+
                 pair.Value.Enabled = unlocked || isSettings;
                 pair.Value.Selected = pair.Key == _workspace.CurrentPage;
             }
 
             foreach (var group in _groups)
                 group.SyncExpanded();
+
+            if (Controls.Find("lblNavUser", true).FirstOrDefault() is Label userLabel)
+            {
+                string name = AppState.CurrentDisplayName.Length > 0
+                    ? AppState.CurrentDisplayName
+                    : AppState.CurrentUsername;
+                userLabel.Text = AppState.SignedIn
+                    ? (AppState.IsIt ? "IT  ·  " : AppState.IsAdmin ? "Admin  ·  " : "Signed in  ·  ") + name
+                    : "";
+            }
+        }
+
+        private void ShowItMenu(Control anchor)
+        {
+            if (!AppState.IsIt || !AppLock.HasFolder())
+                return;
+
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("Users", null, (_, _) => Navigator.GoTo(AppPage.ItUsers));
+            menu.Items.Add("IT && admins", null, (_, _) => Navigator.GoTo(AppPage.ItAccess));
+            menu.Show(anchor, new Point(0, 0));
         }
 
         private static void LayoutNav(Panel host, List<Control> items)
@@ -515,6 +578,23 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    internal sealed class CrcItButton : CrcNavButton
+    {
+        public CrcItButton()
+        {
+            Text = "";
+            Padding = new Padding(0);
+            TextAlign = ContentAlignment.MiddleCenter;
+            AccessibleName = "IT";
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            MonitorGlyph.Paint(e.Graphics, ClientRectangle, ForeColor);
+        }
+    }
+
     internal static class ControlsGlyph
     {
         public static void Paint(Graphics g, Rectangle bounds, Color color)
@@ -549,6 +629,30 @@ namespace CastRightCatchInvManagement
             Key(14.4f, 6.2f, 2.2f, 2.1f);
 
             Key(6.6f, 9.5f, 8.8f, 2.1f);
+        }
+    }
+
+    internal static class MonitorGlyph
+    {
+        public static void Paint(Graphics g, Rectangle bounds, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            int w = 20;
+            int h = 14;
+            int x = bounds.X + (bounds.Width - w) / 2;
+            int y = bounds.Y + (bounds.Height - h) / 2 - 1;
+
+            using var pen = new Pen(color, 1.6f);
+            using var fill = new SolidBrush(color);
+            using var screen = Theme.RoundRect(new Rectangle(x, y, w, h), 2);
+            g.DrawPath(pen, screen);
+            g.DrawRectangle(pen, x + 3, y + 3, w - 6, h - 6);
+
+            int standX = x + w / 2;
+            g.DrawLine(pen, standX, y + h, standX, y + h + 4);
+            g.DrawLine(pen, standX - 5, y + h + 5, standX + 5, y + h + 5);
         }
     }
 }

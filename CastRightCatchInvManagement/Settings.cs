@@ -67,12 +67,17 @@ namespace CastRightCatchInvManagement
             var salesOrder = new CardPanel { Dock = DockStyle.Top, Height = 168 };
             LayoutSalesOrderCard(salesOrder);
             var spacerSo = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
-            var user = new CardPanel { Dock = DockStyle.Top, Height = 148 };
+            var user = new CardPanel { Dock = DockStyle.Top, Height = 390 };
             LayoutUserCard(user);
             var spacerUser = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
+            var mail = new CardPanel { Dock = DockStyle.Top, Height = 220 };
+            LayoutMailCard(mail);
+            var spacerMail = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
 
             Controls.Add(user);
             Controls.Add(spacerUser);
+            Controls.Add(mail);
+            Controls.Add(spacerMail);
             Controls.Add(productNumber);
             Controls.Add(spacerPn);
             Controls.Add(salesOrder);
@@ -358,11 +363,23 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        private Button _signOut = null!;
+        private TextBox _accountUser = null!;
+        private TextBox _accountName = null!;
+        private TextBox _accountCurrent = null!;
+        private TextBox _accountNew = null!;
+        private TextBox _accountConfirm = null!;
+        private Button _accountSave = null!;
+        private TextBox _smtpHost = null!;
+        private TextBox _smtpPort = null!;
+        private TextBox _smtpUser = null!;
+        private TextBox _smtpPassword = null!;
+
         private void LayoutUserCard(CardPanel card)
         {
             var heading = new Label
             {
-                Text = "User settings",
+                Text = "Your account",
                 Font = Theme.SectionTitle,
                 ForeColor = Theme.Navy,
                 Location = new Point(24, 14),
@@ -370,28 +387,199 @@ namespace CastRightCatchInvManagement
             };
             card.Controls.Add(heading);
 
-            var lbl = new Label { Text = "EMAIL" };
-            Theme.StyleFieldLabel(lbl);
-
-            _userEmail = new TextBox
+            var who = new Label
             {
-                Name = "txtUserEmail",
-                Text = AppState.UserEmail
+                Name = "lblSignedIn",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 40),
+                AutoSize = true
             };
+            card.Controls.Add(who);
+
+            _accountUser = new TextBox();
+            _accountName = new TextBox();
+            _userEmail = new TextBox { Name = "txtUserEmail" };
+            _accountCurrent = new TextBox { UseSystemPasswordChar = true };
+            _accountNew = new TextBox { UseSystemPasswordChar = true };
+            _accountConfirm = new TextBox { UseSystemPasswordChar = true };
+            Theme.StyleField(_accountUser);
+            Theme.StyleField(_accountName);
             Theme.StyleField(_userEmail);
+            Theme.StyleField(_accountCurrent);
+            Theme.StyleField(_accountNew);
+            Theme.StyleField(_accountConfirm);
             _userEmail.PlaceholderText = "you@example.com";
-            _userEmail.Leave += (_, _) =>
+            _accountNew.PlaceholderText = "Leave blank to keep";
+
+            var lblUser = new Label { Text = "USERNAME" };
+            var lblName = new Label { Text = "NAME" };
+            var lblEmail = new Label { Text = "EMAIL" };
+            var lblCurrent = new Label { Text = "CURRENT PASSWORD" };
+            var lblNew = new Label { Text = "NEW PASSWORD" };
+            var lblConfirm = new Label { Text = "CONFIRM PASSWORD" };
+            Theme.StyleFieldLabel(lblUser);
+            Theme.StyleFieldLabel(lblName);
+            Theme.StyleFieldLabel(lblEmail);
+            Theme.StyleFieldLabel(lblCurrent);
+            Theme.StyleFieldLabel(lblNew);
+            Theme.StyleFieldLabel(lblConfirm);
+            PlaceField(card, lblUser, _accountUser, 24, 62, 300);
+            PlaceField(card, lblName, _accountName, 344, 62, 300);
+            PlaceField(card, lblEmail, _userEmail, 24, 116, 620);
+            PlaceField(card, lblCurrent, _accountCurrent, 24, 170, 200);
+            PlaceField(card, lblNew, _accountNew, 244, 170, 200);
+            PlaceField(card, lblConfirm, _accountConfirm, 464, 170, 200);
+
+            _accountSave = new Button
             {
-                AppState.UserEmail = _userEmail.Text.Trim();
+                Text = "Save account",
+                Size = new Size(140, 34),
+                Location = new Point(24, 236)
+            };
+            Theme.StyleGoldButton(_accountSave);
+            _accountSave.Click += (_, _) => SaveOwnAccount();
+            card.Controls.Add(_accountSave);
+
+            _signOut = new Button
+            {
+                Text = "Sign out",
+                Size = new Size(110, 34),
+                Location = new Point(176, 236)
+            };
+            Theme.StyleOutlineButton(_signOut);
+            _signOut.Click += (_, _) =>
+            {
+                AppState.SignOut();
+                Application.Restart();
+            };
+            card.Controls.Add(_signOut);
+
+            var questions = new Button
+            {
+                Text = "Security questions",
+                Size = new Size(160, 34),
+                Location = new Point(296, 236)
+            };
+            Theme.StyleNavyButton(questions);
+            questions.Click += (_, _) =>
+            {
+                if (!AppState.SignedIn)
+                    return;
+                using var form = new SecurityQuestionsForm(AppState.CurrentUsername);
+                form.ShowDialog(this);
+            };
+            card.Controls.Add(questions);
+
+            var hint = new Label
+            {
+                Text = "Username, name, email, and password are yours to change. Email is also the sales-rep address on invoices.",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 280),
+                Size = new Size(620, 36)
+            };
+            card.Controls.Add(hint);
+        }
+
+        private void LayoutMailCard(CardPanel card)
+        {
+            var heading = new Label
+            {
+                Text = "Login email (SMTP)",
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 14),
+                AutoSize = true
+            };
+            card.Controls.Add(heading);
+            var hint = new Label
+            {
+                Text = "Used when IT adds a user. The message includes their username and temporary password.",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 40),
+                Size = new Size(620, 28)
+            };
+            card.Controls.Add(hint);
+
+            _smtpHost = new TextBox();
+            _smtpPort = new TextBox();
+            _smtpUser = new TextBox();
+            _smtpPassword = new TextBox { UseSystemPasswordChar = true };
+            Theme.StyleField(_smtpHost);
+            Theme.StyleField(_smtpPort);
+            Theme.StyleField(_smtpUser);
+            Theme.StyleField(_smtpPassword);
+            _smtpHost.PlaceholderText = "smtp.office365.com";
+            _smtpPort.PlaceholderText = "587";
+            var lblHost = new Label { Text = "SMTP HOST" };
+            var lblPort = new Label { Text = "PORT" };
+            var lblSmtpUser = new Label { Text = "SMTP USERNAME" };
+            var lblSmtpPass = new Label { Text = "SMTP PASSWORD" };
+            Theme.StyleFieldLabel(lblHost);
+            Theme.StyleFieldLabel(lblPort);
+            Theme.StyleFieldLabel(lblSmtpUser);
+            Theme.StyleFieldLabel(lblSmtpPass);
+            PlaceField(card, lblHost, _smtpHost, 24, 72, 360);
+            PlaceField(card, lblPort, _smtpPort, 404, 72, 80);
+            PlaceField(card, lblSmtpUser, _smtpUser, 24, 126, 300);
+            PlaceField(card, lblSmtpPass, _smtpPassword, 344, 126, 280);
+            BindInvoiceField(_smtpHost, v => AppState.SmtpHost = v);
+            BindInvoiceField(_smtpUser, v => AppState.SmtpUser = v);
+            _smtpPort.Leave += (_, _) =>
+            {
+                if (int.TryParse(_smtpPort.Text.Trim(), out int port) && port > 0)
+                    AppState.SmtpPort = port;
                 AppLock.SaveSettings();
             };
-
-            PlaceField(card, lbl, _userEmail, 24, 48, 640);
-            _userEmail.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            card.Resize += (_, _) =>
+            _smtpPassword.Leave += (_, _) =>
             {
-                _userEmail.Width = Math.Max(200, card.Width - 48);
+                AppState.SmtpPassword = _smtpPassword.Text;
+                AppLock.SaveSettings();
             };
+        }
+
+        private void SaveOwnAccount()
+        {
+            if (!AppState.SignedIn)
+                return;
+
+            string newUser = _accountUser.Text.Trim();
+            if (!Accounts.RenameUser(AppState.CurrentUsername, newUser, out string error))
+            {
+                MessageBox.Show(error, "Account", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            string name = _accountName.Text.Trim();
+            string email = _userEmail.Text.Trim();
+            SqliteInventory.UpdateAccount(AppState.CurrentUsername, name, email);
+            AppState.CurrentDisplayName = name.Length > 0 ? name : AppState.CurrentUsername;
+            AppState.UserEmail = email;
+            AppLock.SaveSettings();
+
+            if (_accountNew.Text.Length > 0 || _accountConfirm.Text.Length > 0)
+            {
+                if (_accountNew.Text != _accountConfirm.Text)
+                {
+                    MessageBox.Show("The new passwords do not match.", "Account", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (!Accounts.ChangeOwnPassword(AppState.CurrentUsername, _accountCurrent.Text, _accountNew.Text, out error))
+                {
+                    MessageBox.Show(error, "Account", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                _accountCurrent.Text = "";
+                _accountNew.Text = "";
+                _accountConfirm.Text = "";
+            }
+
+            ToastAlert.Success(this, "Account saved.");
+            ApplyLockState();
         }
 
         private static void PlaceField(Control parent, Label label, TextBox box, int x, int y, int width)
@@ -440,28 +628,71 @@ namespace CastRightCatchInvManagement
 
             if (_userEmail != null)
                 _userEmail.Text = AppState.UserEmail;
+            if (_accountUser != null)
+                _accountUser.Text = AppState.CurrentUsername;
+            if (_accountName != null)
+                _accountName.Text = AppState.CurrentDisplayName;
+            if (_smtpHost != null)
+                _smtpHost.Text = AppState.SmtpHost;
+            if (_smtpPort != null)
+                _smtpPort.Text = AppState.SmtpPort > 0 ? AppState.SmtpPort.ToString() : "587";
+            if (_smtpUser != null)
+                _smtpUser.Text = AppState.SmtpUser;
+            if (_smtpPassword != null)
+                _smtpPassword.Text = AppState.SmtpPassword;
+
+            if (Controls.Find("lblSignedIn", true).FirstOrDefault() is Label who)
+            {
+                string name = AppState.CurrentDisplayName.Length > 0
+                    ? AppState.CurrentDisplayName
+                    : AppState.CurrentUsername;
+                who.Text = AppState.SignedIn
+                    ? name + (AppState.IsIt ? "  ·  IT" : AppState.IsAdmin ? "  ·  Administrator" : "  ·  User")
+                    : "Not signed in";
+            }
         }
 
         private void ApplyLockState()
         {
             bool ready = AppLock.HasFolder();
+            bool admin = ready && AppState.IsAdmin;
 
-            txtBusinessName.Enabled = ready;
-            txtAddress.Enabled = ready;
-            txtPhone.Enabled = ready;
-            txtEmail.Enabled = ready;
-            txtEIN.Enabled = ready;
-            txtPaymentTerms.Enabled = ready;
+            txtBusinessName.Enabled = admin;
+            txtAddress.Enabled = admin;
+            txtPhone.Enabled = admin;
+            txtEmail.Enabled = admin;
+            txtEIN.Enabled = admin;
+            txtPaymentTerms.Enabled = admin;
             if (_soPattern != null)
-                _soPattern.Enabled = ready;
+                _soPattern.Enabled = admin;
             if (_soStart != null)
-                _soStart.Enabled = ready;
+                _soStart.Enabled = admin;
             if (_productPattern != null)
-                _productPattern.Enabled = ready;
+                _productPattern.Enabled = admin;
             if (_productStart != null)
-                _productStart.Enabled = ready;
+                _productStart.Enabled = admin;
             if (_userEmail != null)
-                _userEmail.Enabled = ready;
+                _userEmail.Enabled = ready && AppState.SignedIn;
+            if (_accountUser != null)
+                _accountUser.Enabled = ready && AppState.SignedIn;
+            if (_accountName != null)
+                _accountName.Enabled = ready && AppState.SignedIn;
+            if (_accountCurrent != null)
+                _accountCurrent.Enabled = ready && AppState.SignedIn;
+            if (_accountNew != null)
+                _accountNew.Enabled = ready && AppState.SignedIn;
+            if (_accountConfirm != null)
+                _accountConfirm.Enabled = ready && AppState.SignedIn;
+            if (_accountSave != null)
+                _accountSave.Enabled = ready && AppState.SignedIn;
+            if (_smtpHost != null)
+                _smtpHost.Enabled = admin;
+            if (_smtpPort != null)
+                _smtpPort.Enabled = admin;
+            if (_smtpUser != null)
+                _smtpUser.Enabled = admin;
+            if (_smtpPassword != null)
+                _smtpPassword.Enabled = admin;
 
             txtFolderPath.ReadOnly = true;
             txtFolderPath.BackColor = ready ? Theme.Paper : Theme.DangerFill;
@@ -471,7 +702,17 @@ namespace CastRightCatchInvManagement
                 txtFolderPath.Text = "No folder selected — click Change Folder";
 
             btnChangeFolder.Enabled = true;
-            btnRollToNextTerm.Enabled = ready;
+            btnRollToNextTerm.Enabled = admin;
+
+            if (Controls.Find("lblSignedIn", true).FirstOrDefault() is Label who)
+            {
+                string name = AppState.CurrentDisplayName.Length > 0
+                    ? AppState.CurrentDisplayName
+                    : AppState.CurrentUsername;
+                who.Text = AppState.SignedIn
+                    ? name + (AppState.IsIt ? "  ·  IT" : AppState.IsAdmin ? "  ·  Administrator" : "  ·  User")
+                    : "Not signed in";
+            }
         }
 
         private void btnChangeFolder_Click(object sender, EventArgs e)
@@ -505,6 +746,16 @@ namespace CastRightCatchInvManagement
                 MessageBox.Show(
                     "Select a data folder first.",
                     "No Folder",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!AppState.IsAdmin)
+            {
+                MessageBox.Show(
+                    "Only an administrator can roll to the next term.",
+                    "Administrator",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
                 return;
