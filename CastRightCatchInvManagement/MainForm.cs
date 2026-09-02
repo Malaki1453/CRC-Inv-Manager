@@ -1,5 +1,6 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Primary workspace window: sidebar, header, and nested pages.</summary>
     public partial class MainForm : Form
     {
         private readonly Workspace _workspace;

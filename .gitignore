@@ -30,3 +30,7 @@ Desktop.ini
 ## Local app settings
 **/settings*.json
 *.DotSettings.user
+
+## Inventory server host files
+*.pfx
+# Runtime folder next to the exe (bin/ already ignored). Do not ignore source CrcInventoryServer/Data/.

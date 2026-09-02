@@ -1,5 +1,6 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Read-only popup of every field on a grid row. Not a workspace tab.</summary>
     internal sealed class RecordDetailsForm : Form
     {
         public static void ShowRecord(IWin32Window? owner, string title, Dictionary<string, string> record)

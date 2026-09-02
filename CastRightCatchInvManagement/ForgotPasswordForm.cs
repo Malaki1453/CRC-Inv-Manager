@@ -1,5 +1,6 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Reset via three hashed security questions, then pick a new password.</summary>
     internal sealed class ForgotPasswordForm : Form
     {
         private readonly TextBox _user;
@@ -122,19 +123,17 @@ namespace CastRightCatchInvManagement
         private bool Save()
         {
             string user = _user.Text.Trim();
-            if (!Accounts.VerifySecurityAnswers(user, _answers[0].Text, _answers[1].Text, _answers[2].Text))
-            {
-                MessageBox.Show("Those answers are not right.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return false;
-            }
-
             if (_next.Text != _confirm.Text)
             {
                 MessageBox.Show("The passwords do not match.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
 
-            if (!Accounts.SetPassword(user, _next.Text, out string error, mustChange: false))
+            if (!Accounts.RecoverPassword(
+                    user,
+                    _answers[0].Text, _answers[1].Text, _answers[2].Text,
+                    _next.Text,
+                    out string error))
             {
                 MessageBox.Show(error, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;

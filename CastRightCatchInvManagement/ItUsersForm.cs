@@ -1,5 +1,6 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>IT: add users, reset passwords, and email temporary logins.</summary>
     internal sealed class ItUsersForm : Form, INavigationPage
     {
         private DataGridView _grid = null!;
@@ -10,15 +11,10 @@ namespace CastRightCatchInvManagement
             BuildUi();
         }
 
+        /// <summary>User management now lives on Admin. This page just opens that tab.</summary>
         public void HighlightCurrentPage()
         {
-            if (!AppState.IsIt)
-            {
-                Navigator.GoTo(AppPage.Settings);
-                return;
-            }
-
-            LoadUsers();
+            Navigator.GoTo(AppPage.Admin);
         }
 
         private void BuildUi()
@@ -77,6 +73,12 @@ namespace CastRightCatchInvManagement
                 string user = RowUser(e.RowIndex);
                 var menu = new ContextMenuStrip();
                 menu.Items.Add("Edit user", null, (_, _) => EditUser(user));
+                if (AppState.IsAdmin)
+                    menu.Items.Add("Table access", null, (_, _) =>
+                    {
+                        if (UserAccessForm.ShowFor(FindForm(), user))
+                            LoadUsers();
+                    });
                 if (user.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
                     menu.Items.Add("Change my password", null, (_, _) =>
                     {
@@ -103,6 +105,7 @@ namespace CastRightCatchInvManagement
             return _grid.Rows[row].Cells[0].Value?.ToString()?.Trim() ?? "";
         }
 
+        /// <summary>Fill the grid with usernames, names, emails, and admin/IT flags.</summary>
         private void LoadUsers()
         {
             _grid.Columns.Clear();
@@ -122,6 +125,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Open the add/edit user dialog. Null username means add a new person.</summary>
         private void EditUser(string? username)
         {
             using var form = new ItUserEditForm(username);
@@ -129,6 +133,7 @@ namespace CastRightCatchInvManagement
                 LoadUsers();
         }
 
+        /// <summary>Generate a 6-character temporary password, hash it, and email it if SMTP is set.</summary>
         private void ResetPassword(string username)
         {
             var confirm = MessageBox.Show(
@@ -152,6 +157,7 @@ namespace CastRightCatchInvManagement
             LoadUsers();
         }
 
+        /// <summary>Remove a user after confirm. Cannot delete yourself, the last IT, or the last admin.</summary>
         private void DeleteUser(string username)
         {
             var confirm = MessageBox.Show(
@@ -172,6 +178,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>IT: who is an administrator or IT user. Writes admins.json and the database.</summary>
     internal sealed class ItAccessForm : Form, INavigationPage
     {
         private ListBox _admins = null!;
@@ -183,15 +190,10 @@ namespace CastRightCatchInvManagement
             BuildUi();
         }
 
+        /// <summary>Role lists now live on Admin. This page just opens that tab.</summary>
         public void HighlightCurrentPage()
         {
-            if (!AppState.IsIt)
-            {
-                Navigator.GoTo(AppPage.Settings);
-                return;
-            }
-
-            LoadLists();
+            Navigator.GoTo(AppPage.Admin);
         }
 
         private void BuildUi()
@@ -289,6 +291,7 @@ namespace CastRightCatchInvManagement
                 box.Items.Add(name);
         }
 
+        /// <summary>Grant administrator (<paramref name="admin"/> true) or IT (false) to a picked user.</summary>
         private void AddRole(bool admin)
         {
             var accounts = Accounts.List();
@@ -321,6 +324,7 @@ namespace CastRightCatchInvManagement
             LoadLists();
         }
 
+        /// <summary>Revoke administrator or IT from the selected name. Blocks removing the last of either role.</summary>
         private void RemoveRole(bool admin, ListBox box)
         {
             if (box.SelectedItem is not string username)
@@ -392,6 +396,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>IT self-edit: username, name, email, and password.</summary>
     internal sealed class ItUserEditForm : Form
     {
         private readonly string? _username;
@@ -478,6 +483,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(cancel);
         }
 
+        /// <summary>Create or update this user. New users get a temp password emailed when possible.</summary>
         private bool Save()
         {
             string user = _user.Text.Trim();

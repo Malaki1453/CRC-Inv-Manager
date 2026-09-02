@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Per-column filter boxes under grid headers, plus sort arrows and hide/show.</summary>
     internal sealed class ColumnSearch
     {
         private const int HeaderHeight = 40;

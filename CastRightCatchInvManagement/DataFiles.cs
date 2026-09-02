@@ -1,5 +1,11 @@
-﻿namespace CastRightCatchInvManagement
+﻿using System.Globalization;
+
+namespace CastRightCatchInvManagement
 {
+    /// <summary>
+    /// Facade over inventory tables: grids, CSV import, PDFs, numbering, and term roll-over.
+    /// Table names match SQLite tables. Pages should call this instead of SqliteInventory directly.
+    /// </summary>
     public static class DataFiles
     {
         public const string PurchaseSales = "purchase_sales";
@@ -45,6 +51,12 @@
 
         public static bool Exists(string baseName)
         {
+            if (DataLink.IsRemote)
+            {
+                SqliteInventory.EnsureCreated();
+                return true;
+            }
+
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 return false;
 
@@ -149,13 +161,18 @@
             if (string.IsNullOrWhiteSpace(baseName))
                 return null;
 
+            if (SqliteInventory.UsingArchive(baseName))
+                return $"{SqliteInventory.ArchiveFileName} + {SqliteInventory.FileName}  ·  {baseName}";
+
             string term = (AppState.TermStartDate ?? DateTime.Today).ToString("yyyy-MM-dd");
             return $"{SqliteInventory.FileName}  ·  {baseName}  ·  {term}";
         }
 
         public static string? GetActiveFilePath()
         {
-            return SqliteInventory.GetPath();
+            return AppState.ViewingOldInventory
+                ? SqliteInventory.GetArchivePath()
+                : SqliteInventory.GetPath();
         }
 
         public static bool ActiveFileExists()
@@ -214,10 +231,13 @@
 
         public static string SaveStoredPdf(string kind, string key, string fileName, byte[] content)
         {
+            SqliteInventory.SavePdf(kind, key, fileName, content);
+            if (DataLink.IsRemote)
+                return WritePdfCopy(kind, fileName, content);
+
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 throw new InvalidOperationException("Select a data folder first.");
 
-            SqliteInventory.SavePdf(kind, key, fileName, content);
 
             string? folder = kind == PdfKindInvoice
                 ? GetStoredInvoicesFolder()
@@ -234,7 +254,9 @@
         public static string? FindStoredPdf(string kind, string? key)
         {
             key = (key ?? "").Trim();
-            if (key.Length == 0 || string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            if (key.Length == 0)
+                return null;
+            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) && !DataLink.IsRemote)
                 return null;
 
             var stored = SqliteInventory.TryGetPdf(kind, key);
@@ -424,6 +446,12 @@
 
         public static void EnsureFilesExistOrAsk()
         {
+            if (DataLink.IsRemote)
+            {
+                SqliteInventory.EnsureCreated();
+                return;
+            }
+
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 return;
 
@@ -449,6 +477,10 @@
                 SqliteInventory.EnsureColumns(baseName);
         }
 
+        /// <summary>
+        /// Archive leftover CSVs, move completed process rows into old_inventory.db,
+        /// and start a new term. Unfinished rows stay live and undated.
+        /// </summary>
         public static void RollToNextTerm()
         {
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) ||
@@ -477,9 +509,12 @@
                 }
             }
 
+            SqliteInventory.ArchiveCompleted(start);
+            SetViewingOldInventory(false);
             AppState.TermStartDate = DateTime.Today;
             AppLock.SaveSettings();
             SqliteInventory.EnsureCreated();
+            NotifyDataChanged();
         }
 
         public static string GetExpectedHeader(string baseName)
@@ -487,7 +522,7 @@
             return baseName switch
             {
                 PurchaseSales =>
-                    "PO #,Vendor Invoice #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Volume Received,Price Paid / LB,Overhead / LB,Freight / LB,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics",
+                    "PO #,Vendor Invoice #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Volume Received,Price Paid / LB,Overhead / LB,Freight / LB,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status",
 
                 Sales =>
                     "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status",
@@ -533,6 +568,130 @@
         public static string GetRecord(Dictionary<string, string> record, string column)
         {
             return record.TryGetValue(column, out var value) ? value ?? "" : "";
+        }
+
+        /// <summary>Parse a money or quantity cell ($1,234.50), (50), or blank → 0.</summary>
+        public static decimal ParseMoney(string? text)
+        {
+            text = (text ?? "").Trim();
+            if (text.Length == 0)
+                return 0;
+
+            bool negative = text.StartsWith('(') && text.EndsWith(')');
+            text = text.Replace("$", "").Replace(",", "").Replace("(", "").Replace(")", "").Trim();
+            if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount) &&
+                !decimal.TryParse(text, NumberStyles.Number, CultureInfo.CurrentCulture, out amount))
+                return 0;
+
+            return negative ? -Math.Abs(amount) : amount;
+        }
+
+        /// <summary>
+        /// Home-screen totals from sales and invoices in the current database view
+        /// (live only, or archive + live when Old is on).
+        /// </summary>
+        public static DashboardSummary GetDashboardSummary()
+        {
+            decimal revenue = 0;
+            decimal outstanding = 0;
+            decimal late = 0;
+            int overdue = 0;
+            var deals = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (TableAccess.Can(TableAccess.Sales))
+            {
+                foreach (var sale in ReadRecords(Sales))
+                {
+                    revenue += ParseMoney(GetRecord(sale, "Amount"));
+                    string po = SalePo(sale);
+                    string so = GetRecord(sale, "SO #").Trim();
+                    string key = po.Length > 0 ? po : so;
+                    if (key.Length > 0)
+                        deals.Add(key);
+                    else
+                        deals.Add("row:" + deals.Count);
+                }
+            }
+            else if (TableAccess.Can(TableAccess.Invoices))
+            {
+                foreach (var invoice in ReadRecords(Invoices))
+                    revenue += ParseMoney(GetRecord(invoice, "Amount"));
+            }
+
+            if (TableAccess.Can(TableAccess.Invoices))
+            {
+                foreach (var invoice in ReadRecords(Invoices))
+                {
+                    if (InvoiceIsClosed(invoice))
+                        continue;
+
+                    decimal due = InvoiceOutstanding(invoice);
+                    if (due <= 0)
+                        continue;
+
+                    outstanding += due;
+                    if (InvoiceIsPastDue(invoice))
+                    {
+                        late += due;
+                        overdue++;
+                    }
+                }
+            }
+
+            int dealCount = TableAccess.Can(TableAccess.Sales) ? deals.Count : 0;
+            if (dealCount == 0 && TableAccess.Can(TableAccess.Invoices) && !TableAccess.Can(TableAccess.Sales))
+            {
+                foreach (var invoice in ReadRecords(Invoices))
+                {
+                    string so = GetRecord(invoice, "SO #").Trim();
+                    string number = GetRecord(invoice, "Invoice #").Trim();
+                    string key = so.Length > 0 ? so : number;
+                    if (key.Length > 0)
+                        deals.Add(key);
+                }
+
+                dealCount = deals.Count;
+            }
+
+            return new DashboardSummary(
+                revenue,
+                outstanding,
+                late,
+                dealCount,
+                overdue,
+                AppState.ViewingOldInventory);
+        }
+
+        internal static decimal InvoiceOutstanding(Dictionary<string, string> invoice)
+        {
+            decimal outstanding = ParseMoney(GetRecord(invoice, "Outstanding"));
+            if (outstanding > 0)
+                return outstanding;
+
+            decimal amount = ParseMoney(GetRecord(invoice, "Amount"));
+            decimal paid = ParseMoney(GetRecord(invoice, "Paid"));
+            return Math.Max(0, amount - paid);
+        }
+
+        internal static bool InvoiceIsClosed(Dictionary<string, string> invoice)
+        {
+            string status = GetRecord(invoice, "Status").Trim();
+            if (status.Equals("paid", StringComparison.OrdinalIgnoreCase) ||
+                status.Equals("closed", StringComparison.OrdinalIgnoreCase) ||
+                status.Equals("complete", StringComparison.OrdinalIgnoreCase) ||
+                status.Equals("completed", StringComparison.OrdinalIgnoreCase) ||
+                status.Equals("settled", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return InvoiceOutstanding(invoice) <= 0 && ParseMoney(GetRecord(invoice, "Amount")) > 0;
+        }
+
+        internal static bool InvoiceIsPastDue(Dictionary<string, string> invoice)
+        {
+            string dueText = GetRecord(invoice, "Due Date").Trim();
+            if (!DateTime.TryParse(dueText, out var due))
+                return false;
+            return due.Date < DateTime.Today;
         }
 
         public static string GetRecordAny(Dictionary<string, string> record, params string[] columns)
@@ -852,6 +1011,30 @@
             return source;
         }
 
+        public static bool MatchesVendor(
+            Dictionary<string, string> record,
+            string? vendorCode,
+            string? vendorName)
+        {
+            string code = (vendorCode ?? "").Trim();
+            string name = (vendorName ?? "").Trim();
+            if (code.Length == 0 && name.Length == 0)
+                return true;
+
+            string recCode = GetRecordAny(record, "Vendor Code", "Code");
+            string recName = GetRecordAny(record, "Vendor", "Name", "Company");
+
+            if (code.Length > 0 && recCode.Length > 0 &&
+                recCode.Equals(code, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (name.Length > 0 && recName.Length > 0 &&
+                recName.Equals(name, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return false;
+        }
+
         public static bool MatchesCustomer(
             Dictionary<string, string> record,
             string? customerCode,
@@ -943,6 +1126,7 @@
             return startsWith;
         }
 
+        /// <summary>Next purchase PO from the product-number pattern, or CRC{yy}-10001 by default.</summary>
         public static string NextPurchasePo()
         {
             string pattern = (AppState.ProductNumberPattern ?? "").Trim();
@@ -951,40 +1135,38 @@
 
             int year = (AppState.TermStartDate ?? DateTime.Today).Year % 100;
             string prefix = $"CRC{year:00}-";
-            int max = 10000;
+            var used = new List<int>();
 
             foreach (var record in ReadRecords(PurchaseSales))
             {
                 string po = GetRecord(record, "PO #");
-                int dash = po.IndexOf('-');
-                if (dash < 0 || dash + 1 >= po.Length)
+                if (!po.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                int i = dash + 1;
-                while (i < po.Length && char.IsWhiteSpace(po[i]))
+                string rest = po[prefix.Length..].Trim();
+                int i = 0;
+                while (i < rest.Length && char.IsDigit(rest[i]))
                     i++;
-                int start = i;
-                while (i < po.Length && char.IsDigit(po[i]))
-                    i++;
-                if (i > start && int.TryParse(po[start..i], out int n) && n > max)
-                    max = n;
+                if (i > 0 && int.TryParse(rest[..i], out int n))
+                    used.Add(n);
             }
 
-            return prefix + (max + 1);
+            return prefix + NextSequenceNumber(used, 10001);
         }
 
         public static string NextNumber(string baseName, string column, int fallback)
         {
-            int max = fallback - 1;
+            var used = new List<int>();
             foreach (var record in ReadRecords(baseName))
             {
-                if (int.TryParse(GetRecord(record, column).Trim(), out int n) && n > max)
-                    max = n;
+                if (int.TryParse(GetRecord(record, column).Trim(), out int n))
+                    used.Add(n);
             }
 
-            return (max + 1).ToString();
+            return NextSequenceNumber(used, fallback).ToString();
         }
 
+        /// <summary>Next SO # from the sales-order pattern, or 10001, 10002, … if the pattern is blank.</summary>
         public static string NextSalesOrderNumber()
         {
             string pattern = (AppState.SalesOrderPattern ?? "").Trim();
@@ -998,25 +1180,113 @@
 
         public static string PreviewProductNumber() => NextPurchasePo();
 
+        /// <summary>
+        /// Build the next value from a pattern such as CRCyy-####.
+        /// yy/yyyy, mm, and dd use today’s date. # is the running number.
+        /// </summary>
         private static string NextFromPattern(string baseName, string column, string pattern, string? startText)
         {
-            ParseHashPattern(pattern, out string prefix, out int width, out string suffix);
+            ParseHashPattern(
+                ExpandDateTokens(pattern, DateTime.Today),
+                out string prefix,
+                out int width,
+                out string suffix);
             int floor = 1;
             if (int.TryParse((startText ?? "").Trim(), out int start) && start > 0)
                 floor = start;
 
-            int max = floor - 1;
+            var used = new List<int>();
             foreach (var record in ReadRecords(baseName))
             {
-                if (!TryReadPatternNumber(GetRecord(record, column), prefix, suffix, out int n))
-                    continue;
-                if (n > max)
-                    max = n;
+                if (TryReadPatternNumber(GetRecord(record, column), prefix, suffix, out int n))
+                    used.Add(n);
             }
 
-            int next = max + 1;
+            int next = NextSequenceNumber(used, floor);
             string digits = next.ToString().PadLeft(width, '0');
             return prefix + digits + suffix;
+        }
+
+        /// <summary>
+        /// Lowest unused integer at or above <paramref name="floor"/> when reuse is on;
+        /// otherwise one higher than the largest used value.
+        /// </summary>
+        private static int NextSequenceNumber(IEnumerable<int> usedNumbers, int floor)
+        {
+            if (floor < 1)
+                floor = 1;
+
+            var used = new HashSet<int>();
+            int max = floor - 1;
+            foreach (var n in usedNumbers)
+            {
+                if (n > max)
+                    max = n;
+                if (n >= floor)
+                    used.Add(n);
+            }
+
+            if (!AppState.ReuseMissingNumbers)
+                return max + 1;
+
+            int next = floor;
+            while (used.Contains(next))
+                next++;
+            return next;
+        }
+
+        /// <summary>Replace yyyy, yy, mm, and dd (any case) with parts of <paramref name="date"/>.</summary>
+        private static string ExpandDateTokens(string pattern, DateTime date)
+        {
+            if (string.IsNullOrEmpty(pattern))
+                return "";
+
+            var built = new System.Text.StringBuilder(pattern.Length + 4);
+            int i = 0;
+            while (i < pattern.Length)
+            {
+                if (TokenAt(pattern, i, "yyyy"))
+                {
+                    built.Append(date.ToString("yyyy"));
+                    i += 4;
+                    continue;
+                }
+
+                if (TokenAt(pattern, i, "yy"))
+                {
+                    built.Append(date.ToString("yy"));
+                    i += 2;
+                    continue;
+                }
+
+                if (TokenAt(pattern, i, "mm"))
+                {
+                    built.Append(date.ToString("MM"));
+                    i += 2;
+                    continue;
+                }
+
+                if (TokenAt(pattern, i, "dd"))
+                {
+                    built.Append(date.ToString("dd"));
+                    i += 2;
+                    continue;
+                }
+
+                built.Append(pattern[i]);
+                i++;
+            }
+
+            return built.ToString();
+        }
+
+        private static bool TokenAt(string pattern, int index, string token)
+        {
+            if (index + token.Length > pattern.Length)
+                return false;
+
+            return string.Compare(
+                pattern, index, token, 0, token.Length, StringComparison.OrdinalIgnoreCase) == 0;
         }
 
         private static void ParseHashPattern(string pattern, out string prefix, out int width, out string suffix)
@@ -1194,12 +1464,14 @@
                 PurchaseSales => new[]
                 {
                     "PO #",
+                    "Status",
                     "Ship Date",
                     "Order Date"
                 },
                 Sales => new[]
                 {
                     "SO #",
+                    "Status",
                     "Ship Date",
                     "PO #"
                 },
@@ -1225,6 +1497,14 @@
                     "Due Date",
                     "Status",
                     "Paid"
+                },
+                BankTransactions => new[]
+                {
+                    "Date",
+                    "Amount",
+                    "Account",
+                    "Description",
+                    "Invoice #"
                 },
                 _ => null
             };
@@ -1282,11 +1562,12 @@
         {
             string[]? visible = baseName switch
             {
-                PurchaseSales => new[] { "PO #", "Ship Date", "Order Date" },
-                Sales => new[] { "SO #", "Ship Date", "PO #" },
+                PurchaseSales => new[] { "PO #", "Status", "Ship Date", "Order Date" },
+                Sales => new[] { "SO #", "Status", "Ship Date", "PO #" },
                 Customers => new[] { "Name", "Company", "Phone", "Current Balance" },
                 Vendors => new[] { "Name", "Company", "Phone", "Current Balance" },
                 Invoices => new[] { "SO #", "Customer", "Ship Date", "Due Date", "Status", "Paid" },
+                BankTransactions => new[] { "Date", "Amount", "Account", "Description", "Invoice #" },
                 _ => null
             };
             if (visible == null)
@@ -1299,6 +1580,17 @@
         public static event Action? DataChanged;
 
         public static void NotifyDataChanged() => DataChanged?.Invoke();
+
+        /// <summary>Flip the Current/Old toggle and reload open pages.</summary>
+        public static void SetViewingOldInventory(bool oldInventory)
+        {
+            if (AppState.ViewingOldInventory == oldInventory)
+                return;
+
+            AppState.ViewingOldInventory = oldInventory;
+            NotifyDataChanged();
+            Navigator.RefreshOpenPages();
+        }
 
         public static int CountDataRows(string baseName)
         {
@@ -1492,4 +1784,13 @@
             return string.Join(",", parts);
         }
     }
+
+    /// <summary>Home-screen totals for the four Command Center cards.</summary>
+    public readonly record struct DashboardSummary(
+        decimal Revenue,
+        decimal Outstanding,
+        decimal LateFees,
+        int Deals,
+        int OverdueInvoices,
+        bool ViewingOld);
 }

@@ -2,6 +2,7 @@ using System.Globalization;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Create Invoice form. Builds a PDF, stores it in the database, and copies it to Stored Invoices.</summary>
     public partial class InvoicePdf : Form, INavigationPage
     {
         private readonly List<InvoiceLineRow> _lines = new();
@@ -37,6 +38,7 @@ namespace CastRightCatchInvManagement
             ResetDraft();
         }
 
+        /// <summary>Shown or refreshed: reload customers, keep at least one blank line, redraw totals.</summary>
         public void HighlightCurrentPage()
         {
             RefreshLookups();
@@ -45,6 +47,11 @@ namespace CastRightCatchInvManagement
             RefreshLines();
         }
 
+        /// <summary>
+        /// Add matching sale lines for this PO/SO onto the invoice.
+        /// Fails if the invoice already has a different customer.
+        /// <paramref name="done"/> gets an error string, or null on success.
+        /// </summary>
         internal void TryAddSale(InvoiceSalePrefill prefill, Action<string?> done)
         {
             if (_lines.Count == 0)
@@ -62,6 +69,10 @@ namespace CastRightCatchInvManagement
             StartAddItems(key, code, name, done);
         }
 
+        /// <summary>
+        /// Rebuild a missing invoice PDF from an invoices-grid row: fill the header, pull matching sales,
+        /// then create and store the PDF. Used when double-clicking an invoice that has no file yet.
+        /// </summary>
         internal void CreatePdfFromInvoice(
             Dictionary<string, string> invoice,
             Action<string?> done)
@@ -550,6 +561,10 @@ namespace CastRightCatchInvManagement
             return poKey + "|" + itemKey;
         }
 
+        /// <summary>
+        /// Look up sale rows for this PO/SO and append each unused line onto the invoice,
+        /// filling sold-to / ship-to from the first match.
+        /// </summary>
         private void StartAddItems(string? key, string customerCode, string customerName, Action<string?> done)
         {
             if (string.IsNullOrWhiteSpace(key))
@@ -675,6 +690,7 @@ namespace CastRightCatchInvManagement
             return _lines.LastOrDefault(line => !line.Locked) ?? _lines[^1];
         }
 
+        /// <summary>Clear header, lines, tax, and totals, then assign the next invoice #.</summary>
         private void ResetDraft()
         {
             foreach (var row in _lines.ToList())
@@ -821,6 +837,10 @@ namespace CastRightCatchInvManagement
             _invoiceTotal.Text = draft.InvoiceTotal.ToString("0.00", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>
+        /// Draw the invoice PDF, store it in the database and Stored Invoices, write an invoices row
+        /// if needed, and open the viewer.
+        /// </summary>
         private void CreateInvoice()
         {
             if (!AppLock.HasFolder())
@@ -1037,6 +1057,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Sales rows carried from the Sales page into Create Invoice.</summary>
     internal sealed class InvoiceSalePrefill
     {
         public string Po { get; set; } = "";

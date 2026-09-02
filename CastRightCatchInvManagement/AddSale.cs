@@ -2,6 +2,7 @@ using System.Globalization;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Create or edit a sale line. Can open Create Sales Order for the customer PO.</summary>
     public partial class AddSale : Form, INavigationPage
     {
         private TextBox _so = null!;
@@ -43,6 +44,7 @@ namespace CastRightCatchInvManagement
             BuildUi();
         }
 
+        /// <summary>Open this page as a blank sale.</summary>
         public static void OpenNew()
         {
             PendingEdit = null;
@@ -50,6 +52,7 @@ namespace CastRightCatchInvManagement
             Navigator.GoTo(AppPage.AddSale);
         }
 
+        /// <summary>Open this page with an existing sale row loaded for edit.</summary>
         public static void OpenEdit(Dictionary<string, string> record)
         {
             PendingEdit = record;
@@ -57,6 +60,9 @@ namespace CastRightCatchInvManagement
             Navigator.GoTo(AppPage.AddSale);
         }
 
+        /// <summary>
+        /// Shown or refreshed: reload customer/item/lot lists, then apply a pending edit or a new blank.
+        /// </summary>
         public void HighlightCurrentPage()
         {
             LoadLookups();
@@ -224,12 +230,15 @@ namespace CastRightCatchInvManagement
             _due = AddDate(card, "DUE DATE", 190, 48, 150);
             _invoice = AddText(card, "INVOICE #", 360, 48, 130);
             _paid = AddText(card, "PAID", 510, 48, 110);
-            _status = AddCombo(card, "STATUS", 640, 48, 120);
+            _status = AddCombo(card, "STATUS", 640, 48, 140);
             _status.DropDownStyle = ComboBoxStyle.DropDownList;
-            _status.Items.AddRange(new object[] { "Open", "Paid" });
+            SelectStatus(_status, "Pending");
             return card;
         }
 
+        /// <summary>
+        /// Refill lot (purchase PO #s), customer, and item-code lists, keeping the current picks.
+        /// </summary>
         private void LoadLookups()
         {
             _loading = true;
@@ -272,6 +281,7 @@ namespace CastRightCatchInvManagement
             _loading = false;
         }
 
+        /// <summary>When a lot / purchase PO is chosen, copy item, description, pack, cases, and volume from that purchase.</summary>
         private void ApplyLot()
         {
             if (_loading)
@@ -293,6 +303,7 @@ namespace CastRightCatchInvManagement
             RecalcAmount();
         }
 
+        /// <summary>When a customer is chosen, fill code, name, and terms.</summary>
         private void ApplyCustomer()
         {
             if (_loading || _customer.SelectedItem is not CodeChoice choice)
@@ -304,6 +315,7 @@ namespace CastRightCatchInvManagement
                 _terms.Text = choice.Extra;
         }
 
+        /// <summary>When an item code is chosen, fill description and country of origin.</summary>
         private void ApplyItem()
         {
             if (_loading || _item.SelectedItem is not CodeChoice choice)
@@ -315,6 +327,7 @@ namespace CastRightCatchInvManagement
                 _coo.Text = choice.Extra;
         }
 
+        /// <summary>If volume is empty, set it to pack size × cases, then refresh amount.</summary>
         private void RecalcVolume()
         {
             if (_calculating)
@@ -334,6 +347,7 @@ namespace CastRightCatchInvManagement
             RecalcAmount();
         }
 
+        /// <summary>Amount = volume × sell price / lb.</summary>
         private void RecalcAmount()
         {
             if (_calculating)
@@ -344,6 +358,10 @@ namespace CastRightCatchInvManagement
             _calculating = false;
         }
 
+        /// <summary>
+        /// Write this line to sales. Edit replaces the original PO + item + customer; add inserts a new row.
+        /// <paramref name="keepCustomer"/> true leaves customer fields filled after add.
+        /// </summary>
         private void SaveSale(bool keepCustomer = false)
         {
             if (!AppLock.HasFolder())
@@ -420,6 +438,10 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>
+        /// Save this sale, then open or build the sales-order PDF for this customer PO.
+        /// Writes the SO # back onto this form when the PDF is created.
+        /// </summary>
         private void CreateSalesOrderPdf()
         {
             string po = _po.Text.Trim();
@@ -460,6 +482,7 @@ namespace CastRightCatchInvManagement
             });
         }
 
+        /// <summary>Copy an existing sale row into the form and switch to edit mode.</summary>
         private void LoadRecord(Dictionary<string, string> record)
         {
             _loading = true;
@@ -485,15 +508,13 @@ namespace CastRightCatchInvManagement
             SetDate(_due, DataFiles.GetRecord(record, "Due Date"));
             _invoice.Text = DataFiles.GetRecord(record, "Invoice #");
             _paid.Text = DataFiles.GetRecord(record, "Paid");
-            string status = DataFiles.GetRecord(record, "Status");
-            _status.SelectedItem = status.Length == 0 ? "Open" : status;
-            if (_status.SelectedIndex < 0)
-                _status.Text = status;
+            SelectStatus(_status, DataFiles.GetRecord(record, "Status"));
             _loading = false;
             SetMode(true);
             RecalcAmount();
         }
 
+        /// <summary>Clear the form for another line. Optionally keep the customer.</summary>
         private void ResetForm(bool keepCustomer)
         {
             string customer = keepCustomer ? CurrentCode(_customer) : "";
@@ -518,7 +539,7 @@ namespace CastRightCatchInvManagement
             Uncheck(_due);
             _invoice.Text = "";
             _paid.Text = "";
-            _status.SelectedItem = "Open";
+            SelectStatus(_status, "Pending");
 
             if (keepCustomer)
             {
@@ -540,6 +561,7 @@ namespace CastRightCatchInvManagement
             _po.Focus();
         }
 
+        /// <summary>Switch the heading and save button between Add Product and Edit Product.</summary>
         private void SetMode(bool editing)
         {
             _editing = editing;
@@ -641,6 +663,21 @@ namespace CastRightCatchInvManagement
         }
 
         private static void Uncheck(DateTimePicker picker) => picker.Checked = false;
+
+        private static void SelectStatus(ComboBox box, string? value)
+        {
+            if (box.Items.Count == 0)
+                box.Items.AddRange(new object[] { "Pending", "Sent", "Confirmed", "Complete" });
+
+            string pick = (value ?? "").Trim();
+            if (pick.Equals("Open", StringComparison.OrdinalIgnoreCase))
+                pick = "Pending";
+            if (pick.Equals("Paid", StringComparison.OrdinalIgnoreCase))
+                pick = "Complete";
+            box.SelectedItem = pick.Length > 0 ? pick : "Pending";
+            if (box.SelectedIndex < 0)
+                box.SelectedItem = "Pending";
+        }
 
         private static string CurrentCode(ComboBox box) =>
             box.SelectedItem is CodeChoice choice ? choice.Code : box.Text.Trim();

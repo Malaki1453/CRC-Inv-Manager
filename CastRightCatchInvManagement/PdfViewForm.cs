@@ -3,6 +3,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Dedicated PDF window (WebView2). Save to database, print, replace, or edit.</summary>
     internal sealed class PdfViewForm : Form
     {
         private static readonly Dictionary<string, PdfViewForm> OpenDocs =

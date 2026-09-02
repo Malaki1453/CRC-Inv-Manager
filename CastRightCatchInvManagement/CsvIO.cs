@@ -3,6 +3,7 @@ using System.Text;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>CSV read/write with quoted fields. Used only to import leftover files into SQLite.</summary>
     internal static class CsvIO
     {
         public static List<string[]> Read(string path)
@@ -28,6 +29,22 @@ namespace CastRightCatchInvManagement
             foreach (var row in rows)
                 sb.AppendLine(Join(row));
             File.WriteAllText(path, sb.ToString());
+        }
+
+        /// <summary>UTF-8 with BOM so Excel opens the file with the right characters.</summary>
+        public static void WriteExcel(string path, IEnumerable<string> header, IEnumerable<IEnumerable<string>> rows)
+        {
+            var lines = new List<IEnumerable<string>> { header };
+            lines.AddRange(rows);
+            WriteExcel(path, lines);
+        }
+
+        public static void WriteExcel(string path, IEnumerable<IEnumerable<string>> rows)
+        {
+            var sb = new StringBuilder();
+            foreach (var row in rows)
+                sb.AppendLine(Join(row));
+            File.WriteAllText(path, sb.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
         }
 
         public static string Join(IEnumerable<string> fields)

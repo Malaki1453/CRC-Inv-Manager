@@ -2,6 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>One editable sales-order line on the pick ticket.</summary>
     internal sealed class SalesOrderLineRow : Panel
     {
         public const int RowHeight = 42;
@@ -274,6 +275,7 @@ namespace CastRightCatchInvManagement
         Rectangle Volume,
         Rectangle Remove);
 
+    /// <summary>One pick-ticket line as stored on the draft before PDF output.</summary>
     internal sealed class SalesOrderLine
     {
         public string ItemCode { get; set; } = "";
@@ -285,6 +287,7 @@ namespace CastRightCatchInvManagement
         public string PoNumber { get; set; } = "";
     }
 
+    /// <summary>Full sales-order payload used to build the PDF.</summary>
     internal sealed class SalesOrderDraft
     {
         public string SoNumber { get; set; } = "";

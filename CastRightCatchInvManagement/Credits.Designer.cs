@@ -24,7 +24,6 @@ namespace CastRightCatchInvManagement
             lblTitle.Text = "Credits";
             btnUpload.Name = "btnUpload";
             btnUpload.Text = "Upload";
-            btnUpload.Click += btnUpload_Click;
             dataGridView1.AllowUserToAddRows = false;
             dataGridView1.AllowUserToDeleteRows = false;
             dataGridView1.Name = "dataGridView1";

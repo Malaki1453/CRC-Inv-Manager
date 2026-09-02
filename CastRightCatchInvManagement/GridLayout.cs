@@ -2,6 +2,7 @@ using System.Text.Json;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Remembers which grid columns are shown, hidden, and in what order.</summary>
     internal static class GridLayout
     {
         private static bool _applying;

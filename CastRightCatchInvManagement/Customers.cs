@@ -1,5 +1,10 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>
+    /// Customer lookup (name, company, phone, balance). Always reads the live database.
+    /// Toolbar Add Customer opens a blank record. Right-click for View Details or Edit Customer.
+    /// Double-click a row for that customer’s sales and bank history.
+    /// </summary>
     public partial class Customers : Form, INavigationPage
     {
         public Customers()
@@ -26,31 +31,10 @@ namespace CastRightCatchInvManagement
             LoadTable();
         }
 
+        /// <summary>Called when this page is shown. Reloads the customer grid.</summary>
         public void HighlightCurrentPage() => LoadTable();
 
+        /// <summary>Fill the grid from the customers table in the live database.</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.Customers);
-
-        private void btnUpload_Click(object sender, EventArgs e)
-        {
-            using var dialog = new OpenFileDialog
-            {
-                Title = "Select a CSV file to import",
-                Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
-                CheckFileExists = true
-            };
-
-            if (dialog.ShowDialog() != DialogResult.OK)
-                return;
-
-            if (DataFiles.TryImportCsv(dialog.FileName, out string message))
-            {
-                MessageBox.Show(message, "Import Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                LoadTable();
-            }
-            else
-            {
-                MessageBox.Show(message, "Import Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
     }
 }

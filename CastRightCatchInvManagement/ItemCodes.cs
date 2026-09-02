@@ -1,5 +1,6 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Item-code lookup used on purchase and sales forms. Always reads the live database.</summary>
     public partial class ItemCodes : Form, INavigationPage
     {
         public ItemCodes()
@@ -10,31 +11,10 @@ namespace CastRightCatchInvManagement
             LoadTable();
         }
 
+        /// <summary>Called when this page is shown. Reloads the item-code grid.</summary>
         public void HighlightCurrentPage() => LoadTable();
 
+        /// <summary>Fill the grid from the item_codes table in the live database.</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.ItemCodes);
-
-        private void btnUpload_Click(object sender, EventArgs e)
-        {
-            using var dialog = new OpenFileDialog
-            {
-                Title = "Select a CSV file to import",
-                Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
-                CheckFileExists = true
-            };
-
-            if (dialog.ShowDialog() != DialogResult.OK)
-                return;
-
-            if (DataFiles.TryImportCsv(dialog.FileName, out string message))
-            {
-                MessageBox.Show(message, "Import Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                LoadTable();
-            }
-            else
-            {
-                MessageBox.Show(message, "Import Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
     }
 }

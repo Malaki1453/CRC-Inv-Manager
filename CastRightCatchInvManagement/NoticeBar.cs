@@ -1,5 +1,6 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Short success or error banner that fades after a few seconds.</summary>
     internal sealed class ToastAlert : Panel
     {
         private readonly System.Windows.Forms.Timer _timer;

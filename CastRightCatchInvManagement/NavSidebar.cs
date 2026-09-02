@@ -2,11 +2,15 @@ using System.Drawing.Drawing2D;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Navy left nav, including the Current/Old database toggle.</summary>
     internal sealed class NavSidebar : Panel
     {
         private readonly Dictionary<AppPage, CrcNavButton> _buttons = new();
         private readonly List<NavDropGroup> _groups = new();
         private readonly Workspace _workspace;
+        private CrcToggleSwitch _dbToggle = null!;
+        private Label _lblCurrentDb = null!;
+        private Label _lblOldDb = null!;
 
         public NavSidebar(Workspace workspace)
         {
@@ -50,40 +54,26 @@ namespace CastRightCatchInvManagement
             var helpTip = new ToolTip { ShowAlways = true };
             helpTip.SetToolTip(help, "Controls");
 
-            var it = new CrcItButton();
-            it.Dock = DockStyle.Right;
-            it.Width = 52;
-            it.Name = "btnIt";
-            it.Visible = false;
-            var itTip = new ToolTip { ShowAlways = true };
-            itTip.SetToolTip(it, "IT");
-            it.Click += (_, _) => ShowItMenu(it);
-            _buttons[AppPage.ItUsers] = it;
-
             var settings = BuildButton(AppPage.Settings, "Settings");
             settings.Dock = DockStyle.Fill;
             settings.Name = "btnSettings";
             settingsRow.Controls.Add(settings);
             settingsRow.Controls.Add(help);
-            settingsRow.Controls.Add(it);
 
-            var navHost = new Panel
+            var navHost = new NavyScrollPanel
             {
                 Dock = DockStyle.Fill,
                 BackColor = Theme.NavyDark,
-                Padding = new Padding(10, 8, 10, 8),
-                AutoScroll = true
+                Padding = new Padding(10, 8, 14, 8)
             };
-            Theme.EnableDoubleBuffer(navHost);
 
             var items = new List<Control>();
             void AddButton(AppPage page, string text)
             {
                 var btn = BuildButton(page, text);
                 btn.Width = 216;
-                btn.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
                 items.Add(btn);
-                navHost.Controls.Add(btn);
+                navHost.Strip.Controls.Add(btn);
             }
 
             AddButton(AppPage.Dashboard, "Dashboard");
@@ -96,11 +86,10 @@ namespace CastRightCatchInvManagement
                 workspace,
                 AddPurchase.OpenNew);
             purchaseGroup.Width = 216;
-            purchaseGroup.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             purchaseGroup.ExpandedChanged += () => LayoutNav(navHost, items);
             purchaseGroup.Register(_buttons);
             items.Add(purchaseGroup);
-            navHost.Controls.Add(purchaseGroup);
+            navHost.Strip.Controls.Add(purchaseGroup);
             _groups.Add(purchaseGroup);
 
             var salesGroup = new NavDropGroup(
@@ -113,11 +102,10 @@ namespace CastRightCatchInvManagement
                 "Create Sales Order",
                 AppPage.SalesOrder);
             salesGroup.Width = 216;
-            salesGroup.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             salesGroup.ExpandedChanged += () => LayoutNav(navHost, items);
             salesGroup.Register(_buttons);
             items.Add(salesGroup);
-            navHost.Controls.Add(salesGroup);
+            navHost.Strip.Controls.Add(salesGroup);
             _groups.Add(salesGroup);
 
             AddButton(AppPage.Customers, "Customers");
@@ -131,24 +119,27 @@ namespace CastRightCatchInvManagement
                 AppPage.InvoicePdf,
                 workspace);
             invoiceGroup.Width = 216;
-            invoiceGroup.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             invoiceGroup.ExpandedChanged += () => LayoutNav(navHost, items);
             invoiceGroup.Register(_buttons);
             items.Add(invoiceGroup);
-            navHost.Controls.Add(invoiceGroup);
+            navHost.Strip.Controls.Add(invoiceGroup);
             _groups.Add(invoiceGroup);
 
             AddButton(AppPage.Debits, "Debits");
             AddButton(AppPage.Credits, "Credits");
             AddButton(AppPage.Banking, "Banking");
             AddButton(AppPage.Reports, "Reports");
+            AddButton(AppPage.Admin, "Admin");
 
             navHost.Resize += (_, _) => LayoutNav(navHost, items);
             LayoutNav(navHost, items);
 
+            var dbSwitch = BuildDatabaseSwitch();
+
             Controls.Add(navHost);
             Controls.Add(settingsRow);
             Controls.Add(userRow);
+            Controls.Add(dbSwitch);
             Controls.Add(brand);
 
             AppLock.Changed += RefreshState;
@@ -177,18 +168,17 @@ namespace CastRightCatchInvManagement
             foreach (var pair in _buttons)
             {
                 bool isSettings = pair.Key == AppPage.Settings || pair.Key == AppPage.Help;
-                bool isIt = pair.Key == AppPage.ItUsers || pair.Key == AppPage.ItAccess;
-                if (isIt)
+                bool isAdminPage = pair.Key == AppPage.Admin;
+                if (isAdminPage)
                 {
-                    pair.Value.Visible = AppState.IsIt;
-                    pair.Value.Enabled = unlocked && AppState.IsIt;
-                    pair.Value.Selected =
-                        _workspace.CurrentPage == AppPage.ItUsers ||
-                        _workspace.CurrentPage == AppPage.ItAccess;
+                    bool staff = AppState.IsAdmin || AppState.IsIt;
+                    pair.Value.Visible = staff;
+                    pair.Value.Enabled = unlocked && staff;
+                    pair.Value.Selected = _workspace.CurrentPage == AppPage.Admin;
                     continue;
                 }
 
-                pair.Value.Enabled = unlocked || isSettings;
+                pair.Value.Enabled = (unlocked || isSettings) && TableAccess.CanPage(pair.Key);
                 pair.Value.Selected = pair.Key == _workspace.CurrentPage;
             }
 
@@ -204,29 +194,22 @@ namespace CastRightCatchInvManagement
                     ? (AppState.IsIt ? "IT  ·  " : AppState.IsAdmin ? "Admin  ·  " : "Signed in  ·  ") + name
                     : "";
             }
+
+            SyncDatabaseSwitch(unlocked);
         }
 
-        private void ShowItMenu(Control anchor)
-        {
-            if (!AppState.IsIt || !AppLock.HasFolder())
-                return;
-
-            var menu = new ContextMenuStrip();
-            menu.Items.Add("Users", null, (_, _) => Navigator.GoTo(AppPage.ItUsers));
-            menu.Items.Add("IT && admins", null, (_, _) => Navigator.GoTo(AppPage.ItAccess));
-            menu.Show(anchor, new Point(0, 0));
-        }
-
-        private static void LayoutNav(Panel host, List<Control> items)
+        private static void LayoutNav(NavyScrollPanel host, List<Control> items)
         {
             int y = 4;
-            int width = Math.Max(180, host.ClientSize.Width - host.Padding.Horizontal);
+            int width = Math.Max(160, host.ContentWidth);
             foreach (var item in items)
             {
                 item.Location = new Point(0, y);
                 item.Width = width;
                 y += item.Height + 4;
             }
+
+            host.SetContentHeight(y);
         }
 
         private Panel BuildBrandHeader()
@@ -291,6 +274,80 @@ namespace CastRightCatchInvManagement
             return brand;
         }
 
+        private Panel BuildDatabaseSwitch()
+        {
+            var host = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 42,
+                BackColor = Theme.NavyDark,
+                Padding = new Padding(10, 4, 10, 8)
+            };
+
+            _lblCurrentDb = new Label
+            {
+                Text = "Current",
+                Font = Theme.Caption,
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+                BackColor = Color.Transparent
+            };
+            _lblCurrentDb.Click += (_, _) => DataFiles.SetViewingOldInventory(false);
+
+            _dbToggle = new CrcToggleSwitch();
+            _dbToggle.Toggled += (_, _) => DataFiles.SetViewingOldInventory(_dbToggle.On);
+            new ToolTip { ShowAlways = true }.SetToolTip(
+                _dbToggle,
+                "Off is the current database. On shows Old Inventory together with current work.");
+
+            _lblOldDb = new Label
+            {
+                Text = "Old",
+                Font = Theme.Caption,
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+                BackColor = Color.Transparent
+            };
+            _lblOldDb.Click += (_, _) => DataFiles.SetViewingOldInventory(true);
+
+            host.Controls.Add(_lblCurrentDb);
+            host.Controls.Add(_dbToggle);
+            host.Controls.Add(_lblOldDb);
+            host.Resize += (_, _) => LayoutDatabaseSwitch(host);
+            LayoutDatabaseSwitch(host);
+            SyncDatabaseSwitch(AppLock.HasFolder());
+            return host;
+        }
+
+        private void LayoutDatabaseSwitch(Control host)
+        {
+            int inner = Math.Max(80, host.ClientSize.Width - host.Padding.Horizontal);
+            int y = host.Padding.Top + 4;
+            int switchX = host.Padding.Left + (inner - _dbToggle.Width) / 2;
+            _dbToggle.Location = new Point(switchX, y);
+
+            _lblCurrentDb.Location = new Point(
+                Math.Max(host.Padding.Left, switchX - _lblCurrentDb.Width - 8),
+                y + (_dbToggle.Height - _lblCurrentDb.Height) / 2);
+            _lblOldDb.Location = new Point(
+                switchX + _dbToggle.Width + 8,
+                y + (_dbToggle.Height - _lblOldDb.Height) / 2);
+        }
+
+        private void SyncDatabaseSwitch(bool unlocked)
+        {
+            if (_dbToggle == null)
+                return;
+
+            bool old = unlocked && AppState.ViewingOldInventory;
+            _dbToggle.Enabled = unlocked;
+            _dbToggle.SetOn(old);
+            _lblCurrentDb.Enabled = unlocked;
+            _lblOldDb.Enabled = unlocked;
+            _lblCurrentDb.ForeColor = unlocked && !old ? Theme.GoldLight : Color.FromArgb(140, Theme.Cream);
+            _lblOldDb.ForeColor = old ? Theme.GoldLight : Color.FromArgb(140, Theme.Cream);
+        }
+
         private CrcNavButton BuildButton(AppPage page, string text)
         {
             var btn = new CrcNavButton { Text = text, Height = 38 };
@@ -311,6 +368,238 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>
+    /// Navy sidebar list with a thin gold-tinted scrollbar instead of the system bar.
+    /// </summary>
+    internal sealed class NavyScrollPanel : Panel
+    {
+        private const int BarWidth = 6;
+        private const int BarPad = 4;
+        private int _offset;
+        private int _contentHeight;
+        private bool _drag;
+        private int _dragStartY;
+        private int _dragStartOffset;
+        private bool _hoverBar;
+
+        public Panel Strip { get; } = new()
+        {
+            BackColor = Theme.NavyDark
+        };
+
+        public NavyScrollPanel()
+        {
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.UserPaint |
+                ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.ResizeRedraw |
+                ControlStyles.Selectable,
+                true);
+            TabStop = false;
+            Theme.EnableDoubleBuffer(this);
+            Theme.EnableDoubleBuffer(Strip);
+            Controls.Add(Strip);
+            MouseEnter += (_, _) => TryFocus();
+            Strip.MouseEnter += (_, _) => TryFocus();
+            Strip.ControlAdded += (_, e) =>
+            {
+                if (e.Control != null)
+                    Wire(e.Control);
+            };
+        }
+
+        public int ContentWidth =>
+            Math.Max(1, ClientSize.Width - Padding.Left - Padding.Right - BarWidth - BarPad);
+
+        public void SetContentHeight(int height)
+        {
+            _contentHeight = Math.Max(0, height);
+            Clamp();
+            LayoutStrip();
+            Invalidate();
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            Clamp();
+            LayoutStrip();
+            Invalidate();
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            base.OnMouseWheel(e);
+            ScrollBy(-Math.Sign(e.Delta) * 48);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left || !ThumbBounds.Contains(e.Location))
+                return;
+            _drag = true;
+            _dragStartY = e.Y;
+            _dragStartOffset = _offset;
+            Capture = true;
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            bool hover = ThumbBounds.Contains(e.Location) || TrackBounds.Contains(e.Location);
+            if (hover != _hoverBar)
+            {
+                _hoverBar = hover;
+                Invalidate();
+            }
+
+            if (!_drag)
+                return;
+
+            int range = Overflow;
+            int travel = Math.Max(1, TrackBounds.Height - ThumbBounds.Height);
+            int delta = e.Y - _dragStartY;
+            _offset = _dragStartOffset + (int)(delta * (range / (double)travel));
+            Clamp();
+            LayoutStrip();
+            Invalidate();
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            _drag = false;
+            Capture = false;
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            if (_hoverBar && !_drag)
+            {
+                _hoverBar = false;
+                Invalidate();
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            if (Overflow <= 0)
+                return;
+
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var dim = new SolidBrush(Color.FromArgb(40, Theme.Cream)))
+                g.FillRoundedBar(TrackBounds, dim);
+
+            Color thumbColor = _hoverBar || _drag
+                ? Color.FromArgb(210, Theme.Gold)
+                : Color.FromArgb(120, Theme.GoldLight);
+            using var fill = new SolidBrush(thumbColor);
+            g.FillRoundedBar(ThumbBounds, fill);
+        }
+
+        private int ViewHeight => Math.Max(1, ClientSize.Height - Padding.Vertical);
+
+        private int Overflow => Math.Max(0, _contentHeight - ViewHeight);
+
+        private Rectangle TrackBounds
+        {
+            get
+            {
+                int x = ClientSize.Width - BarPad - BarWidth;
+                int y = Padding.Top;
+                int h = Math.Max(BarWidth, ClientSize.Height - Padding.Vertical);
+                return new Rectangle(x, y, BarWidth, h);
+            }
+        }
+
+        private Rectangle ThumbBounds
+        {
+            get
+            {
+                var track = TrackBounds;
+                int overflow = Overflow;
+                if (overflow <= 0)
+                    return Rectangle.Empty;
+                int thumbH = Math.Max(22, (int)(track.Height * (ViewHeight / (double)Math.Max(ViewHeight, _contentHeight))));
+                int travel = Math.Max(0, track.Height - thumbH);
+                int y = track.Y + (int)(travel * (_offset / (double)overflow));
+                return new Rectangle(track.X, y, track.Width, thumbH);
+            }
+        }
+
+        private void ScrollBy(int delta)
+        {
+            _offset += delta;
+            Clamp();
+            LayoutStrip();
+            Invalidate();
+        }
+
+        private void Clamp() =>
+            _offset = Math.Max(0, Math.Min(_offset, Overflow));
+
+        private void LayoutStrip()
+        {
+            Strip.Location = new Point(Padding.Left, Padding.Top - _offset);
+            Strip.Size = new Size(ContentWidth, Math.Max(ViewHeight, _contentHeight));
+        }
+
+        private void TryFocus()
+        {
+            if (!ContainsFocus)
+                Focus();
+        }
+
+        private void Wire(Control control)
+        {
+            control.MouseEnter -= ChildEnter;
+            control.MouseEnter += ChildEnter;
+            control.MouseWheel -= ChildWheel;
+            control.MouseWheel += ChildWheel;
+            control.ControlAdded -= ChildAdded;
+            control.ControlAdded += ChildAdded;
+            foreach (Control child in control.Controls)
+                Wire(child);
+        }
+
+        private void ChildEnter(object? sender, EventArgs e) => TryFocus();
+
+        private void ChildWheel(object? sender, MouseEventArgs e) =>
+            ScrollBy(-Math.Sign(e.Delta) * 48);
+
+        private void ChildAdded(object? sender, ControlEventArgs e)
+        {
+            if (e.Control != null)
+                Wire(e.Control);
+        }
+    }
+
+    internal static class NavyScrollPaint
+    {
+        public static void FillRoundedBar(this Graphics g, Rectangle bounds, Brush? brush = null)
+        {
+            if (bounds.Width <= 0 || bounds.Height <= 0 || brush == null)
+                return;
+            if (bounds.Height <= bounds.Width)
+            {
+                g.FillEllipse(brush, bounds);
+                return;
+            }
+
+            using var path = new GraphicsPath();
+            path.AddArc(bounds.X, bounds.Y, bounds.Width, bounds.Width, 180, 180);
+            path.AddArc(bounds.X, bounds.Bottom - bounds.Width, bounds.Width, bounds.Width, 0, 180);
+            path.CloseFigure();
+            g.FillPath(brush, path);
+        }
+    }
+
+    /// <summary>Expandable sidebar group (Purchases, Sales, Invoices).</summary>
     internal sealed class NavDropGroup : Panel
     {
         private readonly AppPage _headerPage;
@@ -494,6 +783,98 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Gold pill switch. Off = current database, on = Old Inventory (all terms).</summary>
+    internal sealed class CrcToggleSwitch : Control
+    {
+        private bool _on;
+
+        public event EventHandler? Toggled;
+
+        public bool On => _on;
+
+        public CrcToggleSwitch()
+        {
+            Size = new Size(46, 24);
+            Cursor = Cursors.Hand;
+            TabStop = false;
+            DoubleBuffered = true;
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.UserPaint |
+                ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.SupportsTransparentBackColor |
+                ControlStyles.ResizeRedraw,
+                true);
+            BackColor = Color.Transparent;
+            AccessibleName = "Old Inventory";
+            AccessibleRole = AccessibleRole.CheckButton;
+        }
+
+        public void SetOn(bool on)
+        {
+            if (_on == on)
+                return;
+            _on = on;
+            Invalidate();
+        }
+
+        protected override void OnMouseClick(MouseEventArgs e)
+        {
+            base.OnMouseClick(e);
+            if (!Enabled || e.Button != MouseButtons.Left)
+                return;
+
+            _on = !_on;
+            Invalidate();
+            Toggled?.Invoke(this, EventArgs.Empty);
+        }
+
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            base.OnEnabledChanged(e);
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            if (Parent != null)
+            {
+                using var clear = new SolidBrush(Parent.BackColor);
+                g.FillRectangle(clear, ClientRectangle);
+            }
+
+            var track = new Rectangle(1, 1, Math.Max(2, Width - 2), Math.Max(2, Height - 2));
+            using var path = RoundedRect(track, track.Height / 2f);
+            Color trackColor = !Enabled
+                ? Color.FromArgb(50, Theme.Cream)
+                : _on ? Theme.Gold : Theme.NavyMid;
+            using var fill = new SolidBrush(trackColor);
+            g.FillPath(fill, path);
+
+            int pad = 2;
+            int kn = Math.Max(8, Height - pad * 2 - 1);
+            int kx = _on ? Width - pad - kn - 1 : pad;
+            using var knob = new SolidBrush(Enabled ? Theme.Cream : Color.FromArgb(120, Theme.Cream));
+            g.FillEllipse(knob, kx, pad, kn, kn);
+        }
+
+        private static GraphicsPath RoundedRect(Rectangle bounds, float radius)
+        {
+            float d = radius * 2f;
+            var path = new GraphicsPath();
+            path.AddArc(bounds.X, bounds.Y, d, d, 180, 90);
+            path.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90);
+            path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
+            path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
+    }
+
+    /// <summary>Sidebar page button. Selected items get a gold leading bar.</summary>
     internal class CrcNavButton : Button
     {
         private bool _selected;

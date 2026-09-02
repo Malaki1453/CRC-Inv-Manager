@@ -1,5 +1,6 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Page chrome: titles, data grids, and shared toolbar wiring.</summary>
     internal static class UiStyle
     {
         public static void ApplyChildPage(Form form)
@@ -22,18 +23,9 @@ namespace CastRightCatchInvManagement
             ApplyChildPage(form);
             form.Padding = new Padding(28, 20, 28, 24);
 
-            Theme.StyleGoldButton(upload);
-            upload.Text = "Upload CSV";
-            upload.Dock = DockStyle.Fill;
-
-            var uploadHost = new Panel
-            {
-                Dock = DockStyle.Right,
-                Width = 132,
-                Padding = new Padding(10, 0, 0, 0),
-                BackColor = Theme.Paper
-            };
-            uploadHost.Controls.Add(upload);
+            upload.Visible = false;
+            upload.Enabled = false;
+            upload.Size = Size.Empty;
 
             var jump = new ColumnJumpPicker
             {
@@ -92,8 +84,6 @@ namespace CastRightCatchInvManagement
                 toolbar.Controls.Add(actionHost);
             }
 
-            toolbar.Controls.Add(uploadHost);
-
             title.Visible = false;
             title.Text = titleText;
 
@@ -113,8 +103,50 @@ namespace CastRightCatchInvManagement
             };
             card.Controls.Add(grid);
             card.Controls.Add(toolbar);
+            card.Controls.Add(upload);
 
             form.Controls.Add(card);
+        }
+
+        /// <summary>Add a toolbar button on a data page, to the right of the other actions.</summary>
+        public static void AddDataPageAction(Form form, string text, EventHandler click, bool gold = false)
+        {
+            Panel? toolbar = FindDataToolbar(form);
+            if (toolbar == null)
+                return;
+
+            var button = new Button { Text = text, Dock = DockStyle.Fill };
+            if (gold)
+                Theme.StyleGoldButton(button);
+            else
+                Theme.StyleNavyButton(button);
+            button.Click += click;
+            int width = Math.Max(110, TextRenderer.MeasureText(text, Theme.BodyBold).Width + 28);
+            var host = new Panel
+            {
+                Dock = DockStyle.Right,
+                Width = width,
+                Padding = new Padding(10, 0, 0, 0),
+                BackColor = Theme.Paper
+            };
+            host.Controls.Add(button);
+            toolbar.Controls.Add(host);
+        }
+
+        private static Panel? FindDataToolbar(Form form)
+        {
+            foreach (Control outer in form.Controls)
+            {
+                if (outer is not CardPanel card)
+                    continue;
+                foreach (Control inner in card.Controls)
+                {
+                    if (inner is Panel panel && panel.Dock == DockStyle.Top && panel.Height >= 48)
+                        return panel;
+                }
+            }
+
+            return null;
         }
 
         public static void BindRowEdit(
@@ -230,6 +262,7 @@ namespace CastRightCatchInvManagement
             AppPage.Banking => "Banking",
             AppPage.Reports => "Reports",
             AppPage.Settings => "Settings",
+            AppPage.Admin => "Admin",
             AppPage.Help => "Controls",
             AppPage.ItUsers => "Users",
             AppPage.ItAccess => "IT and admins",
@@ -241,9 +274,11 @@ namespace CastRightCatchInvManagement
             if (!AppLock.HasFolder())
                 return "Select a data folder in Settings to unlock the workspace";
 
-            string term = AppState.TermStartDate is DateTime start
-                ? $"Term started {start:MMM d, yyyy}"
-                : "Term not set";
+            string term = AppState.ViewingOldInventory
+                ? "All inventory"
+                : AppState.TermStartDate is DateTime start
+                    ? $"Term started {start:MMM d, yyyy}"
+                    : "Term not set";
 
             string? file = DataFiles.GetDisplayedFileName(page);
             return string.IsNullOrWhiteSpace(file)

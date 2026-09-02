@@ -1,5 +1,9 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>
+    /// Hosts each <see cref="AppPage"/> as a nested form. Extra windows are more workspaces
+    /// that can steal a page from the main window.
+    /// </summary>
     public static class Navigator
     {
         private static readonly Dictionary<AppPage, Form> _instances = new();
@@ -25,11 +29,28 @@ namespace CastRightCatchInvManagement
             [AppPage.Settings]      = () => new Settings(),
             [AppPage.Help]          = () => new Help(),
             [AppPage.ItUsers]       = () => new ItUsersForm(),
-            [AppPage.ItAccess]      = () => new ItAccessForm()
+            [AppPage.ItAccess]      = () => new ItAccessForm(),
+            [AppPage.Admin]         = () => new AdminSettings()
         };
 
         public static event Action<AppPage>? PageChanged;
         public static AppPage CurrentPage { get; private set; } = AppPage.Dashboard;
+
+        /// <summary>Reload every visible page after data or the Current/Old toggle changes.</summary>
+        public static void RefreshOpenPages()
+        {
+            foreach (var workspace in AllWorkspaces())
+            {
+                if (!workspace.IsAlive || workspace.CurrentPage == null)
+                    continue;
+
+                if (_instances.TryGetValue(workspace.CurrentPage.Value, out var form) &&
+                    form != null && !form.IsDisposed)
+                    Highlight(form);
+
+                workspace.RefreshChrome();
+            }
+        }
 
         private static Workspace? _main;
         private static Workspace? _active;
@@ -95,8 +116,19 @@ namespace CastRightCatchInvManagement
             if (workspace == null || !workspace.IsAlive)
                 throw new InvalidOperationException("Navigator host has not been set.");
 
-            if ((page == AppPage.ItUsers || page == AppPage.ItAccess) && !AppState.IsIt)
+            if (page == AppPage.ItUsers || page == AppPage.ItAccess)
+                page = AppPage.Admin;
+            if (page == AppPage.Admin && !AppState.IsAdmin && !AppState.IsIt)
                 page = AppPage.Settings;
+            if (!TableAccess.CanPage(page))
+            {
+                MessageBox.Show(
+                    "You do not have access to that table.",
+                    "Access",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                page = AppPage.Dashboard;
+            }
 
             ShowIn(workspace, page);
         }
@@ -105,6 +137,16 @@ namespace CastRightCatchInvManagement
         {
             if (_main == null || !_main.IsAlive)
                 throw new InvalidOperationException("Navigator host has not been set.");
+
+            if (!TableAccess.CanPage(page))
+            {
+                MessageBox.Show(
+                    "You do not have access to that table.",
+                    "Access",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
 
             var extra = CreateExtra();
             ShowIn(extra, page);
@@ -513,6 +555,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>One window plus its nested page host and sidebar.</summary>
     internal sealed class Workspace
     {
         public Workspace(Form window, Panel host, bool isMain)
@@ -540,6 +583,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Extra detached workspace window with its own sidebar.</summary>
     internal sealed class PageWindow : Form
     {
         private readonly Label _title;

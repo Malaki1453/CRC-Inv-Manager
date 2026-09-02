@@ -3,6 +3,7 @@ using System.Globalization;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>One editable invoice line (PO, product, lot, cases, volume, price).</summary>
     internal sealed class InvoiceLineRow : Panel
     {
         public const int RowHeight = 42;
@@ -409,6 +410,7 @@ namespace CastRightCatchInvManagement
         Rectangle Amount,
         Rectangle Remove);
 
+    /// <summary>One invoice line as stored on the draft before PDF output.</summary>
     internal sealed class InvoiceLine
     {
         public string PoNumber { get; set; } = "";
@@ -422,6 +424,7 @@ namespace CastRightCatchInvManagement
         public decimal Amount { get; set; }
     }
 
+    /// <summary>Full invoice payload used to build the PDF.</summary>
     internal sealed class InvoiceDraft
     {
         public string InvoiceNumber { get; set; } = "";

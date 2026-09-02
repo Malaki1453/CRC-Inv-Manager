@@ -1,5 +1,6 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Set or update three security questions. Answers are hashed, not stored in plain text.</summary>
     internal sealed class SecurityQuestionsForm : Form
     {
         private readonly string _username;

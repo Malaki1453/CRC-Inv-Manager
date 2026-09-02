@@ -3,6 +3,7 @@ using System.Text;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Draws a sales-order / pick-ticket PDF from a SalesOrderDraft.</summary>
     internal static class SalesOrderDocument
     {
         public static string Save(SalesOrderDraft draft)

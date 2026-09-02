@@ -2,6 +2,10 @@ using System.Text.Json;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>
+    /// Shared-folder lock and settings. This PC only stores the folder path in a local JSON file.
+    /// Company info, numbering, and SMTP live in crc_inventory.db so every computer shares them.
+    /// </summary>
     public static class AppLock
     {
         private static readonly string SettingsPath =
@@ -13,6 +17,9 @@ namespace CastRightCatchInvManagement
 
         public static bool HasFolder()
         {
+            if (DataLink.IsRemote)
+                return true;
+
             return !string.IsNullOrWhiteSpace(AppState.InventoryFolder) &&
                    Directory.Exists(AppState.InventoryFolder);
         }
@@ -33,6 +40,12 @@ namespace CastRightCatchInvManagement
                 {
                     AppState.InventoryFolder = settings.InventoryFolder;
                 }
+
+                AppState.ServerHost = settings.ServerHost ?? "";
+                if (settings.ServerPort > 0 && settings.ServerPort <= 65535)
+                    AppState.ServerPort = settings.ServerPort;
+                AppState.ServerFingerprint = settings.ServerFingerprint ?? "";
+                AppState.UseServer = DataLink.UseInventoryServer && settings.UseServer;
 
                 ApplyLocalFallback(settings);
             }
@@ -81,17 +94,28 @@ namespace CastRightCatchInvManagement
 
         public static void SaveFolder(string folder)
         {
+            AppState.UseServer = false;
             AppState.InventoryFolder = folder;
+            DataLink.Disconnect();
             SaveSettings();
             DataFiles.EnsureStoredInvoicesFolder();
             DataFiles.EnsureStoredSalesOrdersFolder();
+        }
+
+        public static void SaveServer(string host, int port, string fingerprint)
+        {
+            AppState.UseServer = true;
+            AppState.ServerHost = (host ?? "").Trim();
+            AppState.ServerPort = port > 0 ? port : DataLink.DefaultPort;
+            AppState.ServerFingerprint = fingerprint ?? "";
+            WriteLocalJson();
         }
 
         public static void SaveSettings()
         {
             WriteLocalJson();
 
-            if (!_loadingShared && HasFolder())
+            if (!_loadingShared && (HasFolder() || DataLink.IsRemote))
             {
                 try
                 {
@@ -128,7 +152,11 @@ namespace CastRightCatchInvManagement
         {
             var settings = new AppSettings
             {
-                InventoryFolder = AppState.InventoryFolder
+                InventoryFolder = AppState.InventoryFolder,
+                UseServer = AppState.UseServer,
+                ServerHost = AppState.ServerHost,
+                ServerPort = AppState.ServerPort,
+                ServerFingerprint = AppState.ServerFingerprint
             };
 
             string json = JsonSerializer.Serialize(settings, new JsonSerializerOptions
@@ -154,11 +182,20 @@ namespace CastRightCatchInvManagement
                 ["sales_order_start"] = AppState.SalesOrderStart ?? "",
                 ["product_number_pattern"] = AppState.ProductNumberPattern ?? "",
                 ["product_number_start"] = AppState.ProductNumberStart ?? "",
+                ["reuse_missing_numbers"] = AppState.ReuseMissingNumbers ? "1" : "0",
                 ["smtp_host"] = AppState.SmtpHost ?? "",
                 ["smtp_port"] = AppState.SmtpPort.ToString(),
                 ["smtp_user"] = AppState.SmtpUser ?? "",
                 ["smtp_password"] = AppState.SmtpPassword ?? "",
-                ["smtp_ssl"] = AppState.SmtpSsl ? "1" : "0"
+                ["smtp_ssl"] = AppState.SmtpSsl ? "1" : "0",
+                ["plaid_client_id"] = AppState.PlaidClientId ?? "",
+                ["plaid_secret"] = AppState.PlaidSecret ?? "",
+                ["plaid_env"] = AppState.PlaidEnv ?? "sandbox",
+                ["plaid_sync_hours"] = AppState.PlaidSyncHours.ToString(),
+                ["plaid_last_sync"] = AppState.PlaidLastSync?.ToString("o") ?? "",
+                ["stay_signed_in_enabled"] = AppState.StaySignedInEnabled ? "1" : "0",
+                ["stay_signed_in_days"] = AppState.StaySignedInDays.ToString(),
+                ["idle_close_hours"] = AppState.IdleCloseHours.ToString()
             };
         }
 
@@ -178,12 +215,30 @@ namespace CastRightCatchInvManagement
             AppState.SalesOrderStart = Get(shared, "sales_order_start", AppState.SalesOrderStart);
             AppState.ProductNumberPattern = Get(shared, "product_number_pattern", AppState.ProductNumberPattern);
             AppState.ProductNumberStart = Get(shared, "product_number_start", AppState.ProductNumberStart);
+            AppState.ReuseMissingNumbers =
+                Get(shared, "reuse_missing_numbers", AppState.ReuseMissingNumbers ? "1" : "0") != "0";
             AppState.SmtpHost = Get(shared, "smtp_host", AppState.SmtpHost);
             if (int.TryParse(Get(shared, "smtp_port", AppState.SmtpPort.ToString()), out int port) && port > 0)
                 AppState.SmtpPort = port;
             AppState.SmtpUser = Get(shared, "smtp_user", AppState.SmtpUser);
             AppState.SmtpPassword = Get(shared, "smtp_password", AppState.SmtpPassword);
             AppState.SmtpSsl = Get(shared, "smtp_ssl", AppState.SmtpSsl ? "1" : "0") != "0";
+            AppState.PlaidClientId = Get(shared, "plaid_client_id", AppState.PlaidClientId);
+            AppState.PlaidSecret = Get(shared, "plaid_secret", AppState.PlaidSecret);
+            AppState.PlaidEnv = Get(shared, "plaid_env", AppState.PlaidEnv);
+            if (int.TryParse(Get(shared, "plaid_sync_hours", AppState.PlaidSyncHours.ToString()), out int hours) &&
+                (hours == 0 || hours == 1 || hours == 3))
+                AppState.PlaidSyncHours = hours;
+            if (DateTime.TryParse(Get(shared, "plaid_last_sync", ""), out var lastSync))
+                AppState.PlaidLastSync = lastSync;
+            AppState.StaySignedInEnabled =
+                Get(shared, "stay_signed_in_enabled", AppState.StaySignedInEnabled ? "1" : "0") != "0";
+            if (int.TryParse(Get(shared, "stay_signed_in_days", AppState.StaySignedInDays.ToString()), out int days) &&
+                days > 0)
+                AppState.StaySignedInDays = days;
+            if (int.TryParse(Get(shared, "idle_close_hours", AppState.IdleCloseHours.ToString()), out int idle) &&
+                idle > 0)
+                AppState.IdleCloseHours = idle;
         }
 
         private static void ApplyLocalFallback(AppSettings settings)
@@ -218,9 +273,14 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Local JSON shape. Folder path or server host/port/fingerprint live per PC.</summary>
     public class AppSettings
     {
         public string? InventoryFolder { get; set; }
+        public bool UseServer { get; set; }
+        public string? ServerHost { get; set; }
+        public int ServerPort { get; set; }
+        public string? ServerFingerprint { get; set; }
         public string? TermStartDate { get; set; }
         public string? UserEmail { get; set; }
         public string? BusinessName { get; set; }
@@ -235,9 +295,15 @@ namespace CastRightCatchInvManagement
         public string? ProductNumberStart { get; set; }
     }
 
+    /// <summary>In-memory session: folder, signed-in user, company info, and the Current/Old view.</summary>
     public static class AppState
     {
         public static string? InventoryFolder { get; set; }
+        /// <summary>This PC talks to the inventory server. Later the host can be filled in without typing it.</summary>
+        public static bool UseServer { get; set; }
+        public static string ServerHost { get; set; } = "";
+        public static int ServerPort { get; set; } = 7443;
+        public static string ServerFingerprint { get; set; } = "";
         public static DateTime? TermStartDate { get; set; }
         public static string UserEmail { get; set; } = "";
         public static string BusinessName { get; set; } = "";
@@ -250,15 +316,34 @@ namespace CastRightCatchInvManagement
         public static string SalesOrderStart { get; set; } = "";
         public static string ProductNumberPattern { get; set; } = "";
         public static string ProductNumberStart { get; set; } = "";
+        /// <summary>When true, the next number fills the lowest unused value from the start.</summary>
+        public static bool ReuseMissingNumbers { get; set; } = true;
+        /// <summary>Old toggle: process pages show archive rows plus live rows.</summary>
+        public static bool ViewingOldInventory { get; set; }
         public static string CurrentUsername { get; set; } = "";
         public static string CurrentDisplayName { get; set; } = "";
         public static bool IsAdmin { get; set; }
         public static bool IsIt { get; set; }
+        /// <summary>This PC remembered the login because Stay signed in was checked at sign-in.</summary>
+        public static bool StaySignedIn { get; set; }
+        /// <summary>Shared Admin switch. When off, nobody can stay signed in.</summary>
+        public static bool StaySignedInEnabled { get; set; } = true;
+        /// <summary>How many days a stay-signed-in session lasts. Set on Admin.</summary>
+        public static int StaySignedInDays { get; set; } = 30;
+        /// <summary>Close the app after this many idle hours when Stay signed in is on. Set on Admin.</summary>
+        public static int IdleCloseHours { get; set; } = 5;
         public static string SmtpHost { get; set; } = "";
         public static int SmtpPort { get; set; } = 587;
         public static string SmtpUser { get; set; } = "";
         public static string SmtpPassword { get; set; } = "";
         public static bool SmtpSsl { get; set; } = true;
+        public static string PlaidClientId { get; set; } = "";
+        public static string PlaidSecret { get; set; } = "";
+        public static string PlaidEnv { get; set; } = "sandbox";
+        /// <summary>0 = off, 1 or 3 = auto-sync hours while the app is open.</summary>
+        public static int PlaidSyncHours { get; set; } = 1;
+        public static DateTime? PlaidLastSync { get; set; }
+        public static HashSet<string> DeniedTables { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
         public static bool SignedIn => !string.IsNullOrWhiteSpace(CurrentUsername);
 
@@ -268,6 +353,9 @@ namespace CastRightCatchInvManagement
             CurrentDisplayName = "";
             IsAdmin = false;
             IsIt = false;
+            StaySignedIn = false;
+            ViewingOldInventory = false;
+            DeniedTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
     }
 }

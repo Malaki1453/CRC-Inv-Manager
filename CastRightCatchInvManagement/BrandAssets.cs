@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Loads logo, hero, and icon files from Assets (with brand-assests fallbacks).</summary>
     internal static class BrandAssets
     {
         public static string DirectoryPath { get; } = ResolveDirectory();

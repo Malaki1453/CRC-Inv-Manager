@@ -2,10 +2,12 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using CrcInventory.Protocol;
 using Konscious.Security.Cryptography;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Signed-in user as loaded from the database and admins.json.</summary>
     internal sealed class AppAccount
     {
         public string Username { get; set; } = "";
@@ -14,8 +16,14 @@ namespace CastRightCatchInvManagement
         public bool IsAdmin { get; set; }
         public bool IsIt { get; set; }
         public bool MustChangePassword { get; set; }
+        public bool StaySignedIn { get; set; }
+        public string? SessionToken { get; set; }
     }
 
+    /// <summary>
+    /// Logins, roles, and password hashing (Argon2id). Roles also live in admins.json
+    /// so every computer shares who is IT or administrator.
+    /// </summary>
     internal static class Accounts
     {
         public const string FileName = "admins.json";
@@ -37,6 +45,8 @@ namespace CastRightCatchInvManagement
 
         public static void EnsureFile()
         {
+            if (DataLink.IsRemote)
+                return;
             string? path = GetFilePath();
             if (path == null)
                 return;
@@ -47,6 +57,8 @@ namespace CastRightCatchInvManagement
 
         public static bool HasItUser()
         {
+            if (DataLink.IsRemote)
+                return DataLink.HasItUser;
             if (ReadIt().Count > 0)
                 return true;
 
@@ -191,6 +203,11 @@ namespace CastRightCatchInvManagement
 
             if (!PasswordMeetsPolicy(password, out error))
                 return false;
+            if (DataLink.IsRemote)
+            {
+                error = "Create the first IT user on the server PC (CrcInventoryServer --bootstrap).";
+                return false;
+            }
 
             if (SqliteInventory.TryGetAccount(username, out string hash, out string salt, out _, out _, out _))
             {
@@ -247,6 +264,26 @@ namespace CastRightCatchInvManagement
             if (!PasswordMeetsPolicy(password, out error, minimumLength: 6))
                 return false;
 
+            if (DataLink.IsRemote)
+            {
+                try
+                {
+                    DataLink.Call<bool>(ServerOps.AccountsInsert, new AccountWriteRequest
+                    {
+                        Username = username,
+                        DisplayName = displayName,
+                        Email = email,
+                        Password = password
+                    });
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
+            }
+
             HashPassword(password, out string hash, out string salt);
             if (!SqliteInventory.InsertAccount(username, displayName, hash, salt, email))
             {
@@ -272,6 +309,25 @@ namespace CastRightCatchInvManagement
             if (!PasswordMeetsPolicy(password, out error, minimumLength: mustChange == true ? 6 : PasswordMinLength))
                 return false;
 
+            if (DataLink.IsRemote)
+            {
+                try
+                {
+                    DataLink.Call<bool>(ServerOps.AccountsPassword, new AccountWriteRequest
+                    {
+                        Username = username,
+                        Password = password,
+                        MustChange = mustChange ?? false
+                    });
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
+            }
+
             HashPassword(password, out string hash, out string salt);
             if (!SqliteInventory.UpdateAccountPassword(username, hash, salt))
             {
@@ -288,6 +344,25 @@ namespace CastRightCatchInvManagement
         {
             error = "";
             username = (username ?? "").Trim();
+            if (DataLink.IsRemote)
+            {
+                try
+                {
+                    DataLink.Call<bool>(ServerOps.AuthChangePassword, new ChangePasswordRequest
+                    {
+                        Username = username,
+                        CurrentPassword = currentPassword,
+                        NewPassword = newPassword
+                    });
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
+            }
+
             if (!SqliteInventory.TryGetAccount(username, out string hash, out string salt, out _, out _, out _))
             {
                 error = "Could not find that account.";
@@ -346,12 +421,18 @@ namespace CastRightCatchInvManagement
                     DisplayName = row.DisplayName.Length > 0 ? row.DisplayName : row.Username,
                     Email = row.Email,
                     IsAdmin = admins.Contains(row.Username) || row.IsAdmin,
-                    IsIt = it.Contains(row.Username) || row.IsIt
+                    IsIt = it.Contains(row.Username) || row.IsIt,
+                    StaySignedIn = row.StaySignedIn
                 })
                 .ToList();
         }
 
-        public static bool TrySignIn(string username, string password, out AppAccount? account, out string error)
+        public static bool TrySignIn(
+            string username,
+            string password,
+            out AppAccount? account,
+            out string error,
+            bool staySignedIn = false)
         {
             account = null;
             error = "";
@@ -360,6 +441,26 @@ namespace CastRightCatchInvManagement
             {
                 error = "Enter a username and password.";
                 return false;
+            }
+
+            if (DataLink.IsRemote)
+            {
+                try
+                {
+                    var auth = DataLink.Call<AuthResponse>(ServerOps.AuthLogin, new LoginRequest
+                    {
+                        Username = username,
+                        Password = password,
+                        StaySignedIn = staySignedIn
+                    });
+                    account = FromAuth(auth);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
             }
 
             if (!SqliteInventory.TryGetAccount(username, out string hash, out string salt, out string display, out string email, out bool mustChange))
@@ -384,7 +485,8 @@ namespace CastRightCatchInvManagement
                 Email = email,
                 IsAdmin = IsAdmin(username),
                 IsIt = IsIt(username),
-                MustChangePassword = mustChange
+                MustChangePassword = mustChange,
+                StaySignedIn = SqliteInventory.GetStaySignedIn(username)
             };
             return true;
         }
@@ -395,9 +497,224 @@ namespace CastRightCatchInvManagement
             AppState.CurrentDisplayName = account.DisplayName;
             AppState.IsAdmin = account.IsAdmin;
             AppState.IsIt = account.IsIt;
+            AppState.StaySignedIn = account.StaySignedIn;
             if (!string.IsNullOrWhiteSpace(account.Email))
                 AppState.UserEmail = account.Email;
             AppState.CurrentDisplayName = account.DisplayName;
+            TableAccess.Apply(account.Username);
+        }
+
+        private static AppAccount FromAuth(AuthResponse auth)
+        {
+            AppState.StaySignedInEnabled = auth.StaySignedInEnabled;
+            if (auth.StaySignedInDays > 0)
+                AppState.StaySignedInDays = auth.StaySignedInDays;
+            if (auth.IdleCloseHours > 0)
+                AppState.IdleCloseHours = auth.IdleCloseHours;
+
+            return new AppAccount
+            {
+                Username = auth.Username,
+                DisplayName = auth.DisplayName.Length > 0 ? auth.DisplayName : auth.Username,
+                Email = auth.Email,
+                IsAdmin = auth.IsAdmin,
+                IsIt = auth.IsIt,
+                MustChangePassword = auth.MustChangePassword,
+                StaySignedIn = auth.StaySignedIn,
+                SessionToken = auth.SessionToken
+            };
+        }
+
+        public static int StaySignedInDays => Math.Max(1, AppState.StaySignedInDays);
+        public static TimeSpan IdleCloseAfter =>
+            TimeSpan.FromHours(Math.Max(1, AppState.IdleCloseHours));
+
+        /// <summary>
+        /// Write a session for this PC when Stay signed in was checked at login.
+        /// Length comes from Admin. Skipped when they still must change their password.
+        /// </summary>
+        public static void RememberSignIn(AppAccount account)
+        {
+            ClearLocalSession();
+            if (!AppState.StaySignedInEnabled || !account.StaySignedIn || account.MustChangePassword)
+                return;
+            if (!HasSecurityQuestions(account.Username))
+                return;
+
+            if (DataLink.IsRemote)
+            {
+                if (string.IsNullOrWhiteSpace(account.SessionToken))
+                    return;
+                WriteLocalSession(
+                    account.Username,
+                    account.SessionToken,
+                    DateTime.Now.AddDays(StaySignedInDays));
+                return;
+            }
+
+            byte[] bytes = RandomNumberGenerator.GetBytes(32);
+            string token = Convert.ToBase64String(bytes);
+            DateTime expires = DateTime.Now.AddDays(StaySignedInDays);
+            SqliteInventory.InsertSession(account.Username, HashSessionToken(token), expires);
+            WriteLocalSession(account.Username, token, expires);
+        }
+
+        /// <summary>Restore a stay-signed-in session from this PC’s local token, if it is still valid.</summary>
+        public static bool TryRestoreSession()
+        {
+            if (!AppLock.HasFolder() || !AppState.StaySignedInEnabled)
+                return false;
+
+            var local = ReadLocalSession();
+            if (local == null)
+                return false;
+
+            if (local.Value.Expires <= DateTime.Now)
+            {
+                ClearLocalSession();
+                return false;
+            }
+
+            if (DataLink.IsRemote)
+            {
+                try
+                {
+                    var auth = DataLink.Call<AuthResponse>(
+                        ServerOps.AuthResume,
+                        new ResumeRequest { Token = local.Value.Token });
+                    Apply(FromAuth(auth));
+                    AppState.StaySignedIn = true;
+                    return true;
+                }
+                catch
+                {
+                    ClearLocalSession();
+                    return false;
+                }
+            }
+
+            string? username = SqliteInventory.FindSessionUsername(HashSessionToken(local.Value.Token));
+            if (string.IsNullOrWhiteSpace(username) ||
+                !username.Equals(local.Value.Username, StringComparison.OrdinalIgnoreCase))
+            {
+                ClearLocalSession();
+                return false;
+            }
+
+            if (!SqliteInventory.TryGetAccount(username, out _, out _, out string display, out string email, out bool mustChange) ||
+                mustChange)
+            {
+                ClearLocalSession();
+                return false;
+            }
+
+            Apply(new AppAccount
+            {
+                Username = username,
+                DisplayName = display.Length > 0 ? display : username,
+                Email = email,
+                IsAdmin = IsAdmin(username),
+                IsIt = IsIt(username),
+                StaySignedIn = true
+            });
+            return true;
+        }
+
+        /// <summary>Remove this PC’s stay-signed-in token. Other computers are unchanged.</summary>
+        public static void ForgetThisPc()
+        {
+            var local = ReadLocalSession();
+            if (local != null)
+                SqliteInventory.DeleteSession(HashSessionToken(local.Value.Token));
+            ClearLocalSession();
+        }
+
+        public static void ClearLocalSession()
+        {
+            try
+            {
+                string path = LocalSessionPath();
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch
+            {
+                // keep going even if the local file is locked
+            }
+        }
+
+        public static void SetStaySignedIn(string username, bool enabled)
+        {
+            SqliteInventory.SetStaySignedIn(username, enabled);
+            if (!enabled &&
+                username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
+            {
+                AppState.StaySignedIn = false;
+                ClearLocalSession();
+            }
+        }
+
+        private static string HashSessionToken(string token)
+        {
+            byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token ?? ""));
+            return Convert.ToHexString(bytes);
+        }
+
+        private static string LocalSessionPath()
+        {
+            return Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                $"session_{SanitizeFilePart(Environment.UserName)}.json");
+        }
+
+        private static string SanitizeFilePart(string userName)
+        {
+            foreach (var c in Path.GetInvalidFileNameChars())
+                userName = userName.Replace(c, '_');
+            return string.IsNullOrWhiteSpace(userName) ? "user" : userName;
+        }
+
+        private static void WriteLocalSession(string username, string token, DateTime expires)
+        {
+            var payload = new LocalSession
+            {
+                Username = username,
+                Token = token,
+                Expires = expires.ToString("o")
+            };
+            File.WriteAllText(
+                LocalSessionPath(),
+                JsonSerializer.Serialize(payload, JsonOptions));
+        }
+
+        private static (string Username, string Token, DateTime Expires)? ReadLocalSession()
+        {
+            string path = LocalSessionPath();
+            if (!File.Exists(path))
+                return null;
+
+            try
+            {
+                var payload = JsonSerializer.Deserialize<LocalSession>(File.ReadAllText(path), JsonOptions);
+                if (payload == null ||
+                    string.IsNullOrWhiteSpace(payload.Username) ||
+                    string.IsNullOrWhiteSpace(payload.Token) ||
+                    !DateTime.TryParse(payload.Expires, out var expires))
+                    return null;
+
+                return (payload.Username, payload.Token, expires);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private sealed class LocalSession
+        {
+            public string? Username { get; set; }
+            public string? Token { get; set; }
+            public string? Expires { get; set; }
         }
 
         public static bool HasSecurityQuestions(string username)
@@ -439,11 +756,54 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
+            if (DataLink.IsRemote)
+            {
+                SqliteInventory.SetSecurityQuestions(username, q1, a1, q2, a2, q3, a3);
+                return true;
+            }
+
             HashPassword(a1, out string h1, out _);
             HashPassword(a2, out string h2, out _);
             HashPassword(a3, out string h3, out _);
             SqliteInventory.SetSecurityQuestions(username, q1, h1, q2, h2, q3, h3);
             return true;
+        }
+
+        public static bool RecoverPassword(
+            string username,
+            string a1, string a2, string a3,
+            string newPassword,
+            out string error)
+        {
+            error = "";
+            if (DataLink.IsRemote)
+            {
+                try
+                {
+                    DataLink.Call<bool>(ServerOps.AuthRecover, new RecoverRequest
+                    {
+                        Username = username,
+                        A1 = a1,
+                        A2 = a2,
+                        A3 = a3,
+                        NewPassword = newPassword
+                    });
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
+            }
+
+            if (!VerifySecurityAnswers(username, a1, a2, a3))
+            {
+                error = "Those answers are not right.";
+                return false;
+            }
+
+            return SetPassword(username, newPassword, out error, mustChange: false);
         }
 
         public static bool VerifySecurityAnswers(string username, string a1, string a2, string a3)
@@ -468,6 +828,23 @@ namespace CastRightCatchInvManagement
 
         private static AdminsFile ReadFile()
         {
+            if (DataLink.IsRemote)
+            {
+                try
+                {
+                    var roles = DataLink.Call<RolesDto>(ServerOps.RolesRead);
+                    return new AdminsFile
+                    {
+                        Admins = Clean(roles.Admins),
+                        It = Clean(roles.It)
+                    };
+                }
+                catch
+                {
+                    return new AdminsFile();
+                }
+            }
+
             string? path = GetFilePath();
             if (path == null || !File.Exists(path))
                 return new AdminsFile();
@@ -557,11 +934,21 @@ namespace CastRightCatchInvManagement
 
         private static void WriteFile(List<string> admins, List<string> it)
         {
+            var file = new AdminsFile { Admins = Clean(admins), It = Clean(it) };
+            if (DataLink.IsRemote)
+            {
+                DataLink.Call<bool>(ServerOps.RolesWrite, new RolesDto
+                {
+                    Admins = file.Admins,
+                    It = file.It
+                });
+                return;
+            }
+
             string? path = GetFilePath();
             if (path == null)
                 return;
 
-            var file = new AdminsFile { Admins = Clean(admins), It = Clean(it) };
             string json = JsonSerializer.Serialize(file, JsonOptions);
             string temp = path + ".tmp";
             File.WriteAllText(temp, json);

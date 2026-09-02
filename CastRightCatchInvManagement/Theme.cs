@@ -2,6 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Cast Right Catch colors, fonts, and shared control styling.</summary>
     internal static class Theme
     {
         public static readonly Color NavyDark = Color.FromArgb(8, 22, 38);
@@ -381,6 +382,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Hero image with optional wordmark overlay.</summary>
     internal sealed class CoverBanner : Panel
     {
         private Image? _image;
@@ -461,6 +463,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>White content card with a gold leading edge.</summary>
     internal sealed class CardPanel : Panel
     {
         public CardPanel()
@@ -482,14 +485,22 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Dashboard metric: title, large value, and caption.</summary>
     internal sealed class StatCard : Panel
     {
         private readonly Label _value;
+        private readonly Label _hint;
 
         public string Value
         {
             get => _value.Text;
             set => _value.Text = value;
+        }
+
+        public string Hint
+        {
+            get => _hint.Text;
+            set => _hint.Text = value;
         }
 
         public StatCard(string caption, string value, string hint)
@@ -517,7 +528,7 @@ namespace CastRightCatchInvManagement
                 Location = new Point(20, 40)
             };
 
-            var lblHint = new Label
+            _hint = new Label
             {
                 Text = hint,
                 Font = Theme.Small,
@@ -528,7 +539,7 @@ namespace CastRightCatchInvManagement
 
             Controls.Add(lblCaption);
             Controls.Add(_value);
-            Controls.Add(lblHint);
+            Controls.Add(_hint);
         }
 
         protected override void OnPaint(PaintEventArgs e)

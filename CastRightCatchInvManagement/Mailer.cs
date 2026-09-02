@@ -3,6 +3,7 @@ using System.Net.Mail;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Sends new-user emails through the admin SMTP settings in the shared database.</summary>
     internal static class Mailer
     {
         public static bool TrySendNewUserDetails(

@@ -1,5 +1,6 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Add or edit a customer or vendor. History tabs cover description, sales or purchases, and bank transactions.</summary>
     internal sealed class PartyEditForm : Form
     {
         private readonly bool _vendor;
@@ -15,16 +16,22 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _email;
         private readonly TextBox _terms;
         private readonly TextBox _extra;
+        private readonly TextBox _established;
         private readonly Label _subtitle;
 
+        /// <summary>Modal: add a customer.</summary>
         public static void OpenCustomerNew() => ShowEdit(false, null);
 
+        /// <summary>Modal: edit this customer row.</summary>
         public static void OpenCustomerEdit(Dictionary<string, string> record) => ShowEdit(false, record);
 
+        /// <summary>Modal: add a vendor.</summary>
         public static void OpenVendorNew() => ShowEdit(true, null);
 
+        /// <summary>Modal: edit this vendor row.</summary>
         public static void OpenVendorEdit(Dictionary<string, string> record) => ShowEdit(true, record);
 
+        /// <summary>Show the dialog; save writes to the live customers or vendors table.</summary>
         private static void ShowEdit(bool vendor, Dictionary<string, string>? record)
         {
             using var form = new PartyEditForm(vendor, record);
@@ -46,8 +53,8 @@ namespace CastRightCatchInvManagement
             ShowInTaskbar = false;
             AutoScaleMode = AutoScaleMode.Font;
             AutoScaleDimensions = new SizeF(7F, 15F);
-            ClientSize = new Size(680, vendor ? 580 : 720);
-            MinimumSize = new Size(560, vendor ? 480 : 580);
+            ClientSize = new Size(780, 860);
+            MinimumSize = new Size(640, 680);
             BackColor = Theme.Cream;
             Font = Theme.Body;
             ForeColor = Theme.Ink;
@@ -99,8 +106,6 @@ namespace CastRightCatchInvManagement
                 if (SaveRecord())
                     DialogResult = DialogResult.OK;
             };
-            AcceptButton = save;
-
             var cancel = new Button
             {
                 Text = "Cancel",
@@ -130,67 +135,68 @@ namespace CastRightCatchInvManagement
                 cancel.Location = new Point(Math.Max(20, footer.Width - 116), 13);
             };
 
-            var body = new Panel
-            {
-                Dock = DockStyle.Fill,
-                AutoScroll = true,
-                BackColor = Theme.Cream,
-                Padding = new Padding(20, 16, 8, 16)
-            };
+            _contact = new TextBox { Visible = false };
+            _email = new TextBox { Visible = false };
+            _address = new TextBox { Visible = false };
+            _established = new TextBox { Visible = false };
 
-            var identity = Section("Identity", 150, 2, out var identityGrid);
-            _code = PutField(identityGrid, 0, 0, "CODE");
-            _name = PutField(identityGrid, 1, 0, "NAME");
-            _company = PutField(identityGrid, 0, 1, "COMPANY");
-            _phone = PutField(identityGrid, 1, 1, "PHONE");
+            CardPanel identity;
+            if (vendor)
+            {
+                identity = Section("Identity", 210, 4, out var grid);
+                _code = PutField(grid, 0, 0, "CODE");
+                _name = PutField(grid, 1, 0, "NAME");
+                _company = PutField(grid, 2, 0, "COMPANY");
+                _phone = PutField(grid, 3, 0, "PHONE");
+                _terms = PutField(grid, 0, 1, "TERMS");
+                _extra = PutField(grid, 1, 1, "TYPE");
+                _contact = PutField(grid, 2, 1, "AMOUNT");
+                _balance = PutField(grid, 3, 1, "CURRENT BALANCE");
+                SetRowHeights(grid, 56, 56);
+                _contact.PlaceholderText = "0.00";
+                _extra.PlaceholderText = "Processor";
+            }
+            else
+            {
+                identity = Section("Identity", 340, 4, out var grid);
+                _code = PutField(grid, 0, 0, "CODE");
+                _name = PutField(grid, 1, 0, "NAME");
+                _company = PutField(grid, 2, 0, "COMPANY");
+                _phone = PutField(grid, 3, 0, "PHONE");
+                _contact = PutField(grid, 0, 1, "CONTACT NAME");
+                _email = PutField(grid, 1, 1, "EMAIL");
+                _terms = PutField(grid, 2, 1, "TERMS");
+                _extra = PutField(grid, 3, 1, "CREDIT LIMIT");
+                _balance = PutField(grid, 0, 2, "CURRENT BALANCE");
+                _established = PutField(grid, 1, 2, "ESTABLISHED");
+                _address = PutField(grid, 0, 3, "ADDRESS", colSpan: 4, multiline: true);
+                SetRowHeights(grid, 56, 56, 56, 80);
+                _contact.PlaceholderText = "Who we talk to";
+                _email.PlaceholderText = "name@company.com";
+                _extra.PlaceholderText = "0.00";
+            }
+
             _code.PlaceholderText = vendor ? "V-1001" : "C-1001";
             _name.PlaceholderText = vendor ? "Vendor name" : "Customer name";
             _company.PlaceholderText = "Company";
             _phone.PlaceholderText = "(253) 000-0000";
-
-            _contact = new TextBox { Visible = false };
-            _email = new TextBox { Visible = false };
-            _address = new TextBox { Visible = false };
-
-            CardPanel? contact = null;
-            if (!vendor)
-            {
-                contact = Section("Contact", 196, 2, out var contactGrid);
-                _contact = PutField(contactGrid, 0, 0, "CONTACT NAME");
-                _email = PutField(contactGrid, 1, 0, "EMAIL");
-                _address = PutField(contactGrid, 0, 1, "ADDRESS", colSpan: 2, multiline: true);
-                _contact.PlaceholderText = "Who we talk to";
-                _email.PlaceholderText = "name@company.com";
-                contactGrid.RowStyles.Clear();
-                contactGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
-                contactGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            }
-
-            var account = Section("Account", vendor ? 160 : 108, 3, out var accountGrid);
-            _terms = PutField(accountGrid, 0, 0, "TERMS");
-            _extra = PutField(accountGrid, 1, 0, vendor ? "TYPE" : "CREDIT LIMIT");
-            if (vendor)
-            {
-                _contact = PutField(accountGrid, 2, 0, "AMOUNT");
-                _balance = PutField(accountGrid, 0, 1, "CURRENT BALANCE");
-                _contact.PlaceholderText = "0.00";
-                accountGrid.RowStyles.Clear();
-                accountGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-                accountGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            }
-            else
-            {
-                _balance = PutField(accountGrid, 2, 0, "CURRENT BALANCE");
-            }
             _terms.PlaceholderText = "NET 15";
-            _extra.PlaceholderText = vendor ? "Processor" : "0.00";
             _balance.PlaceholderText = "0.00";
+            identity.Dock = DockStyle.Fill;
 
-            var notes = Section("Description", 180, 1, out var notesGrid);
-            _notes = PutField(notesGrid, 0, 0, "NOTES", multiline: true);
-            _notes.PlaceholderText = vendor
-                ? "Notes about this vendor"
-                : "Notes about this customer";
+            _notes = new TextBox
+            {
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                AcceptsReturn = true,
+                AcceptsTab = false,
+                Dock = DockStyle.Fill,
+                PlaceholderText = vendor
+                    ? "Notes about this vendor"
+                    : "Notes about this customer"
+            };
+            Theme.StyleField(_notes);
+            var history = BuildHistoryCard(vendor, record, _notes);
 
             if (record != null)
             {
@@ -212,6 +218,7 @@ namespace CastRightCatchInvManagement
                     _contact.Text = DataFiles.GetRecord(record, "Contact Name");
                     _email.Text = DataFiles.GetRecord(record, "Email");
                     _address.Text = DataFiles.GetRecord(record, "Address");
+                    _established.Text = DataFiles.GetRecord(record, "Established");
                 }
             }
 
@@ -220,22 +227,26 @@ namespace CastRightCatchInvManagement
             _code.TextChanged += (_, _) => UpdateSubtitle();
             _company.TextChanged += (_, _) => UpdateSubtitle();
 
-            var spacerNotes = Spacer();
-            var spacerAccount = Spacer();
-            var spacerMid = Spacer();
-
-            body.Controls.Add(notes);
-            body.Controls.Add(spacerNotes);
-            body.Controls.Add(account);
-            body.Controls.Add(spacerAccount);
-            if (contact != null)
+            var topHost = new Panel
             {
-                body.Controls.Add(contact);
-                body.Controls.Add(spacerMid);
-            }
-            body.Controls.Add(identity);
+                Dock = DockStyle.Top,
+                Height = identity.Height + 28,
+                BackColor = Theme.Cream,
+                Padding = new Padding(20, 16, 20, 12)
+            };
+            topHost.Controls.Add(identity);
 
-            Controls.Add(body);
+            var bottomHost = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Theme.Cream,
+                Padding = new Padding(20, 0, 20, 8)
+            };
+            history.Dock = DockStyle.Fill;
+            bottomHost.Controls.Add(history);
+
+            Controls.Add(bottomHost);
+            Controls.Add(topHost);
             Controls.Add(footer);
             Controls.Add(header);
         }
@@ -257,6 +268,7 @@ namespace CastRightCatchInvManagement
                 : (_vendor ? "Vendor record" : "Customer record");
         }
 
+        /// <summary>Insert or replace the customer/vendor by Code. Returns false if validation fails.</summary>
         private bool SaveRecord()
         {
             if (!AppLock.HasFolder())
@@ -305,6 +317,7 @@ namespace CastRightCatchInvManagement
                 fields["Contact Name"] = _contact.Text.Trim();
                 fields["Email"] = _email.Text.Trim();
                 fields["Address"] = _address.Text.Trim();
+                fields["Established"] = _established.Text.Trim();
             }
 
             try
@@ -348,14 +361,173 @@ namespace CastRightCatchInvManagement
             return "";
         }
 
-        private static Panel Spacer()
+        private static void SetRowHeights(TableLayoutPanel grid, params int[] heights)
         {
-            return new Panel
+            grid.RowStyles.Clear();
+            grid.RowCount = heights.Length;
+            for (int i = 0; i < heights.Length; i++)
             {
-                Dock = DockStyle.Top,
-                Height = 12,
-                BackColor = Theme.Cream
+                grid.RowStyles.Add(heights[i] <= 0
+                    ? new RowStyle(SizeType.Percent, 100)
+                    : new RowStyle(SizeType.Absolute, heights[i]));
+            }
+        }
+
+        /// <summary>
+        /// One History card with tabs: Description (text), Sales or Purchases, and Bank transactions.
+        /// </summary>
+        internal static CardPanel BuildHistoryCard(
+            bool vendor,
+            Dictionary<string, string>? record,
+            TextBox notes)
+        {
+            string code = record == null ? "" : DataFiles.GetRecord(record, "Code");
+            string name = record == null ? "" : DataFiles.GetRecord(record, "Name");
+            string company = record == null ? "" : DataFiles.GetRecord(record, "Company");
+
+            var card = new CardPanel
+            {
+                Height = 360,
+                Padding = new Padding(8, 8, 8, 8)
             };
+
+            var tabs = new TabControl
+            {
+                Dock = DockStyle.Fill,
+                Font = Theme.BodyBold,
+                Padding = new Point(14, 6),
+                SizeMode = TabSizeMode.Fixed,
+                ItemSize = new Size(168, 30),
+                DrawMode = TabDrawMode.OwnerDrawFixed
+            };
+            tabs.DrawItem += PaintHistoryTab;
+
+            var descPage = new TabPage("Description")
+            {
+                BackColor = Theme.Paper,
+                Padding = new Padding(8)
+            };
+            descPage.Controls.Add(notes);
+
+            var lines = MakeHistoryGrid();
+            if (vendor)
+                FillPurchases(lines, code, name);
+            else
+                FillSales(lines, code, name);
+            var linesPage = new TabPage(vendor ? "Purchases" : "Sales")
+            {
+                BackColor = Theme.Paper,
+                Padding = new Padding(8)
+            };
+            lines.Dock = DockStyle.Fill;
+            linesPage.Controls.Add(lines);
+
+            var bank = MakeHistoryGrid();
+            BankFeed.FillPartyGrid(bank, vendor, code, name, company);
+            var bankPage = new TabPage("Bank transactions")
+            {
+                BackColor = Theme.Paper,
+                Padding = new Padding(8)
+            };
+            bank.Dock = DockStyle.Fill;
+            bankPage.Controls.Add(bank);
+
+            tabs.TabPages.Add(descPage);
+            tabs.TabPages.Add(linesPage);
+            tabs.TabPages.Add(bankPage);
+            card.Controls.Add(tabs);
+            return card;
+        }
+
+        private static void PaintHistoryTab(object? sender, DrawItemEventArgs e)
+        {
+            if (sender is not TabControl tabs || e.Index < 0 || e.Index >= tabs.TabCount)
+                return;
+
+            bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+            var bounds = e.Bounds;
+            using var fill = new SolidBrush(selected ? Theme.Paper : Theme.Cream);
+            e.Graphics.FillRectangle(fill, bounds);
+            TextRenderer.DrawText(
+                e.Graphics,
+                tabs.TabPages[e.Index].Text,
+                Theme.BodyBold,
+                bounds,
+                selected ? Theme.Navy : Theme.Muted,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            if (selected)
+            {
+                using var gold = new SolidBrush(Theme.Gold);
+                e.Graphics.FillRectangle(gold, bounds.X, bounds.Bottom - 3, bounds.Width, 3);
+            }
+        }
+
+        private static DataGridView MakeHistoryGrid()
+        {
+            var grid = new DataGridView
+            {
+                ReadOnly = true,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false
+            };
+            Theme.StyleGrid(grid);
+            return grid;
+        }
+
+        private static void FillSales(DataGridView grid, string code, string name)
+        {
+            grid.Columns.Clear();
+            grid.Columns.Add("Ship Date", "Ship Date");
+            grid.Columns.Add("SO #", "SO #");
+            grid.Columns.Add("PO #", "PO #");
+            grid.Columns.Add("Item Code", "Item Code");
+            grid.Columns.Add("Amount", "Amount");
+
+            if (code.Length > 0 || name.Length > 0)
+            {
+                foreach (var sale in DataFiles.ReadRecords(DataFiles.Sales))
+                {
+                    if (!DataFiles.MatchesCustomer(sale, code, name))
+                        continue;
+                    grid.Rows.Add(
+                        DataFiles.GetRecord(sale, "Ship Date"),
+                        DataFiles.GetRecord(sale, "SO #"),
+                        DataFiles.SalePo(sale),
+                        DataFiles.GetRecord(sale, "Item Code"),
+                        DataFiles.GetRecord(sale, "Amount"));
+                }
+            }
+
+            if (grid.Rows.Count == 0)
+                grid.Rows.Add("No sales yet", "", "", "", "");
+        }
+
+        private static void FillPurchases(DataGridView grid, string code, string name)
+        {
+            grid.Columns.Clear();
+            grid.Columns.Add("Ship Date", "Ship Date");
+            grid.Columns.Add("PO #", "PO #");
+            grid.Columns.Add("Item Code", "Item Code");
+            grid.Columns.Add("Vendor Invoice #", "Vendor Invoice #");
+            grid.Columns.Add("Total Cost", "Total Cost");
+
+            if (code.Length > 0 || name.Length > 0)
+            {
+                foreach (var purchase in DataFiles.ReadRecords(DataFiles.PurchaseSales))
+                {
+                    if (!DataFiles.MatchesVendor(purchase, code, name))
+                        continue;
+                    grid.Rows.Add(
+                        DataFiles.GetRecord(purchase, "Ship Date"),
+                        DataFiles.GetRecord(purchase, "PO #"),
+                        DataFiles.GetRecord(purchase, "Item Code"),
+                        DataFiles.GetRecord(purchase, "Vendor Invoice #"),
+                        DataFiles.GetRecord(purchase, "Total Cost"));
+                }
+            }
+
+            if (grid.Rows.Count == 0)
+                grid.Rows.Add("No purchases yet", "", "", "", "");
         }
 
         private static CardPanel Section(string title, int height, int columns, out TableLayoutPanel grid)

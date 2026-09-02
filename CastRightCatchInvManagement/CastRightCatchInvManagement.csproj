@@ -46,6 +46,10 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\CrcInventory.Protocol\CrcInventory.Protocol.csproj" />
+  </ItemGroup>
+
   <Target Name="RemoveWebView2WpfReference" BeforeTargets="ResolveAssemblyReferences">
     <ItemGroup>
       <Reference Remove="@(Reference)" Condition="$([System.String]::Copy('%(Identity)').Contains('Microsoft.Web.WebView2.Wpf'))" />

@@ -1,5 +1,9 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>
+    /// Purchases grid. Each row is a purchase line (PO, vendor, item, costs, dates).
+    /// Toolbar Add Product opens a blank purchase form. Right-click a row for View Details or Edit Product.
+    /// </summary>
     public partial class PurchaseSales : Form, INavigationPage
     {
         public PurchaseSales()
@@ -18,31 +22,10 @@ namespace CastRightCatchInvManagement
             LoadTable();
         }
 
+        /// <summary>Called when this page is shown or the Current/Old view changes. Reloads the grid.</summary>
         public void HighlightCurrentPage() => LoadTable();
 
+        /// <summary>Fill the grid from purchases (live only, or archive + live when Old is on).</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.PurchaseSales);
-
-        private void btnUpload_Click(object sender, EventArgs e)
-        {
-            using var dialog = new OpenFileDialog
-            {
-                Title = "Select a CSV file to import",
-                Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
-                CheckFileExists = true
-            };
-
-            if (dialog.ShowDialog() != DialogResult.OK)
-                return;
-
-            if (DataFiles.TryImportCsv(dialog.FileName, out string message))
-            {
-                MessageBox.Show(message, "Import Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                LoadTable();
-            }
-            else
-            {
-                MessageBox.Show(message, "Import Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
     }
 }

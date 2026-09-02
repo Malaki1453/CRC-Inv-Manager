@@ -1,5 +1,6 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Forced or voluntary password change. New passwords must be at least 8 characters.</summary>
     internal sealed class ChangePasswordForm : Form
     {
         private readonly string _username;

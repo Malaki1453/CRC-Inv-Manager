@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>CrcInventory.Protocol</RootNamespace>
+    <AssemblyTitle>Cast Right Catch Inventory Protocol</AssemblyTitle>
+    <Product>Cast Right Catch Inventory</Product>
+    <Authors>Cast Right Catch Co.</Authors>
+  </PropertyGroup>
+
+</Project>

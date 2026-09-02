@@ -1,5 +1,9 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>
+    /// Shared folder, company info, numbering, SMTP, and the signed-in account.
+    /// Company info, numbering, SMTP, and term roll-over are administrator-only.
+    /// </summary>
     public partial class Settings : Form, INavigationPage
     {
         public Settings()
@@ -11,6 +15,7 @@ namespace CastRightCatchInvManagement
             ApplyLockState();
         }
 
+        /// <summary>Shown or refreshed: enable or disable admin-only fields for the signed-in user.</summary>
         public void HighlightCurrentPage()
         {
             ApplyLockState();
@@ -44,7 +49,9 @@ namespace CastRightCatchInvManagement
             help.Click += (_, _) => Navigator.GoTo(AppPage.Help);
             var intro = new Label
             {
-                Text = "These details print on invoices. Point every computer at the same shared data folder so they share the database and these settings.",
+                Text = DataLink.UseInventoryServer
+                    ? "These details print on invoices. Every computer talks to the same inventory server so they share the database and these settings."
+                    : "These details print on invoices. Point every computer at the same shared data folder so they share the database and these settings.",
                 Font = Theme.Body,
                 ForeColor = Theme.Muted,
                 Dock = DockStyle.Fill,
@@ -54,17 +61,17 @@ namespace CastRightCatchInvManagement
             introRow.Controls.Add(help);
             introRow.Resize += (_, _) => help.Location = new Point(Math.Max(8, introRow.Width - 40), 4);
 
-            var company = new CardPanel { Dock = DockStyle.Top, Height = 300 };
+            var company = new CardPanel { Dock = DockStyle.Top, Height = 328 };
             LayoutCompanyCard(company);
 
             var data = new CardPanel { Dock = DockStyle.Top, Height = 214 };
             LayoutDataCard(data);
 
             var spacer = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
-            var productNumber = new CardPanel { Dock = DockStyle.Top, Height = 168 };
+            var productNumber = new CardPanel { Dock = DockStyle.Top, Height = 220 };
             LayoutProductNumberCard(productNumber);
             var spacerPn = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
-            var salesOrder = new CardPanel { Dock = DockStyle.Top, Height = 168 };
+            var salesOrder = new CardPanel { Dock = DockStyle.Top, Height = 220 };
             LayoutSalesOrderCard(salesOrder);
             var spacerSo = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
             var user = new CardPanel { Dock = DockStyle.Top, Height = 390 };
@@ -88,6 +95,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(introRow);
         }
 
+        /// <summary>Business name, address, phone, email, EIN, and payment terms. Administrator-only to edit.</summary>
         private void LayoutCompanyCard(CardPanel card)
         {
             var heading = new Label
@@ -99,6 +107,17 @@ namespace CastRightCatchInvManagement
                 AutoSize = true
             };
             card.Controls.Add(heading);
+
+            var hint = new Label
+            {
+                Text = "Only an administrator can change company information. These details print on invoices and sales orders.",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 42),
+                MaximumSize = new Size(640, 0),
+                AutoSize = true
+            };
+            card.Controls.Add(hint);
 
             Theme.StyleFieldLabel(lblBusinessName);
             Theme.StyleField(txtBusinessName);
@@ -113,31 +132,32 @@ namespace CastRightCatchInvManagement
             Theme.StyleFieldLabel(lblPaymentTerms);
             Theme.StyleField(txtPaymentTerms);
 
-            PlaceField(card, lblBusinessName, txtBusinessName, 24, 48, 640);
-            PlaceField(card, lblAddress, txtAddress, 24, 96, 640);
-            PlaceField(card, lblPhone, txtPhone, 24, 144, 240);
-            PlaceField(card, lblEmail, txtEmail, 284, 144, 380);
-            PlaceField(card, lblEIN, txtEIN, 24, 192, 240);
-            PlaceField(card, lblPaymentTerms, txtPaymentTerms, 284, 192, 380);
+            PlaceField(card, lblBusinessName, txtBusinessName, 24, 68, 640);
+            PlaceField(card, lblAddress, txtAddress, 24, 116, 640);
+            PlaceField(card, lblPhone, txtPhone, 24, 164, 240);
+            PlaceField(card, lblEmail, txtEmail, 284, 164, 380);
+            PlaceField(card, lblEIN, txtEIN, 24, 212, 240);
+            PlaceField(card, lblPaymentTerms, txtPaymentTerms, 284, 212, 380);
 
             txtBusinessName.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             txtAddress.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             txtEmail.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             txtPaymentTerms.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 
-            BindInvoiceField(txtBusinessName, v => AppState.BusinessName = v);
-            BindInvoiceField(txtAddress, v => AppState.Address = v);
-            BindInvoiceField(txtPhone, v => AppState.Phone = v);
-            BindInvoiceField(txtEmail, v => AppState.CompanyEmail = v);
-            BindInvoiceField(txtEIN, v => AppState.Ein = v);
-            BindInvoiceField(txtPaymentTerms, v => AppState.PaymentTerms = v);
+            BindInvoiceField(txtBusinessName, v => AppState.BusinessName = v, adminOnly: true);
+            BindInvoiceField(txtAddress, v => AppState.Address = v, adminOnly: true);
+            BindInvoiceField(txtPhone, v => AppState.Phone = v, adminOnly: true);
+            BindInvoiceField(txtEmail, v => AppState.CompanyEmail = v, adminOnly: true);
+            BindInvoiceField(txtEIN, v => AppState.Ein = v, adminOnly: true);
+            BindInvoiceField(txtPaymentTerms, v => AppState.PaymentTerms = v, adminOnly: true);
         }
 
+        /// <summary>Shared data folder path and Roll to Next Term.</summary>
         private void LayoutDataCard(CardPanel card)
         {
             var heading = new Label
             {
-                Text = "Data folder && term",
+                Text = DataLink.IsRemote ? "Inventory server && term" : "Data folder && term",
                 Font = Theme.SectionTitle,
                 ForeColor = Theme.Navy,
                 Location = new Point(24, 14),
@@ -147,7 +167,9 @@ namespace CastRightCatchInvManagement
 
             var note = new Label
             {
-                Text = "Use one shared folder on every computer (a network drive, or a folder this PC shares). Inventory, settings, and PDFs live in crc_inventory.db. This PC only remembers the folder path.",
+                Text = DataLink.IsRemote
+                    ? "This PC is connected to the inventory server. Database files stay on the host. This PC only remembers the server IP and certificate pin."
+                    : "Use one shared folder on every computer (a network drive, or a folder this PC shares). Live work is crc_inventory.db. Finished previous-term rows go into old_inventory.db. This PC only remembers the folder path.",
                 Font = Theme.Small,
                 ForeColor = Theme.Muted,
                 Location = new Point(24, 42),
@@ -186,11 +208,15 @@ namespace CastRightCatchInvManagement
         private TextBox _soPattern = null!;
         private TextBox _soStart = null!;
         private Label _soPreview = null!;
+        private CheckBox _reuseSo = null!;
         private TextBox _productPattern = null!;
         private TextBox _productStart = null!;
         private Label _productPreview = null!;
+        private CheckBox _reuseProduct = null!;
+        private bool _syncingReuse;
         private TextBox _userEmail = null!;
 
+        /// <summary>Purchase PO # pattern (CRC#### / CRCyy-####) and start number. Administrator-only.</summary>
         private void LayoutProductNumberCard(CardPanel card)
         {
             var heading = new Label
@@ -205,10 +231,11 @@ namespace CastRightCatchInvManagement
 
             var hint = new Label
             {
-                Text = "Same as sales orders. CRC#### starts at CRC0001. CRC26-#### and start 10001 gives CRC26-10001. Leave blank to keep CRC26-10001, CRC26-10002, …",
+                Text = "Same as sales orders. CRCyy-#### and start 10001 gives CRC26-10001 in 2026. Leave blank to keep CRC26-10001, CRC26-10002, …",
                 Font = Theme.Small,
                 ForeColor = Theme.Muted,
                 Location = new Point(24, 42),
+                MaximumSize = new Size(640, 0),
                 AutoSize = true
             };
             card.Controls.Add(hint);
@@ -218,10 +245,10 @@ namespace CastRightCatchInvManagement
             _productPattern = new TextBox
             {
                 Text = AppState.ProductNumberPattern,
-                PlaceholderText = "CRC####"
+                PlaceholderText = "CRCyy-####"
             };
             Theme.StyleField(_productPattern);
-            PlaceField(card, lblPattern, _productPattern, 24, 64, 280);
+            PlaceField(card, lblPattern, _productPattern, 24, 82, 280);
 
             var lblStart = new Label { Text = "START" };
             Theme.StyleFieldLabel(lblStart);
@@ -231,16 +258,18 @@ namespace CastRightCatchInvManagement
                 PlaceholderText = "1"
             };
             Theme.StyleField(_productStart);
-            PlaceField(card, lblStart, _productStart, 324, 64, 140);
+            PlaceField(card, lblStart, _productStart, 324, 82, 140);
 
             _productPreview = new Label
             {
                 AutoSize = true,
                 Font = Theme.BodyBold,
                 ForeColor = Theme.Navy,
-                Location = new Point(24, 122)
+                Location = new Point(24, 140)
             };
             card.Controls.Add(_productPreview);
+
+            _reuseProduct = MakeReuseCheckbox(card);
 
             void SaveAndPreview()
             {
@@ -257,6 +286,7 @@ namespace CastRightCatchInvManagement
             UpdateProductNumberPreview();
         }
 
+        /// <summary>Show the next purchase PO that the current pattern and start would produce.</summary>
         private void UpdateProductNumberPreview()
         {
             if (_productPreview == null)
@@ -277,6 +307,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Sales order # pattern and start number. Administrator-only.</summary>
         private void LayoutSalesOrderCard(CardPanel card)
         {
             var heading = new Label
@@ -291,10 +322,11 @@ namespace CastRightCatchInvManagement
 
             var hint = new Label
             {
-                Text = "Use # for digits. CRC#### starts at CRC0001. Add a start of 1000 to get CRC1000. Leave the pattern blank to keep 10001, 10002, …",
+                Text = "Use # for the running number. yy or yyyy is the year, mm the month, and dd the day. CRCyy-#### starts at CRC26-0001 in 2026. Add a start of 1000 to get CRC26-1000. Leave the pattern blank to keep 10001, 10002, …",
                 Font = Theme.Small,
                 ForeColor = Theme.Muted,
                 Location = new Point(24, 42),
+                MaximumSize = new Size(640, 0),
                 AutoSize = true
             };
             card.Controls.Add(hint);
@@ -304,10 +336,10 @@ namespace CastRightCatchInvManagement
             _soPattern = new TextBox
             {
                 Text = AppState.SalesOrderPattern,
-                PlaceholderText = "CRC####"
+                PlaceholderText = "CRCyy-####"
             };
             Theme.StyleField(_soPattern);
-            PlaceField(card, lblPattern, _soPattern, 24, 64, 280);
+            PlaceField(card, lblPattern, _soPattern, 24, 82, 280);
 
             var lblStart = new Label { Text = "START" };
             Theme.StyleFieldLabel(lblStart);
@@ -317,16 +349,18 @@ namespace CastRightCatchInvManagement
                 PlaceholderText = "1"
             };
             Theme.StyleField(_soStart);
-            PlaceField(card, lblStart, _soStart, 324, 64, 140);
+            PlaceField(card, lblStart, _soStart, 324, 82, 140);
 
             _soPreview = new Label
             {
                 AutoSize = true,
                 Font = Theme.BodyBold,
                 ForeColor = Theme.Navy,
-                Location = new Point(24, 122)
+                Location = new Point(24, 140)
             };
             card.Controls.Add(_soPreview);
+
+            _reuseSo = MakeReuseCheckbox(card);
 
             void SaveAndPreview()
             {
@@ -343,6 +377,7 @@ namespace CastRightCatchInvManagement
             UpdateSalesOrderPreview();
         }
 
+        /// <summary>Show the next SO # that the current pattern and start would produce.</summary>
         private void UpdateSalesOrderPreview()
         {
             if (_soPreview == null)
@@ -363,6 +398,54 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        private CheckBox MakeReuseCheckbox(Control card)
+        {
+            var box = new CheckBox
+            {
+                Text = "Reuse missing numbers  (if CRC10 is deleted, the next number can be CRC10 again)",
+                AutoSize = true,
+                Font = Theme.Small,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 168)
+            };
+            card.Controls.Add(box);
+            box.CheckedChanged += (_, _) => SaveReuseMissing(box.Checked);
+            _syncingReuse = true;
+            try
+            {
+                box.Checked = AppState.ReuseMissingNumbers;
+            }
+            finally
+            {
+                _syncingReuse = false;
+            }
+            return box;
+        }
+
+        /// <summary>Persist the shared “reuse missing numbers” flag and refresh both numbering previews.</summary>
+        private void SaveReuseMissing(bool value)
+        {
+            if (_syncingReuse)
+                return;
+
+            _syncingReuse = true;
+            try
+            {
+                AppState.ReuseMissingNumbers = value;
+                if (_reuseProduct != null)
+                    _reuseProduct.Checked = value;
+                if (_reuseSo != null)
+                    _reuseSo.Checked = value;
+                AppLock.SaveSettings();
+                UpdateProductNumberPreview();
+                UpdateSalesOrderPreview();
+            }
+            finally
+            {
+                _syncingReuse = false;
+            }
+        }
+
         private Button _signOut = null!;
         private TextBox _accountUser = null!;
         private TextBox _accountName = null!;
@@ -375,6 +458,7 @@ namespace CastRightCatchInvManagement
         private TextBox _smtpUser = null!;
         private TextBox _smtpPassword = null!;
 
+        /// <summary>Signed-in user’s username, name, email, password, security questions, and sign out.</summary>
         private void LayoutUserCard(CardPanel card)
         {
             var heading = new Label
@@ -450,6 +534,8 @@ namespace CastRightCatchInvManagement
             Theme.StyleOutlineButton(_signOut);
             _signOut.Click += (_, _) =>
             {
+                IdleWatch.Stop();
+                Accounts.ForgetThisPc();
                 AppState.SignOut();
                 Application.Restart();
             };
@@ -482,6 +568,7 @@ namespace CastRightCatchInvManagement
             card.Controls.Add(hint);
         }
 
+        /// <summary>SMTP used to email new-user logins. Administrator-only.</summary>
         private void LayoutMailCard(CardPanel card)
         {
             var heading = new Label
@@ -525,21 +612,26 @@ namespace CastRightCatchInvManagement
             PlaceField(card, lblPort, _smtpPort, 404, 72, 80);
             PlaceField(card, lblSmtpUser, _smtpUser, 24, 126, 300);
             PlaceField(card, lblSmtpPass, _smtpPassword, 344, 126, 280);
-            BindInvoiceField(_smtpHost, v => AppState.SmtpHost = v);
-            BindInvoiceField(_smtpUser, v => AppState.SmtpUser = v);
+            BindInvoiceField(_smtpHost, v => AppState.SmtpHost = v, adminOnly: true);
+            BindInvoiceField(_smtpUser, v => AppState.SmtpUser = v, adminOnly: true);
             _smtpPort.Leave += (_, _) =>
             {
+                if (!AppState.IsAdmin)
+                    return;
                 if (int.TryParse(_smtpPort.Text.Trim(), out int port) && port > 0)
                     AppState.SmtpPort = port;
                 AppLock.SaveSettings();
             };
             _smtpPassword.Leave += (_, _) =>
             {
+                if (!AppState.IsAdmin)
+                    return;
                 AppState.SmtpPassword = _smtpPassword.Text;
                 AppLock.SaveSettings();
             };
         }
 
+        /// <summary>Save this user’s username, name, email, and optional password change.</summary>
         private void SaveOwnAccount()
         {
             if (!AppState.SignedIn)
@@ -576,6 +668,13 @@ namespace CastRightCatchInvManagement
                 _accountCurrent.Text = "";
                 _accountNew.Text = "";
                 _accountConfirm.Text = "";
+                if (AppState.StaySignedIn)
+                {
+                    var self = Accounts.List().FirstOrDefault(a =>
+                        a.Username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase));
+                    if (self != null)
+                        Accounts.RememberSignIn(self);
+                }
             }
 
             ToastAlert.Success(this, "Account saved.");
@@ -592,15 +691,18 @@ namespace CastRightCatchInvManagement
             parent.Controls.Add(box);
         }
 
-        private static void BindInvoiceField(TextBox box, Action<string> set)
+        private static void BindInvoiceField(TextBox box, Action<string> set, bool adminOnly = false)
         {
             box.Leave += (_, _) =>
             {
+                if (adminOnly && !AppState.IsAdmin)
+                    return;
                 set(box.Text.Trim());
                 AppLock.SaveSettings();
             };
         }
 
+        /// <summary>Copy AppState into every Settings field (company, numbering, account, SMTP, folder).</summary>
         private void LoadCompanyInfo()
         {
             txtBusinessName.Text = AppState.BusinessName;
@@ -610,9 +712,11 @@ namespace CastRightCatchInvManagement
             txtEIN.Text = AppState.Ein;
             txtPaymentTerms.Text = AppState.PaymentTerms;
 
-            txtFolderPath.Text = AppLock.HasFolder()
-                ? AppState.InventoryFolder
-                : "No folder selected — click Change Folder";
+            txtFolderPath.Text = DataLink.IsRemote
+                ? AppState.ServerHost + ":" + AppState.ServerPort
+                : AppLock.HasFolder()
+                    ? AppState.InventoryFolder
+                    : "No folder selected — click Change Folder";
 
             if (_soPattern != null)
                 _soPattern.Text = AppState.SalesOrderPattern;
@@ -624,6 +728,18 @@ namespace CastRightCatchInvManagement
                 _productPattern.Text = AppState.ProductNumberPattern;
             if (_productStart != null)
                 _productStart.Text = AppState.ProductNumberStart;
+            _syncingReuse = true;
+            try
+            {
+                if (_reuseProduct != null)
+                    _reuseProduct.Checked = AppState.ReuseMissingNumbers;
+                if (_reuseSo != null)
+                    _reuseSo.Checked = AppState.ReuseMissingNumbers;
+            }
+            finally
+            {
+                _syncingReuse = false;
+            }
             UpdateProductNumberPreview();
 
             if (_userEmail != null)
@@ -652,6 +768,10 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>
+        /// Company info, numbering, SMTP, and Roll to Next Term need an administrator.
+        /// Account fields need a signed-in user. Folder can always be changed.
+        /// </summary>
         private void ApplyLockState()
         {
             bool ready = AppLock.HasFolder();
@@ -671,6 +791,10 @@ namespace CastRightCatchInvManagement
                 _productPattern.Enabled = admin;
             if (_productStart != null)
                 _productStart.Enabled = admin;
+            if (_reuseProduct != null)
+                _reuseProduct.Enabled = admin;
+            if (_reuseSo != null)
+                _reuseSo.Enabled = admin;
             if (_userEmail != null)
                 _userEmail.Enabled = ready && AppState.SignedIn;
             if (_accountUser != null)
@@ -715,8 +839,19 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Point this PC at a different shared data folder and reload settings from that database.</summary>
         private void btnChangeFolder_Click(object sender, EventArgs e)
         {
+            if (DataLink.IsRemote)
+            {
+                MessageBox.Show(
+                    "The server IP is set on the sign-in screen. Sign out and connect to a different address if you need to.",
+                    "Inventory server",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
             using var dialog = new FolderBrowserDialog
             {
                 Description = "Select the shared folder for the inventory database (same folder on every computer)",
@@ -739,6 +874,10 @@ namespace CastRightCatchInvManagement
             LoadCompanyInfo();
         }
 
+        /// <summary>
+        /// Administrator only: move completed process rows into Old Inventory and start a new term.
+        /// Unfinished rows stay in the live database.
+        /// </summary>
         private void btnRollToNextTerm_Click(object sender, EventArgs e)
         {
             if (!AppLock.HasFolder())
@@ -762,7 +901,7 @@ namespace CastRightCatchInvManagement
             }
 
             var confirm = MessageBox.Show(
-                "This starts a new term. Purchases, sales, invoices, and other term data stay in the database under the previous term. Leftover CSV files move into 'old data'. Customers, vendors, and item codes stay current.\n\nContinue?",
+                "This starts a new term. Completed purchases, sales, invoices, banking, debits, and credits move into old_inventory.db. Unfinished rows stay in the live database with no date until they are completed. Leftover CSV files move into 'old data'. Customers, vendors, and item codes stay current.\n\nContinue?",
                 "Roll to Next Term",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
@@ -774,7 +913,7 @@ namespace CastRightCatchInvManagement
             {
                 DataFiles.RollToNextTerm();
                 MessageBox.Show(
-                    "A new term was started. Earlier rows stay in the database.",
+                    "A new term was started. Completed work is in old_inventory.db. Unfinished rows stayed in the live database.",
                     "Term Rolled",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);

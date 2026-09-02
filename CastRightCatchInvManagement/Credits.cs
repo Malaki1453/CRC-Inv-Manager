@@ -1,5 +1,8 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>
+    /// Customer credit claims. Completed (approved) rows move to Old Inventory on roll-over.
+    /// </summary>
     public partial class Credits : Form, INavigationPage
     {
         public Credits()
@@ -10,31 +13,10 @@ namespace CastRightCatchInvManagement
             LoadTable();
         }
 
+        /// <summary>Called when this page is shown or the Current/Old view changes. Reloads the grid.</summary>
         public void HighlightCurrentPage() => LoadTable();
 
+        /// <summary>Fill the grid from credits (live only, or archive + live when Old is on).</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.Credits);
-
-        private void btnUpload_Click(object sender, EventArgs e)
-        {
-            using var dialog = new OpenFileDialog
-            {
-                Title = "Select a CSV file to import",
-                Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
-                CheckFileExists = true
-            };
-
-            if (dialog.ShowDialog() != DialogResult.OK)
-                return;
-
-            if (DataFiles.TryImportCsv(dialog.FileName, out string message))
-            {
-                MessageBox.Show(message, "Import Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                LoadTable();
-            }
-            else
-            {
-                MessageBox.Show(message, "Import Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
     }
 }

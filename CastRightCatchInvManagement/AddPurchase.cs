@@ -2,6 +2,7 @@ using System.Globalization;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Create or edit a purchase line. Saves to the live purchases table.</summary>
     public partial class AddPurchase : Form, INavigationPage
     {
         private TextBox _po = null!;
@@ -31,6 +32,7 @@ namespace CastRightCatchInvManagement
         private DateTimePicker _arrival = null!;
         private TextBox _forwarder = null!;
         private TextBox _logistics = null!;
+        private ComboBox _status = null!;
         private bool _loading;
         private bool _calculating;
         private bool _editing;
@@ -49,6 +51,7 @@ namespace CastRightCatchInvManagement
             BuildUi();
         }
 
+        /// <summary>Open this page as a blank purchase. Assigns the next PO #.</summary>
         public static void OpenNew()
         {
             PendingEdit = null;
@@ -56,6 +59,7 @@ namespace CastRightCatchInvManagement
             Navigator.GoTo(AppPage.AddPurchase);
         }
 
+        /// <summary>Open this page with an existing purchase row loaded for edit.</summary>
         public static void OpenEdit(Dictionary<string, string> record)
         {
             PendingEdit = record;
@@ -63,6 +67,9 @@ namespace CastRightCatchInvManagement
             Navigator.GoTo(AppPage.AddPurchase);
         }
 
+        /// <summary>
+        /// Shown or refreshed: reload vendor/item lists, then apply a pending edit, a new blank, or keep the form.
+        /// </summary>
         public void HighlightCurrentPage()
         {
             LoadLookups();
@@ -86,6 +93,7 @@ namespace CastRightCatchInvManagement
                 _po.Text = DataFiles.NextPurchasePo();
         }
 
+        /// <summary>Build the scrollable form: order, product, cost, and date cards plus save actions.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
@@ -238,6 +246,9 @@ namespace CastRightCatchInvManagement
             _agreement = AddDate(card, "AGREEMENT DATE", 20, 48, 150);
             _expectedShip = AddDate(card, "EXPECTED SHIP DATE", 190, 48, 160);
             _vendorDue = AddDate(card, "VENDOR DUE DATE", 370, 48, 150);
+            _status = AddCombo(card, "STATUS", 540, 48, 150);
+            _status.DropDownStyle = ComboBoxStyle.DropDownList;
+            SelectStatus(_status, "Pending");
             _ship = AddDate(card, "SHIP DATE", 20, 100, 150);
             _arrival = AddDate(card, "ARRIVAL DATE", 190, 100, 160);
             _forwarder = AddText(card, "FORWARDER", 370, 100, 150);
@@ -245,6 +256,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Refill vendor and item-code dropdowns from the live lookup tables, keeping the current picks.</summary>
         private void LoadLookups()
         {
             _loading = true;
@@ -274,6 +286,7 @@ namespace CastRightCatchInvManagement
             _loading = false;
         }
 
+        /// <summary>When a vendor code is chosen, fill vendor name and terms from that lookup.</summary>
         private void ApplyVendor()
         {
             if (_loading || _vendor.SelectedItem is not CodeChoice choice)
@@ -284,6 +297,7 @@ namespace CastRightCatchInvManagement
                 _vendorTerms.Text = choice.Extra;
         }
 
+        /// <summary>When an item code is chosen, fill description and country of origin.</summary>
         private void ApplyItem()
         {
             if (_loading || _item.SelectedItem is not CodeChoice choice)
@@ -295,6 +309,7 @@ namespace CastRightCatchInvManagement
                 _coo.Text = choice.Extra;
         }
 
+        /// <summary>Volume = pack size × cases. Copies that into Volume Received if it is still empty.</summary>
         private void RecalcVolume()
         {
             if (_calculating)
@@ -317,6 +332,7 @@ namespace CastRightCatchInvManagement
             RecalcCost();
         }
 
+        /// <summary>Total cost / lb is the sum of the per-lb fields. Total cost is that times pounds received (or ordered).</summary>
         private void RecalcCost()
         {
             if (_calculating)
@@ -337,6 +353,10 @@ namespace CastRightCatchInvManagement
             _calculating = false;
         }
 
+        /// <summary>
+        /// Write this line to purchases. Edit replaces the original PO + item; add inserts a new row.
+        /// <paramref name="keepVendor"/> true (Add Another) leaves vendor fields filled.
+        /// </summary>
         private void SavePurchase(bool keepVendor = false)
         {
             if (!AppLock.HasFolder())
@@ -388,7 +408,8 @@ namespace CastRightCatchInvManagement
                 DateText(_ship),
                 DateText(_arrival),
                 _forwarder.Text.Trim(),
-                _logistics.Text.Trim()
+                _logistics.Text.Trim(),
+                _status.Text.Trim()
             };
 
             try
@@ -425,6 +446,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Switch the heading and save button between Add Product and Edit Product.</summary>
         private void SetMode(bool editing)
         {
             _editing = editing;
@@ -433,6 +455,7 @@ namespace CastRightCatchInvManagement
             _another.Visible = !editing;
         }
 
+        /// <summary>Copy an existing purchase row into the form and switch to edit mode.</summary>
         private void LoadRecord(Dictionary<string, string> record)
         {
             _loading = true;
@@ -465,11 +488,13 @@ namespace CastRightCatchInvManagement
             SetDate(_arrival, DataFiles.GetRecord(record, "Arrival Date"));
             _forwarder.Text = DataFiles.GetRecord(record, "Forwarder");
             _logistics.Text = DataFiles.GetRecord(record, "Logistics");
+            SelectStatus(_status, DataFiles.GetRecord(record, "Status"));
             _loading = false;
             SetMode(true);
             RecalcCost();
         }
 
+        /// <summary>Clear the form for another line. Optionally keep the vendor. Assigns the next PO #.</summary>
         private void ResetForm(bool keepVendor)
         {
             string vendorCode = keepVendor ? CurrentCode(_vendor) : "";
@@ -502,6 +527,7 @@ namespace CastRightCatchInvManagement
             Uncheck(_arrival);
             _forwarder.Text = "";
             _logistics.Text = "";
+            SelectStatus(_status, "Pending");
 
             if (keepVendor)
             {
@@ -619,6 +645,21 @@ namespace CastRightCatchInvManagement
         private static void Uncheck(DateTimePicker picker)
         {
             picker.Checked = false;
+        }
+
+        private static void SelectStatus(ComboBox box, string? value)
+        {
+            if (box.Items.Count == 0)
+                box.Items.AddRange(new object[] { "Pending", "Sent", "Confirmed", "Complete" });
+
+            string pick = (value ?? "").Trim();
+            if (pick.Equals("Open", StringComparison.OrdinalIgnoreCase))
+                pick = "Pending";
+            if (pick.Equals("Paid", StringComparison.OrdinalIgnoreCase))
+                pick = "Complete";
+            box.SelectedItem = pick.Length > 0 ? pick : "Pending";
+            if (box.SelectedIndex < 0)
+                box.SelectedItem = "Pending";
         }
 
         private static string CurrentCode(ComboBox box)

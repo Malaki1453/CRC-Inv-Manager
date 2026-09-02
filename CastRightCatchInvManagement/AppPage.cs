@@ -1,5 +1,8 @@
 ﻿namespace CastRightCatchInvManagement
 {
+    /// <summary>
+    /// Sidebar pages. One form instance is created per value and hosted in a workspace.
+    /// </summary>
     public enum AppPage
     {
         Dashboard,
@@ -20,6 +23,7 @@
         Settings,
         Help,
         ItUsers,
-        ItAccess
+        ItAccess,
+        Admin
     }
 }

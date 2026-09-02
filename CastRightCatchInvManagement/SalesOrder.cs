@@ -2,6 +2,7 @@ using System.Globalization;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Pick ticket. Builds or opens a sales-order PDF and writes the SO # onto matching sales.</summary>
     public partial class SalesOrder : Form, INavigationPage
     {
         private readonly List<SalesOrderLineRow> _lines = new();
@@ -35,6 +36,7 @@ namespace CastRightCatchInvManagement
             ResetDraft();
         }
 
+        /// <summary>Shown or refreshed: reload customers, keep at least one blank line, redraw line totals.</summary>
         public void HighlightCurrentPage()
         {
             RefreshLookups();
@@ -43,6 +45,10 @@ namespace CastRightCatchInvManagement
             RefreshLines();
         }
 
+        /// <summary>
+        /// Start or continue a pick ticket from a sale. Clears the draft if the customer does not match,
+        /// then adds every unused sale line on that PO.
+        /// </summary>
         internal void BeginFromSale(InvoiceSalePrefill prefill, Action<string?> done)
         {
             if (OrderHasCustomer() && !PrefillMatchesCustomer(prefill))
@@ -50,12 +56,17 @@ namespace CastRightCatchInvManagement
             TryAddSale(prefill, done);
         }
 
+        /// <summary>Build or open the sales-order PDF and return the SO # written on the form (or null).</summary>
         internal string? CreateOrOpenPdf()
         {
             CreateSalesOrder();
             return _soNo.Text.Trim();
         }
 
+        /// <summary>
+        /// Add matching sale lines for this PO/SO. Fails if the ticket already has a different customer.
+        /// <paramref name="done"/> gets an error string, or null on success.
+        /// </summary>
         internal void TryAddSale(InvoiceSalePrefill prefill, Action<string?> done)
         {
             if (_lines.Count == 0)
@@ -451,6 +462,10 @@ namespace CastRightCatchInvManagement
                 });
         }
 
+        /// <summary>
+        /// Look up sale rows for this PO/SO and append each unused line onto the pick ticket,
+        /// filling customer and ship-to from the first match.
+        /// </summary>
         private void StartAddItems(string? key, string customerCode, string customerName, Action<string?> done)
         {
             if (string.IsNullOrWhiteSpace(key))
@@ -613,6 +628,7 @@ namespace CastRightCatchInvManagement
             return _lines.LastOrDefault(line => !line.Locked) ?? _lines[^1];
         }
 
+        /// <summary>Clear header, lines, and totals, then assign the next SO #.</summary>
         private void ResetDraft()
         {
             foreach (var row in _lines.ToList())
@@ -787,6 +803,10 @@ namespace CastRightCatchInvManagement
             _totalVolume.Text = draft.TotalVolume.ToString("0.###", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>
+        /// If a PDF already exists for this SO #, open it. Otherwise draw a new PDF, store it,
+        /// write the SO # onto matching sales, and open the viewer.
+        /// </summary>
         private void CreateSalesOrder()
         {
             if (!AppLock.HasFolder())

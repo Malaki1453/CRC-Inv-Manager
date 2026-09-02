@@ -1,5 +1,6 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Command Center home overview.</summary>
     public partial class Dashboard : Form, INavigationPage
     {
         private StatCard _cardRevenue = null!;
@@ -11,15 +12,18 @@ namespace CastRightCatchInvManagement
         {
             InitializeComponent();
             Navigator.Register(AppPage.Dashboard, this);
+            DataFiles.DataChanged += LoadSummaryNumbers;
             BuildUi();
             LoadSummaryNumbers();
         }
 
+        /// <summary>Called when this page is shown or data changes. Refreshes the four stat cards.</summary>
         public void HighlightCurrentPage()
         {
             LoadSummaryNumbers();
         }
 
+        /// <summary>Hero image, four metric cards, and the welcome copy.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
@@ -138,15 +142,38 @@ namespace CastRightCatchInvManagement
             Controls.Add(hero);
         }
 
+        /// <summary>
+        /// Fill the four cards from sales and invoices in the current database view
+        /// (live only, or archive + live when Old is on).
+        /// </summary>
         private void LoadSummaryNumbers()
         {
-            if (_cardRevenue == null)
+            if (IsDisposed || _cardRevenue == null)
                 return;
+            if (InvokeRequired)
+            {
+                BeginInvoke(LoadSummaryNumbers);
+                return;
+            }
 
-            _cardRevenue.Value = "$0.00";
-            _cardOutstanding.Value = "$0.00";
-            _cardLateFees.Value = "$0.00";
-            _cardDeals.Value = "0";
+            var summary = DataFiles.GetDashboardSummary();
+            string scope = summary.ViewingOld ? "All inventory" : "This term";
+
+            _cardRevenue.Value = summary.Revenue.ToString("C");
+            _cardRevenue.Hint = scope;
+
+            _cardOutstanding.Value = summary.Outstanding.ToString("C");
+            _cardOutstanding.Hint = "Unpaid invoices";
+
+            _cardLateFees.Value = summary.LateFees.ToString("C");
+            _cardLateFees.Hint = summary.OverdueInvoices == 0
+                ? "None overdue"
+                : summary.OverdueInvoices == 1
+                    ? "1 overdue invoice"
+                    : $"{summary.OverdueInvoices} overdue invoices";
+
+            _cardDeals.Value = summary.Deals.ToString("N0");
+            _cardDeals.Hint = summary.ViewingOld ? "Logged (all inventory)" : "Logged this term";
         }
     }
 }

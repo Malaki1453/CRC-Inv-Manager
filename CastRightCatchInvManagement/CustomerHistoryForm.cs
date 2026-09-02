@@ -1,29 +1,33 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Customer or vendor history: identity plus tabs for description, sales or purchases, and bank transactions.</summary>
     internal sealed class CustomerHistoryForm : Form
     {
-        public static void ShowFor(IWin32Window? owner, Dictionary<string, string> customer)
+        public static void ShowFor(IWin32Window? owner, Dictionary<string, string> customer) =>
+            Show(owner, customer, vendor: false);
+
+        public static void ShowVendor(IWin32Window? owner, Dictionary<string, string> vendor) =>
+            Show(owner, vendor, vendor: true);
+
+        private static void Show(IWin32Window? owner, Dictionary<string, string> record, bool vendor)
         {
-            using var form = new CustomerHistoryForm(customer);
+            using var form = new CustomerHistoryForm(record, vendor);
             if (owner != null)
                 form.ShowDialog(owner);
             else
                 form.ShowDialog();
         }
 
-        private CustomerHistoryForm(Dictionary<string, string> customer)
+        private CustomerHistoryForm(Dictionary<string, string> customer, bool vendor)
         {
             string name = First(customer, "Name", "Company");
             string code = DataFiles.GetRecord(customer, "Code");
             string company = First(customer, "Company", "Name");
-            string phone = DataFiles.GetRecord(customer, "Phone");
-            string balance = DataFiles.GetRecord(customer, "Current Balance");
             string notes = DataFiles.GetRecordAny(customer, "Description", "Notes");
-            string email = DataFiles.GetRecord(customer, "Email");
             string contact = DataFiles.GetRecord(customer, "Contact Name");
-            string terms = DataFiles.GetRecord(customer, "Terms");
 
-            Text = name.Length > 0 ? name : "Customer history";
+            string kind = vendor ? "Vendor" : "Customer";
+            Text = name.Length > 0 ? name : kind + " history";
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.Sizable;
             MinimizeBox = true;
@@ -31,8 +35,8 @@ namespace CastRightCatchInvManagement
             ShowInTaskbar = false;
             AutoScaleMode = AutoScaleMode.Font;
             AutoScaleDimensions = new SizeF(7F, 15F);
-            ClientSize = new Size(820, 680);
-            MinimumSize = new Size(640, 520);
+            ClientSize = new Size(820, 860);
+            MinimumSize = new Size(640, 680);
             BackColor = Theme.Cream;
             Font = Theme.Body;
             ForeColor = Theme.Ink;
@@ -54,7 +58,7 @@ namespace CastRightCatchInvManagement
             };
             var title = new Label
             {
-                Text = name.Length > 0 ? name : "Customer",
+                Text = name.Length > 0 ? name : kind,
                 Dock = DockStyle.Top,
                 Height = 38,
                 Font = Theme.PageTitle,
@@ -70,7 +74,7 @@ namespace CastRightCatchInvManagement
                 subtitleParts.Add(contact);
             var subtitle = new Label
             {
-                Text = subtitleParts.Count > 0 ? string.Join("  ·  ", subtitleParts) : "Customer history",
+                Text = subtitleParts.Count > 0 ? string.Join("  ·  ", subtitleParts) : kind + " history",
                 Dock = DockStyle.Top,
                 Height = 24,
                 Font = Theme.Small,
@@ -105,173 +109,142 @@ namespace CastRightCatchInvManagement
             footer.Resize += (_, _) =>
                 close.Location = new Point(Math.Max(20, footer.Width - 130), 13);
 
-            var body = new Panel
+            var notesBox = new TextBox
+            {
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                ReadOnly = true,
+                Dock = DockStyle.Fill,
+                Text = notes
+            };
+            Theme.StyleField(notesBox);
+            notesBox.BackColor = Theme.Paper;
+
+            var history = PartyEditForm.BuildHistoryCard(vendor, customer, notesBox);
+            var identity = BuildIdentityCard(vendor, customer);
+
+            var topHost = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = identity.Height + 28,
+                BackColor = Theme.Cream,
+                Padding = new Padding(20, 16, 20, 12)
+            };
+            identity.Dock = DockStyle.Fill;
+            topHost.Controls.Add(identity);
+
+            var bottomHost = new Panel
             {
                 Dock = DockStyle.Fill,
-                AutoScroll = true,
                 BackColor = Theme.Cream,
-                Padding = new Padding(20, 16, 8, 16)
+                Padding = new Padding(20, 0, 20, 8)
             };
+            history.Dock = DockStyle.Fill;
+            bottomHost.Controls.Add(history);
 
-            var stats = new CardPanel { Dock = DockStyle.Top, Height = 108 };
-            AddStat(stats, "PHONE", Display(phone), 20);
-            AddStat(stats, "EMAIL", Display(email), 220);
-            AddStat(stats, "TERMS", Display(terms), 420);
-            AddStat(stats, "BALANCE", Display(balance), 600);
-            stats.Resize += (_, _) =>
-            {
-                int gap = Math.Max(160, (stats.Width - 48) / 4);
-                int i = 0;
-                foreach (Control child in stats.Controls)
-                {
-                    if (child is Label lbl && lbl.Tag is int col)
-                        lbl.Left = 20 + col * gap;
-                    i++;
-                }
-            };
-
-            var notesCard = new CardPanel { Dock = DockStyle.Top, Height = 96 };
-            var notesHeading = new Label
-            {
-                Text = "Description",
-                Font = Theme.SectionTitle,
-                ForeColor = Theme.Navy,
-                AutoSize = true,
-                Location = new Point(20, 12)
-            };
-            var notesValue = new Label
-            {
-                Text = Display(notes),
-                Font = Theme.Body,
-                ForeColor = Theme.Ink,
-                Location = new Point(20, 42),
-                Size = new Size(720, 40)
-            };
-            notesCard.Controls.Add(notesHeading);
-            notesCard.Controls.Add(notesValue);
-            notesCard.Resize += (_, _) =>
-                notesValue.Width = Math.Max(200, notesCard.Width - 44);
-
-            var salesCard = new CardPanel { Dock = DockStyle.Top, Height = 260 };
-            var salesHeading = new Label
-            {
-                Text = "Sales history",
-                Font = Theme.SectionTitle,
-                ForeColor = Theme.Navy,
-                AutoSize = true,
-                Location = new Point(20, 12)
-            };
-            var salesGrid = new DataGridView
-            {
-                Location = new Point(16, 44),
-                Size = new Size(740, 196),
-                ReadOnly = true,
-                AllowUserToAddRows = false,
-                AllowUserToDeleteRows = false,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
-            };
-            Theme.StyleGrid(salesGrid);
-            FillHistory(salesGrid, code, name);
-            salesCard.Controls.Add(salesHeading);
-            salesCard.Controls.Add(salesGrid);
-            salesCard.Resize += (_, _) =>
-            {
-                salesGrid.Width = Math.Max(200, salesCard.Width - 36);
-                salesGrid.Height = Math.Max(80, salesCard.Height - 60);
-            };
-
-            var payCard = new CardPanel { Dock = DockStyle.Top, Height = 110 };
-            var payHeading = new Label
-            {
-                Text = "Payment history",
-                Font = Theme.SectionTitle,
-                ForeColor = Theme.Navy,
-                AutoSize = true,
-                Location = new Point(20, 12)
-            };
-            var payHint = new Label
-            {
-                Text = "Payment history will show here when the bank is connected.",
-                Font = Theme.Body,
-                ForeColor = Theme.Muted,
-                AutoSize = false,
-                Location = new Point(20, 48),
-                Size = new Size(720, 40)
-            };
-            payCard.Controls.Add(payHeading);
-            payCard.Controls.Add(payHint);
-            payCard.Resize += (_, _) =>
-                payHint.Width = Math.Max(200, payCard.Width - 44);
-
-            body.Controls.Add(payCard);
-            body.Controls.Add(Spacer());
-            body.Controls.Add(salesCard);
-            body.Controls.Add(Spacer());
-            body.Controls.Add(notesCard);
-            body.Controls.Add(Spacer());
-            body.Controls.Add(stats);
-
-            Controls.Add(body);
+            Controls.Add(bottomHost);
+            Controls.Add(topHost);
             Controls.Add(footer);
             Controls.Add(header);
         }
 
-        private static void AddStat(Control parent, string caption, string value, int x)
+        private static CardPanel BuildIdentityCard(bool vendor, Dictionary<string, string> record)
         {
+            var card = new CardPanel
+            {
+                Height = vendor ? 210 : 340,
+                Padding = new Padding(12, 10, 12, 10)
+            };
+            var heading = new Label
+            {
+                Text = "Identity",
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                AutoSize = true,
+                Location = new Point(20, 10)
+            };
+            var grid = new TableLayoutPanel
+            {
+                ColumnCount = 4,
+                RowCount = vendor ? 2 : 4,
+                Location = new Point(12, 40),
+                Dock = DockStyle.None
+            };
+            for (int i = 0; i < 4; i++)
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
+
+            PutReadout(grid, 0, 0, "CODE", DataFiles.GetRecord(record, "Code"));
+            PutReadout(grid, 1, 0, "NAME", DataFiles.GetRecord(record, "Name"));
+            PutReadout(grid, 2, 0, "COMPANY", First(record, "Company", "Name"));
+            PutReadout(grid, 3, 0, "PHONE", DataFiles.GetRecord(record, "Phone"));
+
+            if (vendor)
+            {
+                PutReadout(grid, 0, 1, "TERMS", DataFiles.GetRecord(record, "Terms"));
+                PutReadout(grid, 1, 1, "TYPE", DataFiles.GetRecord(record, "Type"));
+                PutReadout(grid, 2, 1, "AMOUNT", DataFiles.GetRecord(record, "Amount"));
+                PutReadout(grid, 3, 1, "CURRENT BALANCE", DataFiles.GetRecord(record, "Current Balance"));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            }
+            else
+            {
+                PutReadout(grid, 0, 1, "CONTACT NAME", DataFiles.GetRecord(record, "Contact Name"));
+                PutReadout(grid, 1, 1, "EMAIL", DataFiles.GetRecord(record, "Email"));
+                PutReadout(grid, 2, 1, "TERMS", DataFiles.GetRecord(record, "Terms"));
+                PutReadout(grid, 3, 1, "CREDIT LIMIT", DataFiles.GetRecord(record, "Credit Limit"));
+                PutReadout(grid, 0, 2, "CURRENT BALANCE", DataFiles.GetRecord(record, "Current Balance"));
+                PutReadout(grid, 1, 2, "ESTABLISHED", DataFiles.GetRecord(record, "Established"));
+                PutReadout(grid, 0, 3, "ADDRESS", DataFiles.GetRecord(record, "Address"), colSpan: 4);
+                grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+                grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+                grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            }
+
+            card.Controls.Add(heading);
+            card.Controls.Add(grid);
+            card.Resize += (_, _) =>
+            {
+                grid.Width = Math.Max(180, card.ClientSize.Width - 28);
+                grid.Height = Math.Max(40, card.ClientSize.Height - 52);
+            };
+            return card;
+        }
+
+        private static void PutReadout(
+            TableLayoutPanel grid,
+            int col,
+            int row,
+            string caption,
+            string value,
+            int colSpan = 1)
+        {
+            var cell = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(8, 4, 8, 8)
+            };
             var label = new Label
             {
                 Text = caption,
-                Location = new Point(x, 18),
-                AutoSize = true,
-                Tag = caption == "PHONE" ? 0 : caption == "EMAIL" ? 1 : caption == "TERMS" ? 2 : 3
+                Dock = DockStyle.Top,
+                Height = 18
             };
             Theme.StyleFieldLabel(label);
             var box = new Label
             {
-                Text = value,
-                Location = new Point(x, 38),
-                AutoSize = true,
+                Text = Display(value),
+                Dock = DockStyle.Fill,
                 Font = Theme.BodyBold,
                 ForeColor = Theme.Navy,
-                Tag = label.Tag
+                AutoEllipsis = true
             };
-            parent.Controls.Add(label);
-            parent.Controls.Add(box);
-        }
-
-        private static Panel Spacer()
-        {
-            return new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 12,
-                BackColor = Theme.Cream
-            };
-        }
-
-        private static void FillHistory(DataGridView grid, string code, string name)
-        {
-            grid.Columns.Clear();
-            grid.Columns.Add("Ship Date", "Ship Date");
-            grid.Columns.Add("SO #", "SO #");
-            grid.Columns.Add("PO #", "PO #");
-            grid.Columns.Add("Item Code", "Item Code");
-            grid.Columns.Add("Amount", "Amount");
-
-            foreach (var sale in DataFiles.ReadRecords(DataFiles.Sales))
-            {
-                if (!DataFiles.MatchesCustomer(sale, code, name))
-                    continue;
-                grid.Rows.Add(
-                    DataFiles.GetRecord(sale, "Ship Date"),
-                    DataFiles.GetRecord(sale, "SO #"),
-                    DataFiles.SalePo(sale),
-                    DataFiles.GetRecord(sale, "Item Code"),
-                    DataFiles.GetRecord(sale, "Amount"));
-            }
-
-            if (grid.Rows.Count == 0)
-                grid.Rows.Add("No sales yet", "", "", "", "");
+            cell.Controls.Add(box);
+            cell.Controls.Add(label);
+            grid.Controls.Add(cell, col, row);
+            if (colSpan > 1)
+                grid.SetColumnSpan(cell, colSpan);
         }
 
         private static string Display(string value) =>

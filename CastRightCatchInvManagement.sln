@@ -5,6 +5,10 @@ VisualStudioVersion = 17.12.35707.178 d17.12
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CastRightCatchInvManagement", "CastRightCatchInvManagement\CastRightCatchInvManagement.csproj", "{C46E8C97-5FA3-4FF2-AA4F-EF175ED70AC8}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CrcInventory.Protocol", "CrcInventory.Protocol\CrcInventory.Protocol.csproj", "{B43EC86F-8B96-4518-B009-87B95853D3B0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CrcInventoryServer", "CrcInventoryServer\CrcInventoryServer.csproj", "{5C2E6D0F-EA91-4B62-A0D1-8C2E450F5E73}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +19,14 @@ Global
 		{C46E8C97-5FA3-4FF2-AA4F-EF175ED70AC8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C46E8C97-5FA3-4FF2-AA4F-EF175ED70AC8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C46E8C97-5FA3-4FF2-AA4F-EF175ED70AC8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B43EC86F-8B96-4518-B009-87B95853D3B0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B43EC86F-8B96-4518-B009-87B95853D3B0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B43EC86F-8B96-4518-B009-87B95853D3B0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B43EC86F-8B96-4518-B009-87B95853D3B0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5C2E6D0F-EA91-4B62-A0D1-8C2E450F5E73}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5C2E6D0F-EA91-4B62-A0D1-8C2E450F5E73}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5C2E6D0F-EA91-4B62-A0D1-8C2E450F5E73}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5C2E6D0F-EA91-4B62-A0D1-8C2E450F5E73}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

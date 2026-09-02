@@ -1,5 +1,10 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>
+    /// Vendor lookup (name, company, phone, balance). Always reads the live database.
+    /// Toolbar Add Vendor opens a blank record. Right-click for View Details or Edit Vendor.
+    /// Double-click a row for that vendor’s purchase and bank history.
+    /// </summary>
     public partial class Vendors : Form, INavigationPage
     {
         public Vendors()
@@ -14,35 +19,22 @@ namespace CastRightCatchInvManagement
                 "Add Vendor",
                 (_, _) => PartyEditForm.OpenVendorNew());
             UiStyle.BindRowEdit(dataGridView1, PartyEditForm.OpenVendorEdit, "Vendor", "Edit Vendor");
+            dataGridView1.CellDoubleClick += (_, e) =>
+            {
+                if (e.RowIndex < 0)
+                    return;
+                CustomerHistoryForm.ShowVendor(
+                    this,
+                    DataFiles.GridRowToRecord(dataGridView1, e.RowIndex));
+            };
             DataFiles.DataChanged += LoadTable;
             LoadTable();
         }
 
+        /// <summary>Called when this page is shown. Reloads the vendor grid.</summary>
         public void HighlightCurrentPage() => LoadTable();
 
+        /// <summary>Fill the grid from the vendors table in the live database.</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.Vendors);
-
-        private void btnUpload_Click(object sender, EventArgs e)
-        {
-            using var dialog = new OpenFileDialog
-            {
-                Title = "Select a CSV file to import",
-                Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
-                CheckFileExists = true
-            };
-
-            if (dialog.ShowDialog() != DialogResult.OK)
-                return;
-
-            if (DataFiles.TryImportCsv(dialog.FileName, out string message))
-            {
-                MessageBox.Show(message, "Import Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                LoadTable();
-            }
-            else
-            {
-                MessageBox.Show(message, "Import Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
     }
 }

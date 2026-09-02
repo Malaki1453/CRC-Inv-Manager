@@ -1,5 +1,9 @@
 namespace CastRightCatchInvManagement
 {
+    /// <summary>
+    /// Invoice list (SO #, customer, ship date, due date, status, paid).
+    /// Double-click a row to open that invoice PDF. If none is stored, offer to build one from the sales on that invoice.
+    /// </summary>
     public partial class Invoicing : Form, INavigationPage
     {
         public Invoicing()
@@ -12,10 +16,16 @@ namespace CastRightCatchInvManagement
             LoadTable();
         }
 
+        /// <summary>Called when this page is shown or the Current/Old view changes. Reloads the grid.</summary>
         public void HighlightCurrentPage() => LoadTable();
 
+        /// <summary>Fill the grid from invoices (live only, or archive + live when Old is on).</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.Invoices);
 
+        /// <summary>
+        /// Double-click: open the stored PDF for this invoice number.
+        /// If there is no PDF, ask whether to create one from matching sales and then open Create Invoice.
+        /// </summary>
         private void dataGridView1_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0)
@@ -62,29 +72,6 @@ namespace CastRightCatchInvManagement
 
                 ToastAlert.Success(this, $"Invoice {invoiceNumber} PDF was created.");
             });
-        }
-
-        private void btnUpload_Click(object sender, EventArgs e)
-        {
-            using var dialog = new OpenFileDialog
-            {
-                Title = "Select a CSV file to import",
-                Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
-                CheckFileExists = true
-            };
-
-            if (dialog.ShowDialog() != DialogResult.OK)
-                return;
-
-            if (DataFiles.TryImportCsv(dialog.FileName, out string message))
-            {
-                MessageBox.Show(message, "Import Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                LoadTable();
-            }
-            else
-            {
-                MessageBox.Show(message, "Import Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
         }
     }
 }

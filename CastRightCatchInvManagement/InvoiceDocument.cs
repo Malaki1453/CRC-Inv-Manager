@@ -3,6 +3,7 @@ using System.Text;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Draws an invoice PDF from an InvoiceDraft, including company info from Settings.</summary>
     internal static class InvoiceDocument
     {
         public static string Save(InvoiceDraft draft)
@@ -234,6 +235,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Low-level PDF content stream writer used by invoice and sales-order documents.</summary>
     internal sealed class PdfDraw
     {
         private readonly StringBuilder _s = new();

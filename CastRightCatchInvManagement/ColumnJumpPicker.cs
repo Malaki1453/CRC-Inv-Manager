@@ -2,6 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Toolbar control that scrolls the grid sideways to a chosen column.</summary>
     internal sealed class ColumnJumpPicker : Control
     {
         private readonly List<string> _columns = new();
