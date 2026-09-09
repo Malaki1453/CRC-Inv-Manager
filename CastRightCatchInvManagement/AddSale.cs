@@ -7,12 +7,11 @@ namespace CastRightCatchInvManagement
     {
         private TextBox _so = null!;
         private TextBox _po = null!;
-        private ComboBox _lot = null!;
-        private ComboBox _customer = null!;
+        private TextBox _lot = null!;
         private TextBox _customerCode = null!;
         private TextBox _customerName = null!;
         private TextBox _terms = null!;
-        private ComboBox _item = null!;
+        private TextBox _item = null!;
         private TextBox _description = null!;
         private TextBox _coo = null!;
         private TextBox _packSize = null!;
@@ -28,6 +27,10 @@ namespace CastRightCatchInvManagement
         private Label _modeLabel = null!;
         private Button _save = null!;
         private Button _another = null!;
+        private LookupSearchPanel _lookup = null!;
+        private List<Dictionary<string, string>> _customerRows = new();
+        private List<Dictionary<string, string>> _itemRows = new();
+        private List<Dictionary<string, string>> _lotRows = new();
         private bool _loading;
         private bool _calculating;
         private bool _editing;
@@ -47,6 +50,13 @@ namespace CastRightCatchInvManagement
         /// <summary>Open this page as a blank sale.</summary>
         public static void OpenNew()
         {
+            if (!DataAccess.CanMutate(DataFiles.Sales))
+            {
+                MessageBox.Show("This account can only view sales.", "Sales Form",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             PendingEdit = null;
             StartNew = true;
             Navigator.GoTo(AppPage.AddSale);
@@ -55,6 +65,13 @@ namespace CastRightCatchInvManagement
         /// <summary>Open this page with an existing sale row loaded for edit.</summary>
         public static void OpenEdit(Dictionary<string, string> record)
         {
+            if (!DataAccess.CanMutate(DataFiles.Sales))
+            {
+                MessageBox.Show("This account can only view sales.", "Edit Product",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             PendingEdit = record;
             StartNew = false;
             Navigator.GoTo(AppPage.AddSale);
@@ -162,13 +179,14 @@ namespace CastRightCatchInvManagement
             };
             var intro = new Label
             {
-                Text = "Enter the customer PO, then pick a lot from Purchases to fill the product.",
+                Text = "Search for a customer, item, or lot. Matching rows appear in the table — pick one to fill the form.",
                 Font = Theme.Body,
                 ForeColor = Theme.Muted,
                 Dock = DockStyle.Top,
                 Height = 28
             };
 
+            _lookup = BuildLookupCard();
             scroll.Controls.Add(BuildStatusCard());
             scroll.Controls.Add(Spacer());
             scroll.Controls.Add(BuildProductCard());
@@ -177,6 +195,7 @@ namespace CastRightCatchInvManagement
 
             Controls.Add(scroll);
             Controls.Add(actions);
+            Controls.Add(_lookup);
             Controls.Add(intro);
             Controls.Add(_modeLabel);
 
@@ -188,22 +207,22 @@ namespace CastRightCatchInvManagement
         {
             var card = MakeCard("Order", 168);
             _po = AddText(card, "PO #", 20, 48, 180);
-            _so = AddText(card, "SO #", 220, 48, 120);
+            _so = AddText(card, "SO #", 220, 48, 160);
             _so.ReadOnly = true;
             _so.PlaceholderText = "Set on Create Sales Order";
-            _customer = AddCombo(card, "CUSTOMER", 360, 48, 280);
-            _customerCode = AddText(card, "CUSTOMER CODE", 20, 100, 140);
-            _customerName = AddText(card, "CUSTOMER", 180, 100, 280);
-            _terms = AddText(card, "CUSTOMER TERMS", 480, 100, 160);
-            _customer.SelectedIndexChanged += (_, _) => ApplyCustomer();
+            _customerCode = AddText(card, "CUSTOMER CODE", 20, 100, 160);
+            _customerName = AddText(card, "CUSTOMER", 200, 100, 280);
+            _terms = AddText(card, "CUSTOMER TERMS", 500, 100, 160);
+            WireApply(_customerCode, ApplyCustomerFromCode);
+            WireApply(_customerName, ApplyCustomerFromName);
             return card;
         }
 
         private CardPanel BuildProductCard()
         {
             var card = MakeCard("Product", 168);
-            _item = AddCombo(card, "ITEM CODE", 20, 48, 180);
-            _lot = AddCombo(card, "LOT #", 220, 48, 220);
+            _item = AddText(card, "ITEM CODE", 20, 48, 180);
+            _lot = AddText(card, "LOT #", 220, 48, 220);
             _description = AddText(card, "DESCRIPTION", 460, 48, 360);
             _coo = AddText(card, "COO", 20, 100, 100);
             _packSize = AddText(card, "PACK SIZE", 140, 100, 110);
@@ -213,9 +232,8 @@ namespace CastRightCatchInvManagement
             _amount = AddText(card, "AMOUNT", 670, 100, 130);
             _amount.ReadOnly = true;
             _amount.BackColor = Theme.GridAlt;
-            _lot.SelectedIndexChanged += (_, _) => ApplyLot();
-            _lot.Leave += (_, _) => ApplyLot();
-            _item.SelectedIndexChanged += (_, _) => ApplyItem();
+            WireApply(_lot, ApplyLot);
+            WireApply(_item, ApplyItemFromCode);
             _volume.TextChanged += (_, _) => RecalcAmount();
             _price.TextChanged += (_, _) => RecalcAmount();
             _cs.TextChanged += (_, _) => RecalcVolume();
@@ -236,49 +254,66 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
-        /// <summary>
-        /// Refill lot (purchase PO #s), customer, and item-code lists, keeping the current picks.
-        /// </summary>
+        /// <summary>Reload customer, item, and lot lists used by the search table.</summary>
         private void LoadLookups()
         {
-            _loading = true;
-            string lot = _lot.Text.Trim();
-            string customer = CurrentCode(_customer);
-            string item = CurrentCode(_item);
+            _customerRows = DataFiles.VisibleRecords(DataFiles.Customers);
+            _itemRows = DataFiles.VisibleRecords(DataFiles.ItemCodes);
+            _lotRows = DataFiles.VisibleRecords(DataFiles.PurchaseSales)
+                .Where(row => !DataFiles.IsWaitingAdd(row))
+                .ToList();
+            _lookup?.SetSources(
+                new LookupSource
+                {
+                    Kind = "Customer",
+                    Rows = _customerRows,
+                    CodeColumn = "Code",
+                    NameColumns = new[] { "Name", "Company" },
+                    ExtraColumn = "Terms"
+                },
+                new LookupSource
+                {
+                    Kind = "Item",
+                    Rows = _itemRows,
+                    CodeColumn = "Code",
+                    NameColumns = new[] { "Species", "Description" },
+                    ExtraColumn = "COO"
+                },
+                new LookupSource
+                {
+                    Kind = "Lot",
+                    Rows = _lotRows,
+                    CodeColumn = "PO #",
+                    NameColumns = new[] { "Description", "Item Code" },
+                    ExtraColumn = "Vendor"
+                });
+        }
 
-            _lot.Items.Clear();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var record in DataFiles.ReadRecords(DataFiles.PurchaseSales))
+        private LookupSearchPanel BuildLookupCard()
+        {
+            var panel = new LookupSearchPanel("Search customers, items, and lots by any field");
+            panel.Picked += pick =>
             {
-                string value = DataFiles.GetRecord(record, "PO #").Trim();
-                if (value.Length == 0 || !seen.Add(value))
-                    continue;
-                _lot.Items.Add(value);
-            }
+                if (pick.Kind.Equals("Customer", StringComparison.OrdinalIgnoreCase))
+                    PickCustomer(pick.Code);
+                else if (pick.Kind.Equals("Item", StringComparison.OrdinalIgnoreCase))
+                    PickItem(pick.Code);
+                else if (pick.Kind.Equals("Lot", StringComparison.OrdinalIgnoreCase))
+                    ApplyPurchase(pick.Record);
+            };
+            return panel;
+        }
 
-            _customer.Items.Clear();
-            foreach (var record in DataFiles.ReadRecords(DataFiles.Customers))
-            {
-                _customer.Items.Add(new CodeChoice(
-                    DataFiles.GetRecord(record, "Code"),
-                    DataFiles.GetRecord(record, "Name"),
-                    DataFiles.GetRecord(record, "Terms")));
-            }
+        private void PickCustomer(string code)
+        {
+            _customerCode.Text = code;
+            ApplyCustomerFromCode();
+        }
 
-            _item.Items.Clear();
-            foreach (var record in DataFiles.ReadRecords(DataFiles.ItemCodes))
-            {
-                _item.Items.Add(new CodeChoice(
-                    DataFiles.GetRecord(record, "Code"),
-                    DataFiles.GetRecord(record, "Description"),
-                    DataFiles.GetRecord(record, "COO")));
-            }
-
-            if (lot.Length > 0)
-                _lot.Text = lot;
-            SelectCode(_customer, customer);
-            SelectCode(_item, item);
-            _loading = false;
+        private void PickItem(string code)
+        {
+            _item.Text = code;
+            ApplyItemFromCode();
         }
 
         /// <summary>When a lot / purchase PO is chosen, copy item, description, pack, cases, and volume from that purchase.</summary>
@@ -291,7 +326,14 @@ namespace CastRightCatchInvManagement
             if (purchase == null)
                 return;
 
-            SelectCode(_item, DataFiles.GetRecord(purchase, "Item Code"));
+            ApplyPurchase(purchase);
+        }
+
+        private void ApplyPurchase(Dictionary<string, string> purchase)
+        {
+            _loading = true;
+            _lot.Text = DataFiles.GetRecord(purchase, "PO #");
+            _item.Text = DataFiles.GetRecord(purchase, "Item Code");
             _description.Text = DataFiles.GetRecord(purchase, "Description");
             _coo.Text = DataFiles.GetRecord(purchase, "COO");
             _packSize.Text = DataFiles.GetRecord(purchase, "Pack Size");
@@ -300,31 +342,90 @@ namespace CastRightCatchInvManagement
             if (volume.Length == 0)
                 volume = DataFiles.GetRecord(purchase, "Volume");
             _volume.Text = volume;
+            _loading = false;
             RecalcAmount();
         }
 
-        /// <summary>When a customer is chosen, fill code, name, and terms.</summary>
-        private void ApplyCustomer()
+        /// <summary>When a customer code is entered, fill name and terms.</summary>
+        private void ApplyCustomerFromCode()
         {
-            if (_loading || _customer.SelectedItem is not CodeChoice choice)
+            if (_loading)
                 return;
 
-            _customerCode.Text = choice.Code;
-            _customerName.Text = choice.Name;
-            if (!string.IsNullOrWhiteSpace(choice.Extra))
-                _terms.Text = choice.Extra;
+            string code = _customerCode.Text.Trim();
+            if (code.Length == 0)
+                return;
+
+            var record = FindByCode(_customerRows, code);
+            if (record == null)
+                return;
+
+            string name = DataFiles.GetRecord(record, "Name").Trim();
+            if (name.Length == 0)
+                name = DataFiles.GetRecord(record, "Company").Trim();
+            string terms = DataFiles.GetRecord(record, "Terms");
+            _loading = true;
+            if (name.Length > 0)
+                _customerName.Text = name;
+            if (terms.Length > 0)
+                _terms.Text = terms;
+            _loading = false;
         }
 
-        /// <summary>When an item code is chosen, fill description and country of origin.</summary>
-        private void ApplyItem()
+        /// <summary>When a customer name is entered, fill the matching code and terms if unique.</summary>
+        private void ApplyCustomerFromName()
         {
-            if (_loading || _item.SelectedItem is not CodeChoice choice)
+            if (_loading || _customerCode.Text.Trim().Length > 0)
                 return;
 
-            if (!string.IsNullOrWhiteSpace(choice.Name))
-                _description.Text = choice.Name;
-            if (!string.IsNullOrWhiteSpace(choice.Extra))
-                _coo.Text = choice.Extra;
+            string needle = _customerName.Text.Trim();
+            if (needle.Length == 0)
+                return;
+
+            string? code = null;
+            foreach (var record in _customerRows)
+            {
+                string name = DataFiles.GetRecord(record, "Name").Trim();
+                string company = DataFiles.GetRecord(record, "Company").Trim();
+                if (!name.Equals(needle, StringComparison.OrdinalIgnoreCase) &&
+                    !company.Equals(needle, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                string next = DataFiles.GetRecord(record, "Code").Trim();
+                if (next.Length == 0)
+                    continue;
+                if (code != null && !code.Equals(next, StringComparison.OrdinalIgnoreCase))
+                    return;
+                code = next;
+            }
+
+            if (code != null)
+                PickCustomer(code);
+        }
+
+        /// <summary>When an item code is entered, fill description and country of origin.</summary>
+        private void ApplyItemFromCode()
+        {
+            if (_loading)
+                return;
+
+            string code = _item.Text.Trim();
+            if (code.Length == 0)
+                return;
+
+            var record = FindByCode(_itemRows, code);
+            if (record == null)
+                return;
+
+            string species = DataFiles.GetRecord(record, "Species").Trim();
+            if (species.Length == 0)
+                species = DataFiles.GetRecord(record, "Description").Trim();
+            string coo = DataFiles.GetRecord(record, "COO");
+            _loading = true;
+            if (species.Length > 0)
+                _description.Text = species;
+            if (coo.Length > 0)
+                _coo.Text = coo;
+            _loading = false;
         }
 
         /// <summary>If volume is empty, set it to pack size × cases, then refresh amount.</summary>
@@ -386,7 +487,7 @@ namespace CastRightCatchInvManagement
                 ["Customer Code"] = _customerCode.Text.Trim(),
                 ["Customer"] = _customerName.Text.Trim(),
                 ["Customer Terms"] = _terms.Text.Trim(),
-                ["Item Code"] = CurrentCode(_item),
+                ["Item Code"] = _item.Text.Trim(),
                 ["Description"] = _description.Text.Trim(),
                 ["COO"] = _coo.Text.Trim(),
                 ["Pack Size"] = _packSize.Text.Trim(),
@@ -403,9 +504,10 @@ namespace CastRightCatchInvManagement
 
             try
             {
+                MutateResult result;
                 if (_editing)
                 {
-                    bool updated = DataFiles.ReplaceMatchingRow(
+                    result = DataFiles.MutateUpdate(
                         DataFiles.Sales,
                         record =>
                             DataFiles.NormalizePo(DataFiles.SalePo(record)) ==
@@ -414,23 +516,32 @@ namespace CastRightCatchInvManagement
                                 .Equals(_editItem, StringComparison.OrdinalIgnoreCase) &&
                             DataFiles.GetRecord(record, "Customer Code").Trim()
                                 .Equals(_editCustomer, StringComparison.OrdinalIgnoreCase),
-                        DataFiles.NamedRow(DataFiles.Sales, fields));
-                    if (!updated)
-                    {
-                        ToastAlert.Error(this, "Could not find that product line to update.");
-                        return;
-                    }
+                        fields);
+                }
+                else
+                {
+                    result = DataFiles.MutateInsert(DataFiles.Sales, fields);
+                }
 
-                    _editPo = po;
-                    _editItem = CurrentCode(_item);
-                    _editCustomer = _customerCode.Text.Trim();
-                    ToastAlert.Success(this, "The product was updated.");
+                if (!result.Ok)
+                {
+                    ToastAlert.Error(this, result.Message);
                     return;
                 }
 
-                DataFiles.AppendNamedRow(DataFiles.Sales, fields);
-                ToastAlert.Success(this, "The product was added.");
-                ResetForm(keepCustomer);
+                ToastAlert.Success(this, result.Queued
+                    ? result.Message
+                    : _editing ? "The product was updated." : "The product was added.");
+                if (_editing && !result.Queued)
+                {
+                    _editPo = po;
+                    _editItem = _item.Text.Trim();
+                    _editCustomer = _customerCode.Text.Trim();
+                    return;
+                }
+
+                if (!_editing)
+                    ResetForm(keepCustomer);
             }
             catch (Exception ex)
             {
@@ -462,7 +573,7 @@ namespace CastRightCatchInvManagement
             {
                 Po = po,
                 So = _so.Text.Trim(),
-                ItemCode = CurrentCode(_item),
+                ItemCode = _item.Text.Trim(),
                 CustomerCode = _customerCode.Text.Trim(),
                 CustomerName = _customerName.Text.Trim()
             };
@@ -492,11 +603,10 @@ namespace CastRightCatchInvManagement
             _so.Text = DataFiles.GetRecord(record, "SO #");
             _po.Text = _editPo;
             _lot.Text = DataFiles.SaleLot(record);
-            SelectCode(_customer, _editCustomer);
             _customerCode.Text = _editCustomer;
             _customerName.Text = DataFiles.GetRecord(record, "Customer");
             _terms.Text = DataFiles.GetRecord(record, "Customer Terms");
-            SelectCode(_item, _editItem);
+            _item.Text = _editItem;
             _description.Text = DataFiles.GetRecord(record, "Description");
             _coo.Text = DataFiles.GetRecord(record, "COO");
             _packSize.Text = DataFiles.GetRecord(record, "Pack Size");
@@ -517,7 +627,6 @@ namespace CastRightCatchInvManagement
         /// <summary>Clear the form for another line. Optionally keep the customer.</summary>
         private void ResetForm(bool keepCustomer)
         {
-            string customer = keepCustomer ? CurrentCode(_customer) : "";
             string customerName = keepCustomer ? _customerName.Text : "";
             string terms = keepCustomer ? _terms.Text : "";
             string code = keepCustomer ? _customerCode.Text : "";
@@ -527,7 +636,7 @@ namespace CastRightCatchInvManagement
             _so.Text = "";
             _po.Text = po;
             _lot.Text = "";
-            _item.SelectedIndex = -1;
+            _item.Text = "";
             _description.Text = "";
             _coo.Text = "";
             _packSize.Text = "";
@@ -543,14 +652,12 @@ namespace CastRightCatchInvManagement
 
             if (keepCustomer)
             {
-                SelectCode(_customer, customer);
                 _customerCode.Text = code;
                 _customerName.Text = customerName;
                 _terms.Text = terms;
             }
             else
             {
-                _customer.SelectedIndex = -1;
                 _customerCode.Text = "";
                 _customerName.Text = "";
                 _terms.Text = "";
@@ -679,28 +786,30 @@ namespace CastRightCatchInvManagement
                 box.SelectedItem = "Pending";
         }
 
-        private static string CurrentCode(ComboBox box) =>
-            box.SelectedItem is CodeChoice choice ? choice.Code : box.Text.Trim();
-
-        private static void SelectCode(ComboBox box, string code)
+        private void WireApply(TextBox box, Action apply)
         {
-            if (string.IsNullOrWhiteSpace(code))
+            box.Leave += (_, _) => apply();
+            box.KeyDown += (_, e) =>
             {
-                box.SelectedIndex = -1;
-                return;
-            }
-
-            for (int i = 0; i < box.Items.Count; i++)
-            {
-                if (box.Items[i] is CodeChoice choice &&
-                    choice.Code.Equals(code, StringComparison.OrdinalIgnoreCase))
-                {
-                    box.SelectedIndex = i;
+                if (e.KeyCode != Keys.Enter)
                     return;
-                }
+                apply();
+                e.SuppressKeyPress = true;
+            };
+        }
+
+        private static Dictionary<string, string>? FindByCode(
+            List<Dictionary<string, string>> rows,
+            string code)
+        {
+            foreach (var record in rows)
+            {
+                if (DataFiles.GetRecord(record, "Code").Trim()
+                    .Equals(code, StringComparison.OrdinalIgnoreCase))
+                    return record;
             }
 
-            box.Text = code;
+            return null;
         }
 
         private static decimal ParseNumber(string? text)
@@ -712,23 +821,6 @@ namespace CastRightCatchInvManagement
             if (decimal.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out value))
                 return value;
             return 0;
-        }
-
-        private sealed class CodeChoice
-        {
-            public string Code { get; }
-            public string Name { get; }
-            public string Extra { get; }
-
-            public CodeChoice(string code, string name, string extra)
-            {
-                Code = code;
-                Name = name;
-                Extra = extra;
-            }
-
-            public override string ToString() =>
-                string.IsNullOrWhiteSpace(Name) ? Code : $"{Code}  ·  {Name}";
         }
     }
 }

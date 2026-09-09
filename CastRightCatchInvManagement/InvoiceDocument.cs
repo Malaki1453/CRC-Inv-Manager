@@ -8,10 +8,10 @@ namespace CastRightCatchInvManagement
     {
         public static string Save(InvoiceDraft draft)
         {
-            string customer = string.IsNullOrWhiteSpace(draft.CustomerCode)
-                ? draft.CustomerName
-                : draft.CustomerCode;
-            string fileName = SanitizeFile($"Invoice {draft.InvoiceNumber} - {customer}.pdf");
+            string party = draft.Received
+                ? FirstNonEmpty(draft.VendorName, draft.VendorCode, draft.CustomerName)
+                : FirstNonEmpty(draft.CustomerCode, draft.CustomerName);
+            string fileName = SanitizeFile($"Invoice {draft.InvoiceNumber} - {party}.pdf");
             return DataFiles.SaveStoredPdf(
                 DataFiles.PdfKindInvoice,
                 draft.InvoiceNumber.Trim(),
@@ -59,17 +59,28 @@ namespace CastRightCatchInvManagement
         private static string BuildPage(InvoiceDraft draft)
         {
             var g = new PdfDraw();
-            string company = FirstNonEmpty(AppState.BusinessName, "Cast Right Catch Co.");
-            string address = FirstNonEmpty(AppState.Address, "PO Box 1064, Orting, WA 98360");
-            string phone = FirstNonEmpty(AppState.Phone, "(253) 540-2631");
-            string email = FirstNonEmpty(AppState.CompanyEmail, "jwatts@castrightcatch.com");
-            string ein = FirstNonEmpty(AppState.Ein, "41-3723454");
+            bool received = draft.Received;
+            string company = received
+                ? FirstNonEmpty(draft.IssuerName, draft.VendorName, "Vendor")
+                : FirstNonEmpty(AppState.BusinessName, "Cast Right Catch Co.");
+            string address = received
+                ? draft.IssuerAddress
+                : FirstNonEmpty(AppState.Address, "PO Box 1064, Orting, WA 98360");
+            string phone = received
+                ? draft.IssuerPhone
+                : FirstNonEmpty(AppState.Phone, "(253) 540-2631");
+            string email = received
+                ? ""
+                : FirstNonEmpty(AppState.CompanyEmail, "jwatts@castrightcatch.com");
+            string ein = received ? "" : FirstNonEmpty(AppState.Ein, "41-3723454");
             string defaultTerms = FirstNonEmpty(draft.Terms, AppState.PaymentTerms, "NET 15 DAYS");
+            string orderNo = received ? draft.PoNumber : draft.SoNumber;
+            string partyCode = received ? draft.VendorCode : draft.CustomerCode;
 
             g.Fill(36, 36, 4, 70, Theme.Gold);
             g.Text(50, 48, company.ToUpperInvariant(), 16, true, Theme.Navy);
             g.Text(50, 66, address, 8, false, Theme.Muted);
-            g.Text(50, 78, $"{phone}    {email}", 8, false, Theme.Muted);
+            g.Text(50, 78, string.IsNullOrWhiteSpace(email) ? phone : $"{phone}    {email}", 8, false, Theme.Muted);
 
             g.Text(306, 48, "INVOICE", 22, true, Theme.Navy, center: true);
             g.Rect(430, 36, 146, 42);
@@ -79,27 +90,28 @@ namespace CastRightCatchInvManagement
             g.TextRight(490, 66, draft.InvoiceNumber, 9, true, Theme.Ink);
             g.Text(516, 66, draft.InvoiceDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink, center: true, width: 52);
             g.Line(494, 36, 494, 78);
-            g.Text(430, 88, $"TAX ID# {ein}", 8, false, Theme.Ink);
+            if (ein.Length > 0)
+                g.Text(430, 88, $"TAX ID# {ein}", 8, false, Theme.Ink);
 
             float y = 108;
             g.Fill(36, y, 540, 16, Theme.Navy);
-            g.Text(42, y + 11, "SO #", 6.5f, true, Theme.Cream);
+            g.Text(42, y + 11, received ? "PO #" : "SO #", 6.5f, true, Theme.Cream);
             g.Text(108, y + 11, "ORDER DATE", 6.5f, true, Theme.Cream);
             g.Text(186, y + 11, "TERMS", 6.5f, true, Theme.Cream);
             g.Text(280, y + 11, "SHIP VIA", 6.5f, true, Theme.Cream);
-            g.Text(400, y + 11, "SALES REP", 6.5f, true, Theme.Cream);
+            g.Text(400, y + 11, received ? "CONTACT" : "SALES REP", 6.5f, true, Theme.Cream);
             g.Text(478, y + 11, "SHIP DATE", 6.5f, true, Theme.Cream);
-            g.Text(542, y + 11, "CUST ID", 6.5f, true, Theme.Cream);
+            g.Text(542, y + 11, received ? "VEND ID" : "CUST ID", 6.5f, true, Theme.Cream);
 
             y += 16;
             g.Rect(36, y, 540, 18);
-            g.Text(42, y + 13, draft.SoNumber, 8, false, Theme.Ink);
+            g.Text(42, y + 13, orderNo, 8, false, Theme.Ink);
             g.Text(108, y + 13, draft.InvoiceDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink);
             g.Text(186, y + 13, defaultTerms, 8, false, Theme.Ink);
             g.Text(280, y + 13, draft.ShipVia, 8, false, Theme.Ink);
             g.Text(400, y + 13, draft.SalesRep, 8, false, Theme.Ink);
             g.Text(478, y + 13, draft.ShipDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink);
-            g.Text(542, y + 13, draft.CustomerCode, 8, false, Theme.Ink);
+            g.Text(542, y + 13, partyCode, 8, false, Theme.Ink);
 
             y += 32;
             g.Text(36, y, "Sold To:", 8, true, Theme.Navy);
@@ -171,9 +183,18 @@ namespace CastRightCatchInvManagement
             g.TextRight(528, ty + 59, "INVOICE TOTAL", 8, true, Theme.Cream);
             g.TextRight(572, ty + 59, FormatMoney(draft.InvoiceTotal), 8, true, Theme.Cream);
 
-            g.Text(36, 748, "INTEREST MAY BE CHARGED AT THE RATE OF 1.5% PER MONTH ON ALL OVERDUE ACCOUNTS.", 6.5f, false, Theme.Muted);
-            g.Text(36, 760, "IMPORTANT: NO CLAIMS OR REDUCTIONS ALLOWED UNLESS MADE IMMEDIATELY ON RECEIPT OF GOODS.", 6.5f, false, Theme.Muted);
-            g.Text(36, 776, "CUSTOMER SIGNATURE ________________________________", 8, false, Theme.Ink);
+            if (received)
+            {
+                g.Text(36, 748, "VENDOR INVOICE AS RECEIVED. CAST RIGHT CATCH IS THE RECEIVING COMPANY.", 6.5f, false, Theme.Muted);
+                g.Text(36, 760, "IMPORTANT: NO CLAIMS OR REDUCTIONS ALLOWED UNLESS MADE IMMEDIATELY ON RECEIPT OF GOODS.", 6.5f, false, Theme.Muted);
+                g.Text(36, 776, "RECEIVED BY ________________________________", 8, false, Theme.Ink);
+            }
+            else
+            {
+                g.Text(36, 748, "INTEREST MAY BE CHARGED AT THE RATE OF 1.5% PER MONTH ON ALL OVERDUE ACCOUNTS.", 6.5f, false, Theme.Muted);
+                g.Text(36, 760, "IMPORTANT: NO CLAIMS OR REDUCTIONS ALLOWED UNLESS MADE IMMEDIATELY ON RECEIPT OF GOODS.", 6.5f, false, Theme.Muted);
+                g.Text(36, 776, "CUSTOMER SIGNATURE ________________________________", 8, false, Theme.Ink);
+            }
 
             return g.ToStream();
         }

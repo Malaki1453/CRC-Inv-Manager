@@ -24,8 +24,6 @@ namespace CastRightCatchInvManagement
             txtPhone = new TextBox();
             lblEmail = new Label();
             txtEmail = new TextBox();
-            lblEIN = new Label();
-            txtEIN = new TextBox();
             lblPaymentTerms = new Label();
             txtPaymentTerms = new TextBox();
             lblFolder = new Label();
@@ -43,8 +41,6 @@ namespace CastRightCatchInvManagement
             txtPhone.Name = "txtPhone";
             lblEmail.Text = "EMAIL";
             txtEmail.Name = "txtEmail";
-            lblEIN.Text = "EIN";
-            txtEIN.Name = "txtEIN";
             lblPaymentTerms.Text = "PAYMENT TERMS";
             txtPaymentTerms.Name = "txtPaymentTerms";
             lblFolder.Text = "DATA FOLDER PATH";
@@ -76,8 +72,6 @@ namespace CastRightCatchInvManagement
         private TextBox txtPhone;
         private Label lblEmail;
         private TextBox txtEmail;
-        private Label lblEIN;
-        private TextBox txtEIN;
         private Label lblPaymentTerms;
         private TextBox txtPaymentTerms;
         private Label lblFolder;

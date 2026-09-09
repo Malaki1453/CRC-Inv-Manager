@@ -166,6 +166,29 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        public void FillFromLine(InvoiceLine line)
+        {
+            _filling = true;
+            try
+            {
+                _po.Text = line.PoNumber ?? "";
+                _product.Text = line.ProductId ?? "";
+                _lot.Text = line.LotNumber ?? "";
+                _ordered.Text = line.Ordered ?? "";
+                _shipped.Text = line.Shipped ?? "";
+                _description.Text = line.Description ?? "";
+                _weight.Text = line.Weight ?? "";
+                _price.Text = line.Price ?? "";
+            }
+            finally
+            {
+                _filling = false;
+            }
+
+            RecalcAmount();
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+
         public bool HasContent()
         {
             return Fields().Any(box => !string.IsNullOrWhiteSpace(box.Text));
@@ -270,7 +293,13 @@ namespace CastRightCatchInvManagement
             if (weight.Length > 0)
                 _weight.Text = weight;
 
-            string sell = DataFiles.GetRecordAny(record, "Sell Price / LB", "Price LB", "Price / LB Sold");
+            string sell = DataFiles.GetRecordAny(
+                record,
+                "Sell Price / LB",
+                "Price LB",
+                "Price / LB Sold",
+                "Price Paid / LB",
+                "Total Cost / LB");
             if (sell.Length > 0)
                 _price.Text = sell;
         }
@@ -427,6 +456,12 @@ namespace CastRightCatchInvManagement
     /// <summary>Full invoice payload used to build the PDF.</summary>
     internal sealed class InvoiceDraft
     {
+        private static readonly System.Text.Json.JsonSerializerOptions JsonOptions = new()
+        {
+            WriteIndented = false,
+            PropertyNameCaseInsensitive = true
+        };
+
         public string InvoiceNumber { get; set; } = "";
         public DateTime InvoiceDate { get; set; } = DateTime.Today;
         public string SoNumber { get; set; } = "";
@@ -436,6 +471,13 @@ namespace CastRightCatchInvManagement
         public string ShipVia { get; set; } = "";
         public string SalesRep { get; set; } = "";
         public DateTime ShipDate { get; set; } = DateTime.Today;
+        public bool Received { get; set; }
+        public string PoNumber { get; set; } = "";
+        public string VendorCode { get; set; } = "";
+        public string VendorName { get; set; } = "";
+        public string IssuerName { get; set; } = "";
+        public string IssuerAddress { get; set; } = "";
+        public string IssuerPhone { get; set; } = "";
         public string SoldTo { get; set; } = "";
         public string ShipTo { get; set; } = "";
         public decimal Discount { get; set; }
@@ -444,8 +486,27 @@ namespace CastRightCatchInvManagement
         public bool TaxIsPercent { get; set; }
         public List<InvoiceLine> Lines { get; set; } = new();
 
+        public string ToJson() => System.Text.Json.JsonSerializer.Serialize(this, JsonOptions);
+
+        public static InvoiceDraft? FromJson(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return null;
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<InvoiceDraft>(json, JsonOptions);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        [System.Text.Json.Serialization.JsonIgnore]
         public decimal TotalWeight => Lines.Sum(line => InvoiceLineRow.ParseNumber(line.Weight));
+        [System.Text.Json.Serialization.JsonIgnore]
         public decimal SubTotal => Lines.Sum(line => line.Amount);
+        [System.Text.Json.Serialization.JsonIgnore]
         public decimal Tax
         {
             get
@@ -457,6 +518,7 @@ namespace CastRightCatchInvManagement
                 return Math.Round(taxable * TaxRate / 100m, 2, MidpointRounding.AwayFromZero);
             }
         }
+        [System.Text.Json.Serialization.JsonIgnore]
         public decimal InvoiceTotal => SubTotal - Discount + Freight + Tax;
     }
 }

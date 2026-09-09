@@ -35,6 +35,7 @@ namespace CastRightCatchInvManagement
 
             var toolbar = new Panel
             {
+                Name = "DataToolbar",
                 Dock = DockStyle.Top,
                 Height = 50,
                 BackColor = Theme.Paper,
@@ -96,6 +97,17 @@ namespace CastRightCatchInvManagement
             grid.Tag = columnSearch;
             GridLayout.Attach(grid);
 
+            grid.CellDoubleClick += (_, e) =>
+            {
+                if (e.RowIndex < 0)
+                    return;
+                RecordDetailsForm.ShowRecord(
+                    form,
+                    titleText,
+                    DataFiles.GridRowToRecord(grid, e.RowIndex));
+            };
+
+            var stage = new TableSearchStage(titleText, toolbar, columnSearch);
             var card = new CardPanel
             {
                 Dock = DockStyle.Fill,
@@ -103,6 +115,7 @@ namespace CastRightCatchInvManagement
             };
             card.Controls.Add(grid);
             card.Controls.Add(toolbar);
+            card.Controls.Add(stage);
             card.Controls.Add(upload);
 
             form.Controls.Add(card);
@@ -141,7 +154,7 @@ namespace CastRightCatchInvManagement
                     continue;
                 foreach (Control inner in card.Controls)
                 {
-                    if (inner is Panel panel && panel.Dock == DockStyle.Top && panel.Height >= 48)
+                    if (inner is Panel panel && panel.Name == "DataToolbar")
                         return panel;
                 }
             }
@@ -151,9 +164,10 @@ namespace CastRightCatchInvManagement
 
         public static void BindRowEdit(
             DataGridView grid,
-            Action<Dictionary<string, string>> onEdit,
+            Action<Dictionary<string, string>>? onEdit,
             string detailsTitle = "Details",
-            string editText = "Edit Product")
+            string editText = "Edit Product",
+            params (string Text, Action<Dictionary<string, string>> Click)[] extras)
         {
             grid.CellMouseClick += (_, e) =>
             {
@@ -179,18 +193,56 @@ namespace CastRightCatchInvManagement
                 }
 
                 var record = DataFiles.GridRowToRecord(grid, e.RowIndex);
+                string table = grid.Tag is ColumnSearch search ? search.FileBaseName ?? "" : "";
+                bool canMutate = DataAccess.CanMutate(table);
                 var menu = new ContextMenuStrip();
-                menu.Items.Add("View Details", null, (_, _) =>
-                    RecordDetailsForm.ShowRecord(grid.FindForm(), detailsTitle, record));
-                menu.Items.Add(editText, null, (_, _) => onEdit(record));
+                foreach (var extra in extras)
+                {
+                    var item = extra;
+                    menu.Items.Add(item.Text, null, (_, _) => item.Click(record));
+                }
+
+                if (onEdit != null && canMutate)
+                    menu.Items.Add(editText, null, (_, _) => onEdit(record));
+                if (canMutate && table.Length > 0)
+                {
+                    menu.Items.Add("Delete", null, (_, _) =>
+                    {
+                        if (MessageBox.Show(
+                                "Delete this row?",
+                                "Delete",
+                                MessageBoxButtons.YesNo,
+                                MessageBoxIcon.Warning) != DialogResult.Yes)
+                            return;
+                        var result = DataFiles.MutateDelete(table, record);
+                        var host = grid.FindForm();
+                        if (host == null)
+                            return;
+                        if (!result.Ok)
+                            ToastAlert.Error(host, result.Message);
+                        else if (result.Queued)
+                            ToastAlert.Success(host, result.Message);
+                    });
+                }
+
+                if (menu.Items.Count == 0)
+                    return;
+
                 menu.Show(grid, grid.PointToClient(Control.MousePosition));
             };
         }
 
         internal static void ShowAddColumnMenu(DataGridView grid)
         {
+            string table = grid.Tag is ColumnSearch search ? search.FileBaseName ?? "" : "";
             var hidden = grid.Columns.Cast<DataGridViewColumn>()
                 .Where(c => !c.Visible && !Theme.IsAddColumn(c))
+                .Where(c =>
+                {
+                    string key = c.Tag as string ?? c.Name;
+                    return !DataAccess.IsColumnHidden(table, key) &&
+                           !DataAccess.IsColumnHidden(table, c.HeaderText);
+                })
                 .OrderBy(c => c.DisplayIndex)
                 .ToList();
 
@@ -246,21 +298,22 @@ namespace CastRightCatchInvManagement
 
         public static string PageTitle(AppPage page) => page switch
         {
-            AppPage.Dashboard => "Command Center",
+            AppPage.Dashboard => "Home",
             AppPage.PurchaseSales => "Purchases",
-            AppPage.AddPurchase => "Purchase Form",
+            AppPage.AddPurchase => "New Purchase",
             AppPage.Sales => "Sales",
             AppPage.AddSale => "Sales Form",
             AppPage.SalesOrder => "Create Sales Order",
             AppPage.Customers => "Customers",
             AppPage.Vendors => "Vendors",
-            AppPage.ItemCodes => "Item Codes",
+            AppPage.ItemCodes => "Inventory",
             AppPage.Invoicing => "Invoices",
             AppPage.InvoicePdf => "Create Invoice",
             AppPage.Debits => "Debits",
             AppPage.Credits => "Credits",
             AppPage.Banking => "Banking",
             AppPage.Reports => "Reports",
+            AppPage.PendingChanges => "Review",
             AppPage.Settings => "Settings",
             AppPage.Admin => "Admin",
             AppPage.Help => "Controls",

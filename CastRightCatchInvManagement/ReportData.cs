@@ -20,7 +20,25 @@ namespace CastRightCatchInvManagement
         public List<(string Label, string Value)> Stats { get; } = new();
         public required string[] Columns { get; init; }
         public List<string[]> Rows { get; } = new();
+        public List<ReportGroup>? Groups { get; set; }
+        public List<ReportTab>? Tabs { get; set; }
         public string Empty { get; init; } = "No rows for this report in the current view.";
+    }
+
+    internal sealed class ReportTab
+    {
+        public required string Name { get; init; }
+        public required string[] Columns { get; init; }
+        public List<string[]> Rows { get; } = new();
+        public List<(string Label, string Value)> Stats { get; } = new();
+        public string Empty { get; init; } = "No rows for this report in the current view.";
+    }
+
+    internal sealed class ReportGroup
+    {
+        public required string Key { get; init; }
+        public required string[] Parent { get; init; }
+        public List<string[]> Children { get; } = new();
     }
 
     /// <summary>
@@ -48,10 +66,23 @@ namespace CastRightCatchInvManagement
 
         private static ReportResult Aging()
         {
-            var result = new ReportResult
+            var customers = AgingCustomers();
+            var vendors = AgingVendors();
+            return new ReportResult
             {
                 Title = "Aging Report",
-                Hint = "Open invoices grouped by how long they are past due.",
+                Hint = "Customers are open invoices. Vendors are open purchases. Use the tabs, then filter if you want.",
+                Columns = customers.Columns,
+                Empty = customers.Empty,
+                Tabs = new List<ReportTab> { customers, vendors }
+            };
+        }
+
+        private static ReportTab AgingCustomers()
+        {
+            var tab = new ReportTab
+            {
+                Name = "Customers",
                 Columns = new[]
                 {
                     "Invoice #", "Customer", "Due Date", "Amount", "Outstanding", "Days past due", "Bucket"
@@ -61,31 +92,24 @@ namespace CastRightCatchInvManagement
                     : "You do not have access to invoices."
             };
             if (!TableAccess.Can(TableAccess.Invoices))
-                return result;
+                return tab;
 
             decimal current = 0, d30 = 0, d60 = 0, d90 = 0, older = 0, total = 0;
             var rows = new List<(int sort, string[] cells)>();
-            foreach (var invoice in DataFiles.ReadRecords(DataFiles.Invoices))
+            foreach (var invoice in DataFiles.VisibleRecords(DataFiles.Invoices))
             {
-                if (DataFiles.InvoiceIsClosed(invoice))
+                if (DataFiles.IsWaitingAdd(invoice) ||
+                    DataFiles.IsReceivedInvoice(invoice) ||
+                    DataFiles.InvoiceIsClosed(invoice))
                     continue;
                 decimal due = DataFiles.InvoiceOutstanding(invoice);
                 if (due <= 0)
                     continue;
 
-                int days = DaysPastDue(invoice);
+                int days = DaysPastDue(DataFiles.GetRecord(invoice, "Due Date"));
                 string bucket = AgingBucket(days);
                 decimal amount = DataFiles.ParseMoney(DataFiles.GetRecord(invoice, "Amount"));
-                total += due;
-                switch (bucket)
-                {
-                    case "Current": current += due; break;
-                    case "1–30": d30 += due; break;
-                    case "31–60": d60 += due; break;
-                    case "61–90": d90 += due; break;
-                    default: older += due; break;
-                }
-
+                AddAging(bucket, due, ref current, ref d30, ref d60, ref d90, ref older, ref total);
                 rows.Add((days, new[]
                 {
                     DataFiles.GetRecord(invoice, "Invoice #"),
@@ -93,20 +117,122 @@ namespace CastRightCatchInvManagement
                     DataFiles.GetRecord(invoice, "Due Date"),
                     Money(amount),
                     Money(due),
-                    days == int.MinValue ? "—" : days.ToString(CultureInfo.InvariantCulture),
+                    DaysText(days),
                     bucket
                 }));
             }
 
             foreach (var row in rows.OrderByDescending(r => r.sort))
-                result.Rows.Add(row.cells);
-
-            result.Stats.Add(("Open", Money(total)));
-            result.Stats.Add(("Current", Money(current)));
-            result.Stats.Add(("1–30 days", Money(d30)));
-            result.Stats.Add(("31–60 / 61–90 / 90+", $"{Money(d60)}  ·  {Money(d90)}  ·  {Money(older)}"));
-            return result;
+                tab.Rows.Add(row.cells);
+            AddAgingStats(tab, total, current, d30, d60, d90, older);
+            return tab;
         }
+
+        private static ReportTab AgingVendors()
+        {
+            var tab = new ReportTab
+            {
+                Name = "Vendors",
+                Columns = new[]
+                {
+                    "PO #", "Vendor", "Due Date", "Total Cost", "Days past due", "Bucket", "Status"
+                },
+                Empty = TableAccess.Can(TableAccess.Purchases)
+                    ? "No open purchases in this view."
+                    : "You do not have access to purchases."
+            };
+            if (!TableAccess.Can(TableAccess.Purchases))
+                return tab;
+
+            decimal current = 0, d30 = 0, d60 = 0, d90 = 0, older = 0, total = 0;
+            var rows = new List<(int sort, string[] cells)>();
+            foreach (var purchase in DataFiles.VisibleRecords(DataFiles.PurchaseSales))
+            {
+                if (DataFiles.IsWaitingAdd(purchase))
+                    continue;
+                string status = DataFiles.GetRecord(purchase, "Status").Trim();
+                if (status.Equals("Complete", StringComparison.OrdinalIgnoreCase) ||
+                    status.Equals("Paid", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                decimal due = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Total Cost"));
+                if (due <= 0)
+                    continue;
+
+                string dueDate = FirstDate(
+                    DataFiles.GetRecord(purchase, "Vendor Due Date"),
+                    DataFiles.GetRecord(purchase, "Expected Ship Date"),
+                    DataFiles.GetRecord(purchase, "Agreement Date"));
+                int days = DaysPastDue(dueDate);
+                string bucket = AgingBucket(days);
+                AddAging(bucket, due, ref current, ref d30, ref d60, ref d90, ref older, ref total);
+                rows.Add((days, new[]
+                {
+                    DataFiles.GetRecord(purchase, "PO #"),
+                    DataFiles.GetRecordAny(purchase, "Vendor", "Vendor Code"),
+                    dueDate,
+                    Money(due),
+                    DaysText(days),
+                    bucket,
+                    status
+                }));
+            }
+
+            foreach (var row in rows.OrderByDescending(r => r.sort))
+                tab.Rows.Add(row.cells);
+            AddAgingStats(tab, total, current, d30, d60, d90, older);
+            return tab;
+        }
+
+        private static void AddAging(
+            string bucket,
+            decimal due,
+            ref decimal current,
+            ref decimal d30,
+            ref decimal d60,
+            ref decimal d90,
+            ref decimal older,
+            ref decimal total)
+        {
+            total += due;
+            switch (bucket)
+            {
+                case "Current": current += due; break;
+                case "1–30": d30 += due; break;
+                case "31–60": d60 += due; break;
+                case "61–90": d90 += due; break;
+                default: older += due; break;
+            }
+        }
+
+        private static void AddAgingStats(
+            ReportTab tab,
+            decimal total,
+            decimal current,
+            decimal d30,
+            decimal d60,
+            decimal d90,
+            decimal older)
+        {
+            tab.Stats.Add(("Open", Money(total)));
+            tab.Stats.Add(("Current", Money(current)));
+            tab.Stats.Add(("1–30 days", Money(d30)));
+            tab.Stats.Add(("31–60 / 61–90 / 90+", $"{Money(d60)}  ·  {Money(d90)}  ·  {Money(older)}"));
+        }
+
+        private static string FirstDate(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                    return value.Trim();
+            }
+
+            return "";
+        }
+
+        private static string DaysText(int days) =>
+            days == int.MinValue ? "—" : days.ToString(CultureInfo.InvariantCulture);
 
         private static ReportResult Commission()
         {
@@ -123,8 +249,10 @@ namespace CastRightCatchInvManagement
                 return result;
 
             var deals = new Dictionary<string, Deal>(StringComparer.OrdinalIgnoreCase);
-            foreach (var sale in DataFiles.ReadRecords(DataFiles.Sales))
+            foreach (var sale in DataFiles.VisibleRecords(DataFiles.Sales))
             {
+                if (DataFiles.IsWaitingAdd(sale))
+                    continue;
                 string po = DataFiles.SalePo(sale);
                 string so = DataFiles.GetRecord(sale, "SO #").Trim();
                 string key = po.Length > 0 ? po : (so.Length > 0 ? so : "row:" + deals.Count);
@@ -183,8 +311,10 @@ namespace CastRightCatchInvManagement
 
             var purchases = PurchaseIndex();
             var months = new Dictionary<string, Month>(StringComparer.OrdinalIgnoreCase);
-            foreach (var sale in DataFiles.ReadRecords(DataFiles.Sales))
+            foreach (var sale in DataFiles.VisibleRecords(DataFiles.Sales))
             {
+                if (DataFiles.IsWaitingAdd(sale))
+                    continue;
                 string month = MonthKey(DataFiles.GetRecord(sale, "Ship Date"));
                 if (!months.TryGetValue(month, out var row))
                 {
@@ -237,8 +367,10 @@ namespace CastRightCatchInvManagement
                 return result;
 
             var vendors = new Dictionary<string, Supplier>(StringComparer.OrdinalIgnoreCase);
-            foreach (var purchase in DataFiles.ReadRecords(DataFiles.PurchaseSales))
+            foreach (var purchase in DataFiles.VisibleRecords(DataFiles.PurchaseSales))
             {
+                if (DataFiles.IsWaitingAdd(purchase))
+                    continue;
                 string name = DataFiles.GetRecordAny(purchase, "Vendor", "Vendor Code");
                 if (name.Length == 0)
                     name = "Unknown";
@@ -298,8 +430,10 @@ namespace CastRightCatchInvManagement
                 return result;
 
             var customers = new Dictionary<string, Risk>(StringComparer.OrdinalIgnoreCase);
-            foreach (var customer in DataFiles.ReadRecords(DataFiles.Customers))
+            foreach (var customer in DataFiles.VisibleRecords(DataFiles.Customers))
             {
+                if (DataFiles.IsWaitingAdd(customer))
+                    continue;
                 string code = DataFiles.GetRecord(customer, "Code").Trim();
                 string name = DataFiles.GetRecord(customer, "Name").Trim();
                 string key = code.Length > 0 ? code : name;
@@ -314,9 +448,11 @@ namespace CastRightCatchInvManagement
                 };
             }
 
-            foreach (var invoice in DataFiles.ReadRecords(DataFiles.Invoices))
+            foreach (var invoice in DataFiles.VisibleRecords(DataFiles.Invoices))
             {
-                if (DataFiles.InvoiceIsClosed(invoice))
+                if (DataFiles.IsWaitingAdd(invoice) ||
+                    DataFiles.IsReceivedInvoice(invoice) ||
+                    DataFiles.InvoiceIsClosed(invoice))
                     continue;
                 decimal due = DataFiles.InvoiceOutstanding(invoice);
                 if (due <= 0)
@@ -379,8 +515,11 @@ namespace CastRightCatchInvManagement
             var result = new ReportResult
             {
                 Title = "Profit Per Species",
-                Hint = "Sale revenue and lot cost rolled up by item-code species.",
-                Columns = new[] { "Species", "Lines", "Volume", "Revenue", "COGS", "Gross profit", "Margin" },
+                Hint = "Profit by species and item code. Click a species to expand its item codes.",
+                Columns = new[]
+                {
+                    "Species / item code", "Lines", "Volume", "Revenue", "COGS", "Gross profit", "Margin"
+                },
                 Empty = TableAccess.Can(TableAccess.Sales)
                     ? "No sales in this view."
                     : "You do not have access to sales."
@@ -389,7 +528,7 @@ namespace CastRightCatchInvManagement
                 return result;
 
             var speciesOf = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var item in DataFiles.ReadRecords(DataFiles.ItemCodes))
+            foreach (var item in DataFiles.VisibleRecords(DataFiles.ItemCodes))
             {
                 string code = DataFiles.GetRecord(item, "Code").Trim();
                 if (code.Length == 0)
@@ -400,48 +539,72 @@ namespace CastRightCatchInvManagement
 
             var purchases = PurchaseIndex();
             var groups = new Dictionary<string, SpeciesRow>(StringComparer.OrdinalIgnoreCase);
-            foreach (var sale in DataFiles.ReadRecords(DataFiles.Sales))
+            foreach (var sale in DataFiles.VisibleRecords(DataFiles.Sales))
             {
+                if (DataFiles.IsWaitingAdd(sale))
+                    continue;
                 string item = DataFiles.GetRecord(sale, "Item Code").Trim();
-                string species = item.Length > 0 && speciesOf.TryGetValue(item, out var named)
+                if (item.Length == 0)
+                    item = "(no item code)";
+                string species = speciesOf.TryGetValue(item, out var named)
                     ? named
-                    : (item.Length > 0 ? item : "Unspecified");
+                    : (item == "(no item code)" ? "Unspecified" : item);
                 if (!groups.TryGetValue(species, out var row))
                 {
                     row = new SpeciesRow { Name = species };
                     groups[species] = row;
                 }
 
-                row.Lines++;
-                row.Volume += DataFiles.ParseMoney(DataFiles.GetRecord(sale, "Volume"));
-                row.Revenue += DataFiles.ParseMoney(DataFiles.GetRecord(sale, "Amount"));
-                row.Cogs += SaleCogs(sale, purchases);
+                decimal volume = DataFiles.ParseMoney(DataFiles.GetRecord(sale, "Volume"));
+                decimal revenue = DataFiles.ParseMoney(DataFiles.GetRecord(sale, "Amount"));
+                decimal cogs = SaleCogs(sale, purchases);
+                row.Add(volume, revenue, cogs);
+                if (!row.Items.TryGetValue(item, out var child))
+                {
+                    child = new SpeciesRow { Name = item };
+                    row.Items[item] = child;
+                }
+
+                child.Add(volume, revenue, cogs);
             }
 
-            decimal revenue = 0, cogs = 0;
+            result.Groups = new List<ReportGroup>();
+            decimal revenueTotal = 0, cogsTotal = 0;
+            int itemCount = 0;
             foreach (var row in groups.Values.OrderByDescending(r => r.Revenue))
             {
-                revenue += row.Revenue;
-                cogs += row.Cogs;
-                decimal profit = row.Revenue - row.Cogs;
-                result.Rows.Add(new[]
-                {
-                    row.Name,
-                    row.Lines.ToString("N0"),
-                    row.Volume.ToString("N2"),
-                    Money(row.Revenue),
-                    Money(row.Cogs),
-                    Money(profit),
-                    Percent(profit, row.Revenue)
-                });
+                revenueTotal += row.Revenue;
+                cogsTotal += row.Cogs;
+                itemCount += row.Items.Count;
+                var parent = ProfitCells(row.Name, row);
+                var group = new ReportGroup { Key = row.Name, Parent = parent };
+                foreach (var child in row.Items.Values.OrderByDescending(c => c.Revenue))
+                    group.Children.Add(ProfitCells("    " + child.Name, child));
+                result.Groups.Add(group);
+                result.Rows.Add(parent);
             }
 
-            decimal gross = revenue - cogs;
+            decimal gross = revenueTotal - cogsTotal;
             result.Stats.Add(("Species", groups.Count.ToString("N0")));
-            result.Stats.Add(("Revenue", Money(revenue)));
+            result.Stats.Add(("Item codes", itemCount.ToString("N0")));
             result.Stats.Add(("Gross profit", Money(gross)));
-            result.Stats.Add(("Margin", Percent(gross, revenue)));
+            result.Stats.Add(("Margin", Percent(gross, revenueTotal)));
             return result;
+        }
+
+        private static string[] ProfitCells(string name, SpeciesRow row)
+        {
+            decimal profit = row.Revenue - row.Cogs;
+            return new[]
+            {
+                name,
+                row.Lines.ToString("N0"),
+                row.Volume.ToString("N2"),
+                Money(row.Revenue),
+                Money(row.Cogs),
+                Money(profit),
+                Percent(profit, row.Revenue)
+            };
         }
 
         private static Dictionary<string, Dictionary<string, string>> PurchaseIndex()
@@ -450,8 +613,10 @@ namespace CastRightCatchInvManagement
             if (!TableAccess.Can(TableAccess.Purchases))
                 return map;
 
-            foreach (var purchase in DataFiles.ReadRecords(DataFiles.PurchaseSales))
+            foreach (var purchase in DataFiles.VisibleRecords(DataFiles.PurchaseSales))
             {
+                if (DataFiles.IsWaitingAdd(purchase))
+                    continue;
                 string po = DataFiles.NormalizePo(DataFiles.GetRecord(purchase, "PO #"));
                 if (po.Length > 0)
                     map[po] = purchase;
@@ -483,9 +648,8 @@ namespace CastRightCatchInvManagement
             return perLb * volume;
         }
 
-        private static int DaysPastDue(Dictionary<string, string> invoice)
+        private static int DaysPastDue(string dueText)
         {
-            string dueText = DataFiles.GetRecord(invoice, "Due Date").Trim();
             if (!DateTime.TryParse(dueText, out var due))
                 return int.MinValue;
             return (DateTime.Today - due.Date).Days;
@@ -566,6 +730,15 @@ namespace CastRightCatchInvManagement
             public decimal Volume;
             public decimal Revenue;
             public decimal Cogs;
+            public Dictionary<string, SpeciesRow> Items { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+            public void Add(decimal volume, decimal revenue, decimal cogs)
+            {
+                Lines++;
+                Volume += volume;
+                Revenue += revenue;
+                Cogs += cogs;
+            }
         }
     }
 }

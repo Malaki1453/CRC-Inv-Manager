@@ -8,14 +8,27 @@ namespace CastRightCatchInvManagement
     {
         public static string DirectoryPath { get; } = ResolveDirectory();
 
-        public static Image? Seal { get; } = Load("logo-seal.png", "favicon.PNG", "favicon.png");
-        public static Image? Wordmark { get; } = CropOpaque(KnockoutDark(Load("wordmark.png", "highlightedLogo.png")));
-        public static Image? BoatLogo { get; } = Load("logo-boat.png", "Logo.png");
-        public static Image? Hero { get; } = Load("hero.jpg");
-        public static Image? HomeHero { get; } = Load("home-hero.jpg", "homePageBackgroundLogoOnBottom.jpg");
-        public static Image? Footer { get; } = Load("footer.png");
+        private static readonly Lazy<Image?> SealLazy =
+            new(() => Load("logo-seal.png", "favicon.PNG", "favicon.png"));
+        private static readonly Lazy<Image?> WordmarkLazy =
+            new(() => CropOpaque(KnockoutDark(Load("wordmark.png", "highlightedLogo.png"))));
+        private static readonly Lazy<Image?> BoatLogoLazy =
+            new(() => Load("logo-boat.png", "Logo.png"));
+        private static readonly Lazy<Image?> HeroLazy =
+            new(() => Load("hero.jpg"));
+        private static readonly Lazy<Image?> HomeHeroLazy =
+            new(() => Load("home-hero.jpg", "homePageBackgroundLogoOnBottom.jpg"));
+        private static readonly Lazy<Image?> FooterLazy =
+            new(() => Load("footer.png"));
+        private static readonly Lazy<Icon?> AppIconLazy = new(LoadIcon);
 
-        public static Icon? AppIcon { get; } = LoadIcon();
+        public static Image? Seal => SealLazy.Value;
+        public static Image? Wordmark => WordmarkLazy.Value;
+        public static Image? BoatLogo => BoatLogoLazy.Value;
+        public static Image? Hero => HeroLazy.Value;
+        public static Image? HomeHero => HomeHeroLazy.Value;
+        public static Image? Footer => FooterLazy.Value;
+        public static Icon? AppIcon => AppIconLazy.Value;
 
         private static string ResolveDirectory()
         {

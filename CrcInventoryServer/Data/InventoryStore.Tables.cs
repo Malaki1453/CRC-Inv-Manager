@@ -1,4 +1,5 @@
-using Microsoft.Data.Sqlite;
+using CrcInventory.Protocol;
+using System.Data.Common;
 
 namespace CrcInventory.Server;
 
@@ -62,19 +63,19 @@ internal sealed partial class InventoryStore
             using var cmd = db.CreateCommand();
             var cols = new List<string> { Quote("term_start") };
             var pars = new List<string> { "$term" };
-            cmd.Parameters.AddWithValue("$term", CompletionStamp(table, values));
+            cmd.AddParam("$term", CompletionStamp(table, values));
             for (int i = 0; i < headers.Length; i++)
             {
                 string name = headers[i];
                 cols.Add(Quote(name));
                 string p = "$c" + i;
                 pars.Add(p);
-                cmd.Parameters.AddWithValue(p, Schema.Lookup(values, name));
+                cmd.AddParam(p, SecretProtect.StoreField(table, name, Schema.CellValue(values, name)));
             }
 
             cmd.CommandText =
                 $"INSERT INTO {Quote(table)} ({string.Join(",", cols)}) VALUES ({string.Join(",", pars)});";
-            cmd.ExecuteNonQuery();
+            cmd.Exec(_engine);
         }
     }
 
@@ -93,19 +94,19 @@ internal sealed partial class InventoryStore
                 cmd.Transaction = tx;
                 var cols = new List<string> { Quote("term_start") };
                 var pars = new List<string> { "$term" };
-                cmd.Parameters.AddWithValue("$term", CompletionStamp(table, values));
+                cmd.AddParam("$term", CompletionStamp(table, values));
                 for (int i = 0; i < headers.Length; i++)
                 {
                     string name = headers[i];
                     cols.Add(Quote(name));
                     string p = "$c" + i;
                     pars.Add(p);
-                    cmd.Parameters.AddWithValue(p, Schema.Lookup(values, name));
+                    cmd.AddParam(p, SecretProtect.StoreField(table, name, Schema.CellValue(values, name)));
                 }
 
                 cmd.CommandText =
                     $"INSERT INTO {Quote(table)} ({string.Join(",", cols)}) VALUES ({string.Join(",", pars)});";
-                cmd.ExecuteNonQuery();
+                cmd.Exec(_engine);
                 count++;
             }
 
@@ -128,18 +129,18 @@ internal sealed partial class InventoryStore
             using var db = Open(archive);
             using var cmd = db.CreateCommand();
             var sets = new List<string> { $"{Quote("term_start")} = $term" };
-            cmd.Parameters.AddWithValue("$term", CompletionStamp(table, values));
+            cmd.AddParam("$term", CompletionStamp(table, values));
             for (int i = 0; i < headers.Length; i++)
             {
                 string name = headers[i];
                 string p = "$c" + i;
                 sets.Add($"{Quote(name)} = {p}");
-                cmd.Parameters.AddWithValue(p, Schema.Lookup(values, name));
+                cmd.AddParam(p, SecretProtect.StoreField(table, name, Schema.CellValue(values, name)));
             }
 
-            cmd.Parameters.AddWithValue("$id", rawId);
+            cmd.AddParam("$id", rawId);
             cmd.CommandText = $"UPDATE {Quote(table)} SET {string.Join(",", sets)} WHERE id = $id;";
-            return cmd.ExecuteNonQuery() > 0;
+            return cmd.Exec(_engine) > 0;
         }
     }
 
@@ -226,7 +227,7 @@ internal sealed partial class InventoryStore
             {
                 using var cmd = db.CreateCommand();
                 cmd.CommandText = $"SELECT MAX(term_start) FROM {Quote(table)};";
-                var value = cmd.ExecuteScalar()?.ToString();
+                var value = cmd.Scalar(_engine)?.ToString();
                 if (DateTime.TryParse(value, out var date) && (latest == null || date > latest))
                     latest = date;
             }
@@ -258,7 +259,7 @@ internal sealed partial class InventoryStore
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = "SELECT value FROM app_settings WHERE key = 'term_start';";
-        var value = cmd.ExecuteScalar()?.ToString();
+        var value = cmd.Scalar(_engine)?.ToString();
         return DateTime.TryParse(value, out var date) ? date : DateTime.Today;
     }
 
@@ -274,9 +275,9 @@ internal sealed partial class InventoryStore
         using var db = Open(archive);
         using var cmd = db.CreateCommand();
         cmd.CommandText = $"SELECT * FROM {Quote(table)} ORDER BY id;";
-        using var reader = cmd.ExecuteReader();
+        using var reader = cmd.Query(_engine);
         while (reader.Read())
-            result.Add(ReadRow(reader));
+            result.Add(ReadRow(table, reader));
     }
 
     private void AppendRowsWithIds(
@@ -287,17 +288,17 @@ internal sealed partial class InventoryStore
         using var db = Open(archive);
         using var cmd = db.CreateCommand();
         cmd.CommandText = $"SELECT * FROM {Quote(table)} ORDER BY id;";
-        using var reader = cmd.ExecuteReader();
+        using var reader = cmd.Query(_engine);
         while (reader.Read())
         {
             long id = reader.GetInt64(reader.GetOrdinal("id"));
             if (archive)
                 id = -id;
-            result.Add((id, ReadRow(reader)));
+            result.Add((id, ReadRow(table, reader)));
         }
     }
 
-    private static Dictionary<string, string> ReadRow(SqliteDataReader reader)
+    private static Dictionary<string, string> ReadRow(string table, DbDataReader reader)
     {
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < reader.FieldCount; i++)
@@ -306,7 +307,8 @@ internal sealed partial class InventoryStore
             if (name.Equals("id", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("term_start", StringComparison.OrdinalIgnoreCase))
                 continue;
-            map[name] = reader.IsDBNull(i) ? "" : reader.GetValue(i)?.ToString() ?? "";
+            string value = reader.IsDBNull(i) ? "" : reader.GetValue(i)?.ToString() ?? "";
+            map[name] = SecretProtect.RevealField(table, name, value);
         }
 
         return map;
@@ -317,7 +319,7 @@ internal sealed partial class InventoryStore
         using var db = Open(archive);
         using var cmd = db.CreateCommand();
         cmd.CommandText = $"SELECT COUNT(*) FROM {Quote(table)};";
-        return Convert.ToInt32(cmd.ExecuteScalar());
+        return Convert.ToInt32(cmd.Scalar(_engine));
     }
 
     private void EnsureColumnsOn(string table, IEnumerable<string> columns, bool archive)
@@ -330,7 +332,7 @@ internal sealed partial class InventoryStore
                 continue;
             using var cmd = db.CreateCommand();
             cmd.CommandText = $"ALTER TABLE {Quote(table)} ADD COLUMN {Quote(column)} TEXT;";
-            cmd.ExecuteNonQuery();
+            cmd.Exec(_engine);
             existing.Add(column);
         }
     }
@@ -346,21 +348,21 @@ internal sealed partial class InventoryStore
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = $"SELECT * FROM {Quote(table)} ORDER BY id;";
-        using var reader = cmd.ExecuteReader();
+        using var reader = cmd.Query(_engine);
         while (reader.Read())
         {
             long id = reader.GetInt64(reader.GetOrdinal("id"));
             int termOrd = reader.GetOrdinal("term_start");
             string term = reader.IsDBNull(termOrd) ? "" : reader.GetValue(termOrd)?.ToString() ?? "";
-            result.Add((id, term, ReadRow(reader)));
+            result.Add((id, term, ReadRow(table, reader)));
         }
 
         return result;
     }
 
-    private static void InsertRow(
-        SqliteConnection db,
-        SqliteTransaction tx,
+    private void InsertRow(
+        DbConnection db,
+        DbTransaction tx,
         string table,
         IEnumerable<string> columns,
         Dictionary<string, string> values,
@@ -370,7 +372,7 @@ internal sealed partial class InventoryStore
         cmd.Transaction = tx;
         var cols = new List<string> { Quote("term_start") };
         var pars = new List<string> { "$term" };
-        cmd.Parameters.AddWithValue("$term", termStart ?? "");
+        cmd.AddParam("$term", termStart ?? "");
         int i = 0;
         foreach (var name in columns)
         {
@@ -381,13 +383,13 @@ internal sealed partial class InventoryStore
             cols.Add(Quote(name));
             string p = "$c" + i;
             pars.Add(p);
-            cmd.Parameters.AddWithValue(p, Schema.Lookup(values, name));
+            cmd.AddParam(p, SecretProtect.StoreField(table, name, Schema.Lookup(values, name)));
             i++;
         }
 
         cmd.CommandText =
             $"INSERT INTO {Quote(table)} ({string.Join(",", cols)}) VALUES ({string.Join(",", pars)});";
-        cmd.ExecuteNonQuery();
+        cmd.Exec(_engine);
     }
 
     private void DeleteByIds(string table, List<long> ids)
@@ -401,8 +403,8 @@ internal sealed partial class InventoryStore
             using var cmd = db.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = $"DELETE FROM {Quote(table)} WHERE id = $id;";
-            cmd.Parameters.AddWithValue("$id", id);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$id", id);
+            cmd.Exec(_engine);
         }
 
         tx.Commit();
@@ -420,8 +422,8 @@ internal sealed partial class InventoryStore
             cmd.Transaction = tx;
             cmd.CommandText =
                 $"UPDATE {Quote(table)} SET term_start = '' WHERE id = $id AND term_start <> '';";
-            cmd.Parameters.AddWithValue("$id", id);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$id", id);
+            cmd.Exec(_engine);
         }
 
         tx.Commit();

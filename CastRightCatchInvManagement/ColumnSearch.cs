@@ -17,7 +17,14 @@ namespace CastRightCatchInvManagement
         private readonly DataGridView _grid;
         private readonly ColumnJumpPicker? _jump;
         private readonly Dictionary<int, TextBox> _boxes = new();
+        private readonly Dictionary<int, DateRangeHost> _dates = new();
+        private Control? _empty;
         public string? FileBaseName { get; set; }
+        public bool HasDateColumns { get; private set; }
+        public event Action? ColumnsReady;
+        private string _globalQuery = "";
+        private DateTime? _fromDate;
+        private DateTime? _toDate;
         private int _openColumn = -1;
         private int _sortColumn = -1;
         private ListSortDirection _sortDirection = ListSortDirection.Ascending;
@@ -28,6 +35,13 @@ namespace CastRightCatchInvManagement
             _grid = grid;
             _jump = jump;
             Wire();
+            _grid.Visible = false;
+        }
+
+        public void SetEmptyState(Control empty)
+        {
+            _empty = empty;
+            SyncTableVisible();
         }
 
         public void Rebuild()
@@ -38,20 +52,39 @@ namespace CastRightCatchInvManagement
                 box.Dispose();
             }
 
+            foreach (var range in _dates.Values)
+            {
+                range.Parent?.Controls.Remove(range);
+                range.Dispose();
+            }
+
             _boxes.Clear();
+            _dates.Clear();
             _openColumn = -1;
             _sortColumn = -1;
             _sortDirection = ListSortDirection.Ascending;
             _grid.ColumnHeadersHeight = HeaderHeight;
+            HasDateColumns = false;
 
             foreach (DataGridViewColumn col in _grid.Columns)
             {
                 if (Theme.IsAddColumn(col))
                     continue;
                 col.SortMode = DataGridViewColumnSortMode.Programmatic;
-                var box = CreateBox(col.Index);
-                _boxes[col.Index] = box;
-                _grid.Controls.Add(box);
+                if (IsDateColumn(col.HeaderText))
+                {
+                    HasDateColumns = true;
+                    var range = new DateRangeHost();
+                    range.Changed += Apply;
+                    _dates[col.Index] = range;
+                    _grid.Controls.Add(range);
+                }
+                else
+                {
+                    var box = CreateBox(col.Index);
+                    _boxes[col.Index] = box;
+                    _grid.Controls.Add(box);
+                }
             }
 
             LayoutBoxes();
@@ -59,11 +92,41 @@ namespace CastRightCatchInvManagement
             Theme.FitAllColumns(_grid);
             RefreshJump();
             _grid.Refresh();
+            ColumnsReady?.Invoke();
+        }
+
+        public void SetGlobalQuery(string query)
+        {
+            _globalQuery = (query ?? "").Trim();
+            Apply();
+        }
+
+        public void SetDateRange(DateTime? from, DateTime? to)
+        {
+            _fromDate = from;
+            _toDate = to;
+            Apply();
+        }
+
+        public static bool IsDateColumn(string? header)
+        {
+            header = (header ?? "").Trim();
+            if (header.Length == 0)
+                return false;
+            if (header.Equals("Established", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (header.EndsWith(" At", StringComparison.OrdinalIgnoreCase))
+                return true;
+            return header.Contains("Date", StringComparison.OrdinalIgnoreCase);
         }
 
         public void Apply()
         {
-            if (_grid.IsDisposed || _grid.Rows.Count == 0)
+            if (_grid.IsDisposed)
+                return;
+
+            SyncTableVisible();
+            if (!_grid.Visible || _grid.Rows.Count == 0)
                 return;
 
             var queries = _boxes.ToDictionary(p => p.Key, p => p.Value.Text.Trim());
@@ -96,10 +159,83 @@ namespace CastRightCatchInvManagement
                     }
                 }
 
+                if (match)
+                {
+                    foreach (var pair in _dates)
+                    {
+                        if (pair.Key >= row.Cells.Count)
+                            continue;
+                        if (!pair.Value.HasRange)
+                            continue;
+                        string text = row.Cells[pair.Key].Value?.ToString() ?? "";
+                        if (!NumericDateBox.TryParseCell(text, out var date) ||
+                            !NumericDateBox.InRange(date, pair.Value.From, pair.Value.To))
+                        {
+                            match = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (match && (_fromDate != null || _toDate != null) && HasDateColumns)
+                {
+                    bool any = false;
+                    foreach (DataGridViewCell cell in row.Cells)
+                    {
+                        if (cell.OwningColumn == null || Theme.IsAddColumn(cell.OwningColumn))
+                            continue;
+                        if (!IsDateColumn(cell.OwningColumn.HeaderText))
+                            continue;
+                        string text = cell.Value?.ToString() ?? "";
+                        if (NumericDateBox.TryParseCell(text, out var date) &&
+                            NumericDateBox.InRange(date, _fromDate, _toDate))
+                        {
+                            any = true;
+                            break;
+                        }
+                    }
+
+                    match = any;
+                }
+
+                if (match && _globalQuery.Length > 0)
+                {
+                    var fields = new List<string>();
+                    foreach (DataGridViewCell cell in row.Cells)
+                    {
+                        if (cell.OwningColumn != null && Theme.IsAddColumn(cell.OwningColumn))
+                            continue;
+                        fields.Add(cell.Value?.ToString() ?? "");
+                    }
+
+                    match = TextMatch.MatchesAny(fields, _globalQuery);
+                }
+
                 row.Visible = match;
             }
 
             _grid.Invalidate();
+        }
+
+        private void SyncTableVisible()
+        {
+            bool show = _globalQuery.Length > 0 ||
+                        _fromDate != null ||
+                        _toDate != null ||
+                        _boxes.Values.Any(box => !string.IsNullOrWhiteSpace(box.Text)) ||
+                        _dates.Values.Any(range => range.HasRange);
+            if (_grid.Visible == show)
+            {
+                if (_empty != null)
+                    _empty.Visible = !show;
+                return;
+            }
+
+            _grid.Visible = show;
+            if (_empty != null)
+                _empty.Visible = !show;
+            if (!show)
+                _grid.Parent?.Invalidate(true);
         }
 
         private void Wire()
@@ -313,6 +449,12 @@ namespace CastRightCatchInvManagement
                 box.Focus();
                 box.SelectAll();
             }
+            else if (_dates.TryGetValue(columnIndex, out var range))
+            {
+                range.Visible = true;
+                range.BringToFront();
+                range.FocusFrom();
+            }
         }
 
         private void ToggleSort(int columnIndex)
@@ -379,9 +521,11 @@ namespace CastRightCatchInvManagement
                 ArrowWidth,
                 titleBounds.Height);
 
-            bool filtered = _boxes.TryGetValue(e.ColumnIndex, out var box) &&
-                            box != null &&
-                            !string.IsNullOrWhiteSpace(box.Text);
+            bool filtered =
+                (_boxes.TryGetValue(e.ColumnIndex, out var box) &&
+                 box != null &&
+                 !string.IsNullOrWhiteSpace(box.Text)) ||
+                (_dates.TryGetValue(e.ColumnIndex, out var range) && range.HasRange);
             bool sorted = _sortColumn == e.ColumnIndex;
             bool ascending = _sortDirection == ListSortDirection.Ascending;
 
@@ -407,7 +551,8 @@ namespace CastRightCatchInvManagement
         {
             if (_openColumn >= 0)
                 return true;
-            return _boxes.Values.Any(b => !string.IsNullOrWhiteSpace(b.Text));
+            return _boxes.Values.Any(b => !string.IsNullOrWhiteSpace(b.Text)) ||
+                   _dates.Values.Any(range => range.HasRange);
         }
 
         private void SyncHeaderHeight()
@@ -430,22 +575,75 @@ namespace CastRightCatchInvManagement
 
             foreach (DataGridViewColumn col in _grid.Columns)
             {
-                if (!_boxes.TryGetValue(col.Index, out var box))
-                    continue;
+                int x = ColumnLeft(col) + 4;
+                int width = Math.Max(16, col.Width - 8);
+                bool onScreen = x + width > 0 && x < _grid.ClientSize.Width;
 
-                bool keep = expanded &&
-                            (col.Index == _openColumn || !string.IsNullOrWhiteSpace(box.Text));
-                if (!keep || !col.Visible)
+                if (_boxes.TryGetValue(col.Index, out var box))
                 {
-                    box.Visible = false;
+                    bool keep = expanded &&
+                                (col.Index == _openColumn || !string.IsNullOrWhiteSpace(box.Text));
+                    if (!keep || !col.Visible)
+                    {
+                        box.Visible = false;
+                        continue;
+                    }
+
+                    box.Bounds = new Rectangle(x, y, width, BoxHeight);
+                    box.Visible = onScreen;
+                    box.BringToFront();
                     continue;
                 }
 
-                int x = ColumnLeft(col) + 4;
-                int width = Math.Max(16, col.Width - 8);
-                box.Bounds = new Rectangle(x, y, width, BoxHeight);
-                box.Visible = x + width > 0 && x < _grid.ClientSize.Width;
-                box.BringToFront();
+                if (!_dates.TryGetValue(col.Index, out var range))
+                    continue;
+                bool keepDate = expanded && (col.Index == _openColumn || range.HasRange);
+                if (!keepDate || !col.Visible)
+                {
+                    range.Visible = false;
+                    continue;
+                }
+
+                range.Bounds = new Rectangle(x, y, width, BoxHeight);
+                range.Visible = onScreen;
+                range.BringToFront();
+            }
+        }
+
+        private sealed class DateRangeHost : Panel
+        {
+            private readonly NumericDateBox _from = new();
+            private readonly NumericDateBox _to = new();
+
+            public event Action? Changed;
+
+            public DateRangeHost()
+            {
+                Height = BoxHeight;
+                BackColor = Theme.Paper;
+                _from.PlaceholderText = "FROM";
+                _to.PlaceholderText = "TO";
+                _from.BorderStyle = BorderStyle.FixedSingle;
+                _to.BorderStyle = BorderStyle.FixedSingle;
+                _from.DateChanged += (_, _) => Changed?.Invoke();
+                _to.DateChanged += (_, _) => Changed?.Invoke();
+                Controls.Add(_from);
+                Controls.Add(_to);
+                Resize += (_, _) => LayoutBoxes();
+            }
+
+            public DateTime? From => _from.Value;
+            public DateTime? To => _to.Value;
+            public bool HasRange => From != null || To != null;
+
+            public void FocusFrom() => _from.Focus();
+
+            private void LayoutBoxes()
+            {
+                int gap = 4;
+                int w = Math.Max(20, (Width - gap) / 2);
+                _from.Bounds = new Rectangle(0, 0, w, Height);
+                _to.Bounds = new Rectangle(w + gap, 0, Width - w - gap, Height);
             }
         }
 

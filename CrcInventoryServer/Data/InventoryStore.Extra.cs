@@ -1,5 +1,5 @@
 using CrcInventory.Protocol;
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
 
 namespace CrcInventory.Server;
 
@@ -14,7 +14,7 @@ internal sealed partial class InventoryStore
             using var cmd = db.CreateCommand();
             cmd.CommandText =
                 "SELECT id, name, bank, last4, notes FROM bank_accounts ORDER BY name COLLATE NOCASE;";
-            using var reader = cmd.ExecuteReader();
+            using var reader = cmd.Query(_engine);
             while (reader.Read())
             {
                 list.Add(new BankRowDto
@@ -42,15 +42,15 @@ internal sealed partial class InventoryStore
                 INSERT INTO bank_accounts (name, bank, last4, notes, created_at)
                 VALUES ($name, $bank, $last4, $notes, $at);
                 """;
-            cmd.Parameters.AddWithValue("$name", name ?? "");
-            cmd.Parameters.AddWithValue("$bank", bank ?? "");
-            cmd.Parameters.AddWithValue("$last4", last4 ?? "");
-            cmd.Parameters.AddWithValue("$notes", notes ?? "");
-            cmd.Parameters.AddWithValue("$at", NowStamp());
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$name", name ?? "");
+            cmd.AddParam("$bank", bank ?? "");
+            cmd.AddParam("$last4", last4 ?? "");
+            cmd.AddParam("$notes", notes ?? "");
+            cmd.AddParam("$at", NowStamp());
+            cmd.Exec(_engine);
             cmd.Parameters.Clear();
             cmd.CommandText = "SELECT last_insert_rowid();";
-            return Convert.ToInt64(cmd.ExecuteScalar());
+            return Convert.ToInt64(cmd.Scalar(_engine));
         }
     }
 
@@ -66,12 +66,12 @@ internal sealed partial class InventoryStore
                 SET name = $name, bank = $bank, last4 = $last4, notes = $notes
                 WHERE id = $id;
                 """;
-            cmd.Parameters.AddWithValue("$name", name ?? "");
-            cmd.Parameters.AddWithValue("$bank", bank ?? "");
-            cmd.Parameters.AddWithValue("$last4", last4 ?? "");
-            cmd.Parameters.AddWithValue("$notes", notes ?? "");
-            cmd.Parameters.AddWithValue("$id", id);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$name", name ?? "");
+            cmd.AddParam("$bank", bank ?? "");
+            cmd.AddParam("$last4", last4 ?? "");
+            cmd.AddParam("$notes", notes ?? "");
+            cmd.AddParam("$id", id);
+            cmd.Exec(_engine);
         }
     }
 
@@ -82,8 +82,8 @@ internal sealed partial class InventoryStore
             using var db = Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = "DELETE FROM bank_accounts WHERE id = $id;";
-            cmd.Parameters.AddWithValue("$id", id);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$id", id);
+            cmd.Exec(_engine);
         }
     }
 
@@ -99,13 +99,13 @@ internal sealed partial class InventoryStore
                        COALESCE(plaid_account_id, ''), COALESCE(plaid_cursor, '')
                 FROM bank_accounts WHERE id = $id;
                 """;
-            cmd.Parameters.AddWithValue("$id", id);
-            using var reader = cmd.ExecuteReader();
+            cmd.AddParam("$id", id);
+            using var reader = cmd.Query(_engine);
             if (!reader.Read())
                 return new BankLinkDto();
             return new BankLinkDto
             {
-                AccessToken = reader.IsDBNull(0) ? "" : reader.GetString(0),
+                AccessToken = SecretProtect.Open(reader.IsDBNull(0) ? "" : reader.GetString(0)),
                 ItemId = reader.IsDBNull(1) ? "" : reader.GetString(1),
                 AccountId = reader.IsDBNull(2) ? "" : reader.GetString(2),
                 Cursor = reader.IsDBNull(3) ? "" : reader.GetString(3)
@@ -128,12 +128,12 @@ internal sealed partial class InventoryStore
                     plaid_cursor = $cursor
                 WHERE id = $id;
                 """;
-            cmd.Parameters.AddWithValue("$token", accessToken ?? "");
-            cmd.Parameters.AddWithValue("$item", itemId ?? "");
-            cmd.Parameters.AddWithValue("$account", accountId ?? "");
-            cmd.Parameters.AddWithValue("$cursor", cursor ?? "");
-            cmd.Parameters.AddWithValue("$id", id);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$token", SecretProtect.Seal(accessToken));
+            cmd.AddParam("$item", itemId ?? "");
+            cmd.AddParam("$account", accountId ?? "");
+            cmd.AddParam("$cursor", cursor ?? "");
+            cmd.AddParam("$id", id);
+            cmd.Exec(_engine);
         }
     }
 
@@ -144,9 +144,9 @@ internal sealed partial class InventoryStore
             using var db = Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = "UPDATE bank_accounts SET plaid_cursor = $cursor WHERE id = $id;";
-            cmd.Parameters.AddWithValue("$cursor", cursor ?? "");
-            cmd.Parameters.AddWithValue("$id", id);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$cursor", cursor ?? "");
+            cmd.AddParam("$id", id);
+            cmd.Exec(_engine);
         }
     }
 
@@ -156,6 +156,8 @@ internal sealed partial class InventoryStore
         key = (key ?? "").Trim();
         fileName = (fileName ?? "").Trim();
         if (kind.Length == 0 || key.Length == 0 || fileName.Length == 0 || content.Length == 0)
+            return;
+        if (kind.Equals("invoice", StringComparison.OrdinalIgnoreCase))
             return;
 
         lock (_gate)
@@ -171,16 +173,12 @@ internal sealed partial class InventoryStore
                     content = excluded.content,
                     stored_at = excluded.stored_at;
                 """;
-            cmd.Parameters.AddWithValue("$kind", kind);
-            cmd.Parameters.AddWithValue("$key", key);
-            cmd.Parameters.AddWithValue("$name", fileName);
-            var blob = cmd.CreateParameter();
-            blob.ParameterName = "$content";
-            blob.SqliteType = SqliteType.Blob;
-            blob.Value = content;
-            cmd.Parameters.Add(blob);
-            cmd.Parameters.AddWithValue("$at", NowStamp());
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$kind", kind);
+            cmd.AddParam("$key", key);
+            cmd.AddParam("$name", fileName);
+            cmd.AddParam("$content", content);
+            cmd.AddParam("$at", NowStamp());
+            cmd.Exec(_engine);
         }
     }
 
@@ -197,9 +195,9 @@ internal sealed partial class InventoryStore
             using var cmd = db.CreateCommand();
             cmd.CommandText =
                 "SELECT 1 FROM stored_pdfs WHERE kind = $kind AND doc_key = $key LIMIT 1;";
-            cmd.Parameters.AddWithValue("$kind", kind);
-            cmd.Parameters.AddWithValue("$key", key);
-            return cmd.ExecuteScalar() != null;
+            cmd.AddParam("$kind", kind);
+            cmd.AddParam("$key", key);
+            return cmd.Scalar(_engine) != null;
         }
     }
 
@@ -224,9 +222,9 @@ internal sealed partial class InventoryStore
                 ORDER BY CASE WHEN doc_key = $key THEN 0 ELSE 1 END, stored_at DESC
                 LIMIT 1;
                 """;
-            cmd.Parameters.AddWithValue("$kind", kind);
-            cmd.Parameters.AddWithValue("$key", key);
-            using var reader = cmd.ExecuteReader();
+            cmd.AddParam("$kind", kind);
+            cmd.AddParam("$key", key);
+            using var reader = cmd.Query(_engine);
             if (!reader.Read())
                 return null;
 

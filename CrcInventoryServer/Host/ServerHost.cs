@@ -13,9 +13,10 @@ internal static class ServerHost
         string dataFolder,
         string bind,
         int port,
+        string? postgres,
         CancellationToken cancel)
     {
-        var store = new InventoryStore(dataFolder);
+        var store = new InventoryStore(dataFolder, postgres);
         using var cert = ServerCert.LoadOrCreate(dataFolder, out string fingerprint);
         var dispatch = new ServerDispatch(store, fingerprint);
 
@@ -26,10 +27,14 @@ internal static class ServerHost
         listener.Start();
         Console.WriteLine("Cast Right Catch inventory server");
         Console.WriteLine("  data         " + store.Folder);
+        Console.WriteLine("  database     " + store.EngineName);
         Console.WriteLine("  listen       " + address + ":" + port);
         Console.WriteLine("  fingerprint  " + fingerprint);
         Console.WriteLine("  first IT     " + (store.HasItUser() ? "yes" : "no — run with --bootstrap on this PC"));
-        Console.WriteLine("Clients connect over TLS. Database files stay on this machine.");
+        Console.WriteLine(
+            store.UsesPostgres
+                ? "Clients connect over TLS. Inventory data is Postgres (live / archive schemas)."
+                : "Clients connect over TLS. Database files stay on this machine.");
         Console.WriteLine("Press Ctrl+C to stop.");
 
         try

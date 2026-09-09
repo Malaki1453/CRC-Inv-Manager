@@ -125,7 +125,8 @@ namespace CastRightCatchInvManagement
                     ["External Id"] = row.ExternalId,
                     ["Type"] = row.Type.Length > 0
                         ? row.Type
-                        : row.Amount >= 0 ? "Deposit" : "Withdrawal"
+                        : row.Amount >= 0 ? "Deposit" : "Withdrawal",
+                    [DataFiles.RecordStatus] = DataFiles.RecordLive
                 };
                 SqliteInventory.Insert(DataFiles.BankTransactions, values);
                 added++;

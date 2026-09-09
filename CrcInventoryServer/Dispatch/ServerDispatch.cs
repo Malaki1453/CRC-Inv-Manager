@@ -29,17 +29,20 @@ internal sealed class ServerDispatch
             ServerOps.AuthChangePassword => ChangePassword(payload, session),
             ServerOps.TableEnsure => EnsureTables(),
             ServerOps.TableHeaders => Headers(payload),
-            ServerOps.TableRead => Read(payload),
-            ServerOps.TableReadIds => ReadIds(payload),
-            ServerOps.TableInsert => Insert(payload),
-            ServerOps.TableInsertMany => InsertMany(payload),
-            ServerOps.TableUpdate => Update(payload),
+            ServerOps.TableRead => Read(payload, session),
+            ServerOps.TableReadIds => ReadIds(payload, session),
+            ServerOps.TableInsert => Insert(payload, session),
+            ServerOps.TableInsertMany => InsertMany(payload, session),
+            ServerOps.TableUpdate => Update(payload, session),
             ServerOps.TableEnsureColumns => EnsureColumns(payload),
             ServerOps.TableCount => Count(payload),
             ServerOps.TableArchive => Archive(payload),
             ServerOps.TableLatestTerm => LatestTerm(),
-            ServerOps.SettingsRead => _store.ReadSettings(),
+            ServerOps.SettingsRead => ReadAdminSettings(session),
+            ServerOps.SettingsReadPublic => _store.ReadPublicSettings(),
             ServerOps.SettingsWrite => WriteSettings(payload, session),
+            ServerOps.PrefsRead => _store.ReadPrefs(session.Username),
+            ServerOps.PrefsWrite => WritePrefs(payload, session),
             ServerOps.UserEmailRead => ReadUserEmail(payload),
             ServerOps.UserEmailWrite => WriteUserEmail(payload),
             ServerOps.AccountsCount => RequireIt(session, () => _store.CountAccounts()),
@@ -52,6 +55,7 @@ internal sealed class ServerDispatch
             ServerOps.AccountsRename => RenameAccount(payload, session),
             ServerOps.AccountsEmail => UpdateEmail(payload, session),
             ServerOps.AccountsDelete => DeleteAccount(payload, session),
+            ServerOps.AccountsUnlock => UnlockLogin(payload, session),
             ServerOps.AccountsStayGet => StayGet(payload, session),
             ServerOps.AccountsStaySet => StaySet(payload, session),
             ServerOps.AccountsRoles => SetRoles(payload, session),
@@ -105,9 +109,16 @@ internal sealed class ServerDispatch
     private AuthResponse Login(JsonElement payload, ClientSession session)
     {
         var request = Read<LoginRequest>(payload);
-        if (!_store.TryGetAccountRecord(request.Username, out var record) ||
-            !Passwords.Verify(request.Password, record.PasswordHash, record.PasswordSalt))
+        if (!_store.AllowLogin(request.Username, out string error))
+            throw new InvalidOperationException(error);
+
+        if (!_store.TryGetAccountRecord(request.Username, out var record))
             throw new InvalidOperationException("That username or password is not right.");
+
+        if (!Passwords.Verify(request.Password, record.PasswordHash, record.PasswordSalt))
+            throw new InvalidOperationException(_store.NoteLoginFailure(request.Username));
+
+        _store.ClearLoginFails(record.Username);
 
         if (!record.PasswordHash.StartsWith("$argon2id$", StringComparison.Ordinal))
             _store.UpdateAccountPassword(record.Username, request.Password);
@@ -133,6 +144,8 @@ internal sealed class ServerDispatch
         string? username = _store.FindSessionUsername(request.Token);
         if (string.IsNullOrWhiteSpace(username) || !_store.TryGetAccountRecord(username, out var record))
             throw new InvalidOperationException("That session is no longer valid.");
+        if (!_store.AllowLogin(username, out string error))
+            throw new InvalidOperationException(error);
 
         var auth = _store.ToAuth(record, request.Token);
         session.SignIn(auth);
@@ -148,16 +161,23 @@ internal sealed class ServerDispatch
     private RecoverQuestionsResponse RecoverQuestions(JsonElement payload)
     {
         var request = Read<RecoverQuestionsRequest>(payload);
+        if (!_store.AllowRecovery(request.Username, out string error))
+            return new RecoverQuestionsResponse { Error = error };
         return _store.SecurityQuestions(request.Username);
     }
 
     private bool Recover(JsonElement payload)
     {
         var request = Read<RecoverRequest>(payload);
+        if (!_store.AllowRecovery(request.Username, out string error))
+            throw new InvalidOperationException(error);
         if (!_store.VerifySecurityAnswers(request.Username, request.A1, request.A2, request.A3))
-            throw new InvalidOperationException("Those answers are not right.");
+            throw new InvalidOperationException(_store.NoteRecoveryFailure(request.Username));
         if (!_store.UpdateAccountPassword(request.Username, request.NewPassword))
-            throw new InvalidOperationException("Password must be at least " + Passwords.MinimumLength + " characters.");
+            throw new InvalidOperationException(
+                "Password must be at least " + Passwords.MinimumLength +
+                " characters, with a capital letter, a number, and a symbol.");
+        _store.ClearRecoveryFails(request.Username);
         _store.SetMustChangePassword(request.Username, false);
         return true;
     }
@@ -172,7 +192,9 @@ internal sealed class ServerDispatch
             !Passwords.Verify(request.CurrentPassword, record.PasswordHash, record.PasswordSalt))
             throw new InvalidOperationException("That username or password is not right.");
         if (!_store.UpdateAccountPassword(username, request.NewPassword))
-            throw new InvalidOperationException("Password must be at least " + Passwords.MinimumLength + " characters.");
+            throw new InvalidOperationException(
+                "Password must be at least " + Passwords.MinimumLength +
+                " characters, with a capital letter, a number, and a symbol.");
         _store.SetMustChangePassword(username, false);
         return true;
     }
@@ -189,40 +211,61 @@ internal sealed class ServerDispatch
         return _store.Headers(request.Table, request.ViewOld);
     }
 
-    private List<Dictionary<string, string>> Read(JsonElement payload)
+    private List<Dictionary<string, string>> Read(JsonElement payload, ClientSession session)
     {
         var request = Read<TableRequest>(payload);
-        return _store.Read(request.Table, request.ViewOld);
+        var rows = _store.Read(request.Table, request.ViewOld);
+        return AccessFilter.Restrict(
+            _store,
+            request.Table,
+            rows,
+            session.Username,
+            fullAccess: false);
     }
 
-    private List<IdFieldsDto> ReadIds(JsonElement payload)
+    private List<IdFieldsDto> ReadIds(JsonElement payload, ClientSession session)
     {
         var request = Read<TableRequest>(payload);
-        return _store.ReadWithIds(request.Table, request.ViewOld)
+        return AccessFilter.Restrict(
+                _store,
+                request.Table,
+                _store.ReadWithIds(request.Table, request.ViewOld),
+                session.Username,
+                fullAccess: false)
             .Select(row => new IdFieldsDto { Id = row.Id, Fields = row.Fields })
             .ToList();
     }
 
-    private bool Insert(JsonElement payload)
+    private bool Insert(JsonElement payload, ClientSession session)
     {
         var request = Read<TableRequest>(payload);
-        _store.Insert(request.Table, request.Values ?? new Dictionary<string, string>());
+        var values = request.Values ?? new Dictionary<string, string>();
+        RequireRowAccess(request.Table, values, session);
+        _store.Insert(request.Table, values);
         return true;
     }
 
-    private int InsertMany(JsonElement payload)
+    private int InsertMany(JsonElement payload, ClientSession session)
     {
         var request = Read<TableRequest>(payload);
-        return _store.InsertMany(request.Table, request.Rows ?? new List<Dictionary<string, string>>());
+        var rows = request.Rows ?? new List<Dictionary<string, string>>();
+        foreach (var row in rows)
+            RequireRowAccess(request.Table, row, session);
+        return _store.InsertMany(request.Table, rows);
     }
 
-    private bool Update(JsonElement payload)
+    private bool Update(JsonElement payload, ClientSession session)
     {
         var request = Read<TableRequest>(payload);
-        return _store.UpdateById(
-            request.Table,
-            request.Id,
-            request.Values ?? new Dictionary<string, string>());
+        var values = request.Values ?? new Dictionary<string, string>();
+        RequireRowAccess(request.Table, values, session);
+        return _store.UpdateById(request.Table, request.Id, values);
+    }
+
+    private void RequireRowAccess(string table, Dictionary<string, string> values, ClientSession session)
+    {
+        if (!AccessFilter.CanWriteRow(_store, table, values, session.Username, fullAccess: false))
+            throw new InvalidOperationException("You do not have access to that data.");
     }
 
     private bool EnsureColumns(JsonElement payload)
@@ -247,11 +290,24 @@ internal sealed class ServerDispatch
 
     private string? LatestTerm() => _store.LatestTerm()?.ToString("yyyy-MM-dd");
 
+    private Dictionary<string, string> ReadAdminSettings(ClientSession session)
+    {
+        RequireAdmin(session);
+        return _store.ReadSettings(revealSecrets: true);
+    }
+
     private bool WriteSettings(JsonElement payload, ClientSession session)
     {
         RequireAdmin(session);
         var request = Read<SettingsWriteRequest>(payload);
         _store.WriteSettings(request.Values);
+        return true;
+    }
+
+    private bool WritePrefs(JsonElement payload, ClientSession session)
+    {
+        var request = Read<PrefsWriteRequest>(payload);
+        _store.WritePrefs(session.Username, request.Values);
         return true;
     }
 
@@ -281,7 +337,9 @@ internal sealed class ServerDispatch
         RequireIt(session);
         var request = Read<AccountWriteRequest>(payload);
         if (string.IsNullOrWhiteSpace(request.Password))
-            throw new InvalidOperationException("Password must be at least " + Passwords.MinimumLength + " characters.");
+            throw new InvalidOperationException(
+                "Password must be at least " + Passwords.MinimumLength +
+                " characters, with a capital letter, a number, and a symbol.");
         bool created = _store.InsertAccount(
             request.Username,
             request.DisplayName ?? "",
@@ -309,7 +367,9 @@ internal sealed class ServerDispatch
         var request = Read<AccountWriteRequest>(payload);
         if (string.IsNullOrWhiteSpace(request.Password) ||
             !_store.UpdateAccountPassword(request.Username, request.Password))
-            throw new InvalidOperationException("Password must be at least " + Passwords.MinimumLength + " characters.");
+            throw new InvalidOperationException(
+                "Password must be at least " + Passwords.MinimumLength +
+                " characters, with a capital letter, a number, and a symbol.");
         _store.SetMustChangePassword(request.Username, request.MustChange);
         return true;
     }
@@ -347,6 +407,14 @@ internal sealed class ServerDispatch
         return _store.DeleteAccount(request.Username);
     }
 
+    private bool UnlockLogin(JsonElement payload, ClientSession session)
+    {
+        RequireIt(session);
+        var request = Read<AccountWriteRequest>(payload);
+        _store.ClearLoginFails(request.Username);
+        return true;
+    }
+
     private bool StayGet(JsonElement payload, ClientSession session)
     {
         var request = Read<AccountWriteRequest>(payload);
@@ -377,7 +445,7 @@ internal sealed class ServerDispatch
         var request = Read<AccountWriteRequest>(payload);
         if (!SelfOrIt(session, request.Username) && !session.IsAdmin)
             throw new InvalidOperationException("Not allowed.");
-        return _store.GetTableAccess(request.Username);
+        return _store.GetStoredTableAccess(request.Username);
     }
 
     private bool AccessSet(JsonElement payload, ClientSession session)

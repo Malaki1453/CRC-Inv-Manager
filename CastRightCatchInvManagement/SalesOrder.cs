@@ -325,7 +325,7 @@ namespace CastRightCatchInvManagement
             string current = _customer.SelectedItem is CustomerChoice choice ? choice.Code : _customerCode.Text;
             _loadingCustomer = true;
             _customer.Items.Clear();
-            foreach (var record in DataFiles.ReadRecords(DataFiles.Customers))
+            foreach (var record in DataFiles.VisibleRecords(DataFiles.Customers))
             {
                 _customer.Items.Add(new CustomerChoice(
                     DataFiles.GetRecord(record, "Code"),

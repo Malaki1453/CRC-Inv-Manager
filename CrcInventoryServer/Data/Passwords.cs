@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using CrcInventory.Protocol;
 using Konscious.Security.Cryptography;
 
 namespace CrcInventory.Server;
@@ -7,23 +8,14 @@ namespace CrcInventory.Server;
 /// <summary>Argon2id hashes, matching the desktop app so an existing database can be hosted as-is.</summary>
 internal static class Passwords
 {
-    public const int MinimumLength = 8;
+    public const int MinimumLength = PasswordRules.MinLength;
     private const int ArgonMemoryKb = 19456;
     private const int ArgonIterations = 2;
     private const int ArgonParallelism = 1;
     private const int ArgonHashLength = 32;
 
-    public static bool MeetsPolicy(string password, out string error)
-    {
-        error = "";
-        if (string.IsNullOrEmpty(password) || password.Length < MinimumLength)
-        {
-            error = "Password must be at least " + MinimumLength + " characters.";
-            return false;
-        }
-
-        return true;
-    }
+    public static bool MeetsPolicy(string password, out string error) =>
+        PasswordRules.Meets(password, out error);
 
     public static void Hash(string password, out string hash, out string salt)
     {

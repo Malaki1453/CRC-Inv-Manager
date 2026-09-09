@@ -21,7 +21,7 @@ namespace CastRightCatchInvManagement
             ((System.ComponentModel.ISupportInitialize)dataGridView1).BeginInit();
             SuspendLayout();
             lblTitle.Name = "lblTitle";
-            lblTitle.Text = "Item Codes";
+            lblTitle.Text = "Inventory";
             btnUpload.Name = "btnUpload";
             btnUpload.Text = "Upload";
             dataGridView1.AllowUserToAddRows = false;
@@ -35,7 +35,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(btnUpload);
             Controls.Add(lblTitle);
             Name = "ItemCodes";
-            Text = "Item Codes";
+            Text = "Inventory";
             ((System.ComponentModel.ISupportInitialize)dataGridView1).EndInit();
             ResumeLayout(false);
         }

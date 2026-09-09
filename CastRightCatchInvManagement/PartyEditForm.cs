@@ -17,6 +17,9 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _terms;
         private readonly TextBox _extra;
         private readonly TextBox _established;
+        private readonly TextBox _routing;
+        private readonly TextBox _account;
+        private string _storedAccount = "";
         private readonly Label _subtitle;
 
         /// <summary>Modal: add a customer.</summary>
@@ -143,17 +146,19 @@ namespace CastRightCatchInvManagement
             CardPanel identity;
             if (vendor)
             {
-                identity = Section("Identity", 210, 4, out var grid);
+                identity = Section("Identity", 266, 5, out var grid);
                 _code = PutField(grid, 0, 0, "CODE");
                 _name = PutField(grid, 1, 0, "NAME");
                 _company = PutField(grid, 2, 0, "COMPANY");
                 _phone = PutField(grid, 3, 0, "PHONE");
+                _balance = PutField(grid, 4, 0, "CURRENT BALANCE");
                 _terms = PutField(grid, 0, 1, "TERMS");
                 _extra = PutField(grid, 1, 1, "TYPE");
-                _contact = PutField(grid, 2, 1, "AMOUNT");
-                _balance = PutField(grid, 3, 1, "CURRENT BALANCE");
-                SetRowHeights(grid, 56, 56);
-                _contact.PlaceholderText = "0.00";
+                _contact = PutField(grid, 2, 1, "CONTACT NAME");
+                _established = PutField(grid, 3, 1, "AMOUNT");
+                SetRowHeights(grid, 56, 56, 56, 56, 56);
+                _contact.PlaceholderText = "Who we talk to";
+                _established.PlaceholderText = "0.00";
                 _extra.PlaceholderText = "Processor";
             }
             else
@@ -182,7 +187,20 @@ namespace CastRightCatchInvManagement
             _phone.PlaceholderText = "(253) 000-0000";
             _terms.PlaceholderText = "NET 15";
             _balance.PlaceholderText = "0.00";
-            identity.Dock = DockStyle.Fill;
+            identity.Dock = DockStyle.Top;
+
+            var banking = Section("Banking", 108, 2, out var bankGrid);
+            _routing = PutField(bankGrid, 0, 0, "ROUTING NUMBER");
+            _account = PutField(bankGrid, 1, 0, "ACCOUNT NUMBER");
+            SetRowHeights(bankGrid, 56);
+            _routing.PlaceholderText = "9-digit routing number";
+            _account.PlaceholderText = "Full account number — only last 4 is shown after save";
+            _account.GotFocus += (_, _) =>
+            {
+                if (_account.Text.Contains('•'))
+                    _account.SelectAll();
+            };
+            banking.Dock = DockStyle.Top;
 
             _notes = new TextBox
             {
@@ -210,7 +228,8 @@ namespace CastRightCatchInvManagement
                 if (vendor)
                 {
                     _extra.Text = DataFiles.GetRecord(record, "Type");
-                    _contact.Text = DataFiles.GetRecord(record, "Amount");
+                    _contact.Text = DataFiles.GetRecord(record, "Contact Name");
+                    _established.Text = DataFiles.GetRecord(record, "Amount");
                 }
                 else
                 {
@@ -220,6 +239,10 @@ namespace CastRightCatchInvManagement
                     _address.Text = DataFiles.GetRecord(record, "Address");
                     _established.Text = DataFiles.GetRecord(record, "Established");
                 }
+
+                _routing.Text = DataFiles.GetRecord(record, DataFiles.RoutingNumber);
+                _storedAccount = DataFiles.DigitsOnly(DataFiles.GetRecord(record, DataFiles.AccountNumber));
+                _account.Text = DataFiles.MaskAccountNumber(_storedAccount);
             }
 
             UpdateSubtitle();
@@ -230,10 +253,11 @@ namespace CastRightCatchInvManagement
             var topHost = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = identity.Height + 28,
+                Height = identity.Height + banking.Height + 28,
                 BackColor = Theme.Cream,
                 Padding = new Padding(20, 16, 20, 12)
             };
+            topHost.Controls.Add(banking);
             topHost.Controls.Add(identity);
 
             var bottomHost = new Panel
@@ -286,7 +310,7 @@ namespace CastRightCatchInvManagement
             }
 
             string baseName = _vendor ? DataFiles.Vendors : DataFiles.Customers;
-            bool exists = DataFiles.ReadRecords(baseName).Any(record =>
+            bool exists = DataFiles.ReadAllRecords(baseName).Any(record =>
                 DataFiles.GetRecord(record, "Code").Equals(code, StringComparison.OrdinalIgnoreCase));
             if (exists && !code.Equals(_originalCode, StringComparison.OrdinalIgnoreCase))
             {
@@ -303,13 +327,16 @@ namespace CastRightCatchInvManagement
                 ["Current Balance"] = _balance.Text.Trim(),
                 ["Notes"] = _notes.Text.Trim(),
                 ["Description"] = _notes.Text.Trim(),
-                ["Terms"] = _terms.Text.Trim()
+                ["Terms"] = _terms.Text.Trim(),
+                [DataFiles.RoutingNumber] = DataFiles.DigitsOnly(_routing.Text),
+                [DataFiles.AccountNumber] = DataFiles.ResolveAccountNumber(_account.Text, _storedAccount)
             };
 
             if (_vendor)
             {
                 fields["Type"] = _extra.Text.Trim();
-                fields["Amount"] = _contact.Text.Trim();
+                fields["Contact Name"] = _contact.Text.Trim();
+                fields["Amount"] = _established.Text.Trim();
             }
             else
             {
@@ -322,23 +349,28 @@ namespace CastRightCatchInvManagement
 
             try
             {
+                MutateResult result;
                 if (_originalCode.Length > 0)
                 {
-                    bool updated = DataFiles.ReplaceMatchingRow(
+                    result = DataFiles.MutateUpdate(
                         baseName,
                         record => DataFiles.GetRecord(record, "Code")
                             .Equals(_originalCode, StringComparison.OrdinalIgnoreCase),
-                        DataFiles.NamedRow(baseName, fields));
-                    if (!updated)
-                    {
-                        MessageBox.Show("Could not find that record to update.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        return false;
-                    }
+                        fields);
                 }
                 else
                 {
-                    DataFiles.AppendNamedRow(baseName, fields);
+                    result = DataFiles.MutateInsert(baseName, fields);
                 }
+
+                if (!result.Ok)
+                {
+                    MessageBox.Show(result.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return false;
+                }
+
+                if (result.Queued)
+                    MessageBox.Show(result.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                 return true;
             }
@@ -485,9 +517,9 @@ namespace CastRightCatchInvManagement
 
             if (code.Length > 0 || name.Length > 0)
             {
-                foreach (var sale in DataFiles.ReadRecords(DataFiles.Sales))
+                foreach (var sale in DataFiles.VisibleRecords(DataFiles.Sales))
                 {
-                    if (!DataFiles.MatchesCustomer(sale, code, name))
+                    if (DataFiles.IsWaitingAdd(sale) || !DataFiles.MatchesCustomer(sale, code, name))
                         continue;
                     grid.Rows.Add(
                         DataFiles.GetRecord(sale, "Ship Date"),
@@ -508,20 +540,20 @@ namespace CastRightCatchInvManagement
             grid.Columns.Add("Ship Date", "Ship Date");
             grid.Columns.Add("PO #", "PO #");
             grid.Columns.Add("Item Code", "Item Code");
-            grid.Columns.Add("Vendor Invoice #", "Vendor Invoice #");
+            grid.Columns.Add("Species", "Species");
             grid.Columns.Add("Total Cost", "Total Cost");
 
             if (code.Length > 0 || name.Length > 0)
             {
-                foreach (var purchase in DataFiles.ReadRecords(DataFiles.PurchaseSales))
+                foreach (var purchase in DataFiles.VisibleRecords(DataFiles.PurchaseSales))
                 {
-                    if (!DataFiles.MatchesVendor(purchase, code, name))
+                    if (DataFiles.IsWaitingAdd(purchase) || !DataFiles.MatchesVendor(purchase, code, name))
                         continue;
                     grid.Rows.Add(
                         DataFiles.GetRecord(purchase, "Ship Date"),
                         DataFiles.GetRecord(purchase, "PO #"),
                         DataFiles.GetRecord(purchase, "Item Code"),
-                        DataFiles.GetRecord(purchase, "Vendor Invoice #"),
+                        DataFiles.GetRecord(purchase, "Description"),
                         DataFiles.GetRecord(purchase, "Total Cost"));
                 }
             }

@@ -16,9 +16,10 @@ internal static class Program
         string data = Arg(args, "--data") ?? Path.Combine(AppContext.BaseDirectory, "data");
         data = Path.GetFullPath(data);
         Directory.CreateDirectory(data);
+        string? postgres = PostgresArg(args);
 
         if (HasFlag(args, "--bootstrap"))
-            return Bootstrap(data, Arg(args, "--user"));
+            return Bootstrap(data, Arg(args, "--user"), postgres);
 
         if (HasFlag(args, "--fingerprint"))
         {
@@ -45,7 +46,7 @@ internal static class Program
 
         try
         {
-            await ServerHost.RunAsync(data, bind, port, stop.Token);
+            await ServerHost.RunAsync(data, bind, port, postgres, stop.Token);
             return 0;
         }
         catch (OperationCanceledException)
@@ -59,9 +60,9 @@ internal static class Program
         }
     }
 
-    private static int Bootstrap(string data, string? username)
+    private static int Bootstrap(string data, string? username, string? postgres)
     {
-        var store = new InventoryStore(data);
+        var store = new InventoryStore(data, postgres);
         if (store.HasItUser())
         {
             Console.WriteLine("An IT user already exists. Nothing to do.");
@@ -99,9 +100,13 @@ internal static class Program
         }
 
         Console.WriteLine("Created IT administrator '" + username + "'.");
-        Console.WriteLine("Database folder: " + store.Folder);
+        Console.WriteLine("Database: " + store.EngineName);
+        Console.WriteLine("Data folder: " + store.Folder);
         Console.WriteLine("Start the server with:");
-        Console.WriteLine("  CrcInventoryServer --data \"" + store.Folder + "\"");
+        Console.WriteLine(
+            store.UsesPostgres
+                ? "  CrcInventoryServer --data \"" + store.Folder + "\" --postgres \"" + (postgres ?? "") + "\""
+                : "  CrcInventoryServer --data \"" + store.Folder + "\"");
         return 0;
     }
 
@@ -111,19 +116,31 @@ internal static class Program
             """
             Cast Right Catch inventory server
 
-            Hosts crc_inventory.db and old_inventory.db on this PC. Clients talk over
-            a TLS named-op stream. They never receive the database files.
+            Default database is local SQLite (crc_inventory.db and old_inventory.db).
+            Clients talk over a TLS named-op stream. They never receive the files.
+
+            Postgres (Digital Ocean) is optional. Leave it unset while you test locally.
+            When the managed database exists, pass the connection string:
+
+              CrcInventoryServer --data FOLDER --postgres "Host=...;Port=25060;Database=defaultdb;Username=doadmin;Password=...;SSL Mode=Require"
+              set CRC_POSTGRES=...   (or DATABASE_URL=postgresql://...)
+
+            Digital Ocean: create a PostgreSQL cluster, copy the connection string,
+            allow this server's IP, and use SSL. Live data is schema live; Old is schema archive.
+            TLS cert and admins.json still live in --data.
 
             Usage:
               CrcInventoryServer [--data FOLDER] [--port 7443] [--bind 0.0.0.0]
               CrcInventoryServer --data FOLDER --bootstrap [--user NAME]
               CrcInventoryServer --data FOLDER --fingerprint
+              CrcInventoryServer --data FOLDER --postgres CONNECTION
 
-            --data         Folder for databases, admins.json, and crc-server.pfx
+            --data         Folder for SQLite files (default), admins.json, and crc-server.pfx
                            Default: ./data next to this executable
+            --postgres     Postgres connection string or URI. Omit to keep local SQLite.
             --port         Listen port (default 7443)
             --bind         Listen address (default 0.0.0.0)
-            --bootstrap    Create the first IT administrator on this machine
+            --bootstrap    Create the first IT administrator
             --fingerprint  Print the TLS certificate SHA-256 pin
             --help         This text
 
@@ -147,6 +164,18 @@ internal static class Program
         }
 
         return null;
+    }
+
+    private static string? PostgresArg(string[] args)
+    {
+        string? value = Arg(args, "--postgres");
+        if (!string.IsNullOrWhiteSpace(value))
+            return value.Trim();
+        value = Environment.GetEnvironmentVariable("CRC_POSTGRES");
+        if (!string.IsNullOrWhiteSpace(value))
+            return value.Trim();
+        value = Environment.GetEnvironmentVariable("DATABASE_URL");
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 
     private static string? ReadLine(string prompt)

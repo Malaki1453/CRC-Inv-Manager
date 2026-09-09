@@ -70,7 +70,7 @@ namespace CastRightCatchInvManagement
 
             try
             {
-                SqliteInventory.WriteSettings(new Dictionary<string, string>
+                SqliteInventory.WritePrefs(new Dictionary<string, string>
                 {
                     ["grid_columns_" + search.FileBaseName] = JsonSerializer.Serialize(names)
                 });
@@ -95,10 +95,15 @@ namespace CastRightCatchInvManagement
         {
             try
             {
-                var settings = SqliteInventory.ReadSettings();
+                var settings = SqliteInventory.ReadPrefs();
                 if (!settings.TryGetValue("grid_columns_" + baseName, out var json) ||
                     string.IsNullOrWhiteSpace(json))
-                    return new List<string>();
+                {
+                    var shared = SqliteInventory.ReadPublicSettings();
+                    if (!shared.TryGetValue("grid_columns_" + baseName, out json) ||
+                        string.IsNullOrWhiteSpace(json))
+                        return new List<string>();
+                }
 
                 return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
             }

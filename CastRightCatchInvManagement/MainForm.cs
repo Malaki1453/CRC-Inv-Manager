@@ -12,6 +12,7 @@ namespace CastRightCatchInvManagement
 
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
+            WindowChrome.Apply(this);
 
             _workspace = Navigator.AttachMain(this, panelHost, _ => UpdateHeader());
             _sidebar = new NavSidebar(_workspace);
@@ -46,10 +47,15 @@ namespace CastRightCatchInvManagement
             }
 
             var page = _workspace.CurrentPage ?? Navigator.CurrentPage;
-            lblPageTitle.Text = UiStyle.PageTitle(page);
-            lblPageSubtitle.Text = _workspace.CurrentPage == null
-                ? "Choose a page from the sidebar"
-                : UiStyle.PageSubtitle(page);
+            bool home = page == AppPage.Dashboard;
+            panelHeader.Visible = !home;
+            panelFooter.Visible = !home;
+            lblPageTitle.Text = home ? "" : UiStyle.PageTitle(page);
+            lblPageSubtitle.Text = home
+                ? ""
+                : _workspace.CurrentPage == null
+                    ? "Choose a page from the sidebar"
+                    : UiStyle.PageSubtitle(page);
             _sidebar.RefreshState();
         }
     }

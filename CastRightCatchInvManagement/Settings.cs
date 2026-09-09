@@ -1,8 +1,8 @@
 namespace CastRightCatchInvManagement
 {
     /// <summary>
-    /// Shared folder, company info, numbering, SMTP, and the signed-in account.
-    /// Company info, numbering, SMTP, and term roll-over are administrator-only.
+    /// Shared folder, company info, numbering, and the signed-in account.
+    /// Company info, numbering, and term roll-over are administrator-only.
     /// </summary>
     public partial class Settings : Form, INavigationPage
     {
@@ -61,7 +61,7 @@ namespace CastRightCatchInvManagement
             introRow.Controls.Add(help);
             introRow.Resize += (_, _) => help.Location = new Point(Math.Max(8, introRow.Width - 40), 4);
 
-            var company = new CardPanel { Dock = DockStyle.Top, Height = 328 };
+            var company = new CardPanel { Dock = DockStyle.Top, Height = 280 };
             LayoutCompanyCard(company);
 
             var data = new CardPanel { Dock = DockStyle.Top, Height = 214 };
@@ -77,14 +77,9 @@ namespace CastRightCatchInvManagement
             var user = new CardPanel { Dock = DockStyle.Top, Height = 390 };
             LayoutUserCard(user);
             var spacerUser = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
-            var mail = new CardPanel { Dock = DockStyle.Top, Height = 220 };
-            LayoutMailCard(mail);
-            var spacerMail = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
 
             Controls.Add(user);
             Controls.Add(spacerUser);
-            Controls.Add(mail);
-            Controls.Add(spacerMail);
             Controls.Add(productNumber);
             Controls.Add(spacerPn);
             Controls.Add(salesOrder);
@@ -95,7 +90,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(introRow);
         }
 
-        /// <summary>Business name, address, phone, email, EIN, and payment terms. Administrator-only to edit.</summary>
+        /// <summary>Business name, address, phone, email, and payment terms. Administrator-only to edit.</summary>
         private void LayoutCompanyCard(CardPanel card)
         {
             var heading = new Label
@@ -127,8 +122,6 @@ namespace CastRightCatchInvManagement
             Theme.StyleField(txtPhone);
             Theme.StyleFieldLabel(lblEmail);
             Theme.StyleField(txtEmail);
-            Theme.StyleFieldLabel(lblEIN);
-            Theme.StyleField(txtEIN);
             Theme.StyleFieldLabel(lblPaymentTerms);
             Theme.StyleField(txtPaymentTerms);
 
@@ -136,8 +129,7 @@ namespace CastRightCatchInvManagement
             PlaceField(card, lblAddress, txtAddress, 24, 116, 640);
             PlaceField(card, lblPhone, txtPhone, 24, 164, 240);
             PlaceField(card, lblEmail, txtEmail, 284, 164, 380);
-            PlaceField(card, lblEIN, txtEIN, 24, 212, 240);
-            PlaceField(card, lblPaymentTerms, txtPaymentTerms, 284, 212, 380);
+            PlaceField(card, lblPaymentTerms, txtPaymentTerms, 24, 212, 640);
 
             txtBusinessName.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             txtAddress.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
@@ -148,7 +140,6 @@ namespace CastRightCatchInvManagement
             BindInvoiceField(txtAddress, v => AppState.Address = v, adminOnly: true);
             BindInvoiceField(txtPhone, v => AppState.Phone = v, adminOnly: true);
             BindInvoiceField(txtEmail, v => AppState.CompanyEmail = v, adminOnly: true);
-            BindInvoiceField(txtEIN, v => AppState.Ein = v, adminOnly: true);
             BindInvoiceField(txtPaymentTerms, v => AppState.PaymentTerms = v, adminOnly: true);
         }
 
@@ -453,10 +444,6 @@ namespace CastRightCatchInvManagement
         private TextBox _accountNew = null!;
         private TextBox _accountConfirm = null!;
         private Button _accountSave = null!;
-        private TextBox _smtpHost = null!;
-        private TextBox _smtpPort = null!;
-        private TextBox _smtpUser = null!;
-        private TextBox _smtpPassword = null!;
 
         /// <summary>Signed-in user’s username, name, email, password, security questions, and sign out.</summary>
         private void LayoutUserCard(CardPanel card)
@@ -532,13 +519,7 @@ namespace CastRightCatchInvManagement
                 Location = new Point(176, 236)
             };
             Theme.StyleOutlineButton(_signOut);
-            _signOut.Click += (_, _) =>
-            {
-                IdleWatch.Stop();
-                Accounts.ForgetThisPc();
-                AppState.SignOut();
-                Application.Restart();
-            };
+            _signOut.Click += (_, _) => Accounts.LogOutAndRestart();
             card.Controls.Add(_signOut);
 
             var questions = new Button
@@ -566,69 +547,6 @@ namespace CastRightCatchInvManagement
                 Size = new Size(620, 36)
             };
             card.Controls.Add(hint);
-        }
-
-        /// <summary>SMTP used to email new-user logins. Administrator-only.</summary>
-        private void LayoutMailCard(CardPanel card)
-        {
-            var heading = new Label
-            {
-                Text = "Login email (SMTP)",
-                Font = Theme.SectionTitle,
-                ForeColor = Theme.Navy,
-                Location = new Point(24, 14),
-                AutoSize = true
-            };
-            card.Controls.Add(heading);
-            var hint = new Label
-            {
-                Text = "Used when IT adds a user. The message includes their username and temporary password.",
-                Font = Theme.Small,
-                ForeColor = Theme.Muted,
-                Location = new Point(24, 40),
-                Size = new Size(620, 28)
-            };
-            card.Controls.Add(hint);
-
-            _smtpHost = new TextBox();
-            _smtpPort = new TextBox();
-            _smtpUser = new TextBox();
-            _smtpPassword = new TextBox { UseSystemPasswordChar = true };
-            Theme.StyleField(_smtpHost);
-            Theme.StyleField(_smtpPort);
-            Theme.StyleField(_smtpUser);
-            Theme.StyleField(_smtpPassword);
-            _smtpHost.PlaceholderText = "smtp.office365.com";
-            _smtpPort.PlaceholderText = "587";
-            var lblHost = new Label { Text = "SMTP HOST" };
-            var lblPort = new Label { Text = "PORT" };
-            var lblSmtpUser = new Label { Text = "SMTP USERNAME" };
-            var lblSmtpPass = new Label { Text = "SMTP PASSWORD" };
-            Theme.StyleFieldLabel(lblHost);
-            Theme.StyleFieldLabel(lblPort);
-            Theme.StyleFieldLabel(lblSmtpUser);
-            Theme.StyleFieldLabel(lblSmtpPass);
-            PlaceField(card, lblHost, _smtpHost, 24, 72, 360);
-            PlaceField(card, lblPort, _smtpPort, 404, 72, 80);
-            PlaceField(card, lblSmtpUser, _smtpUser, 24, 126, 300);
-            PlaceField(card, lblSmtpPass, _smtpPassword, 344, 126, 280);
-            BindInvoiceField(_smtpHost, v => AppState.SmtpHost = v, adminOnly: true);
-            BindInvoiceField(_smtpUser, v => AppState.SmtpUser = v, adminOnly: true);
-            _smtpPort.Leave += (_, _) =>
-            {
-                if (!AppState.IsAdmin)
-                    return;
-                if (int.TryParse(_smtpPort.Text.Trim(), out int port) && port > 0)
-                    AppState.SmtpPort = port;
-                AppLock.SaveSettings();
-            };
-            _smtpPassword.Leave += (_, _) =>
-            {
-                if (!AppState.IsAdmin)
-                    return;
-                AppState.SmtpPassword = _smtpPassword.Text;
-                AppLock.SaveSettings();
-            };
         }
 
         /// <summary>Save this user’s username, name, email, and optional password change.</summary>
@@ -709,7 +627,6 @@ namespace CastRightCatchInvManagement
             txtAddress.Text = AppState.Address;
             txtPhone.Text = AppState.Phone;
             txtEmail.Text = AppState.CompanyEmail;
-            txtEIN.Text = AppState.Ein;
             txtPaymentTerms.Text = AppState.PaymentTerms;
 
             txtFolderPath.Text = DataLink.IsRemote
@@ -748,14 +665,6 @@ namespace CastRightCatchInvManagement
                 _accountUser.Text = AppState.CurrentUsername;
             if (_accountName != null)
                 _accountName.Text = AppState.CurrentDisplayName;
-            if (_smtpHost != null)
-                _smtpHost.Text = AppState.SmtpHost;
-            if (_smtpPort != null)
-                _smtpPort.Text = AppState.SmtpPort > 0 ? AppState.SmtpPort.ToString() : "587";
-            if (_smtpUser != null)
-                _smtpUser.Text = AppState.SmtpUser;
-            if (_smtpPassword != null)
-                _smtpPassword.Text = AppState.SmtpPassword;
 
             if (Controls.Find("lblSignedIn", true).FirstOrDefault() is Label who)
             {
@@ -769,7 +678,7 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>
-        /// Company info, numbering, SMTP, and Roll to Next Term need an administrator.
+        /// Company info, numbering, and Roll to Next Term need an administrator.
         /// Account fields need a signed-in user. Folder can always be changed.
         /// </summary>
         private void ApplyLockState()
@@ -781,7 +690,6 @@ namespace CastRightCatchInvManagement
             txtAddress.Enabled = admin;
             txtPhone.Enabled = admin;
             txtEmail.Enabled = admin;
-            txtEIN.Enabled = admin;
             txtPaymentTerms.Enabled = admin;
             if (_soPattern != null)
                 _soPattern.Enabled = admin;
@@ -809,14 +717,6 @@ namespace CastRightCatchInvManagement
                 _accountConfirm.Enabled = ready && AppState.SignedIn;
             if (_accountSave != null)
                 _accountSave.Enabled = ready && AppState.SignedIn;
-            if (_smtpHost != null)
-                _smtpHost.Enabled = admin;
-            if (_smtpPort != null)
-                _smtpPort.Enabled = admin;
-            if (_smtpUser != null)
-                _smtpUser.Enabled = admin;
-            if (_smtpPassword != null)
-                _smtpPassword.Enabled = admin;
 
             txtFolderPath.ReadOnly = true;
             txtFolderPath.BackColor = ready ? Theme.Paper : Theme.DangerFill;
@@ -901,7 +801,7 @@ namespace CastRightCatchInvManagement
             }
 
             var confirm = MessageBox.Show(
-                "This starts a new term. Completed purchases, sales, invoices, banking, debits, and credits move into old_inventory.db. Unfinished rows stay in the live database with no date until they are completed. Leftover CSV files move into 'old data'. Customers, vendors, and item codes stay current.\n\nContinue?",
+                "This starts a new term. Completed purchases, sales, invoices, banking, debits, and credits move into old_inventory.db. Unfinished rows stay in the live database with no date until they are completed. Leftover CSV files move into 'old data'. Customers, vendors, and inventory stay current.\n\nContinue?",
                 "Roll to Next Term",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);

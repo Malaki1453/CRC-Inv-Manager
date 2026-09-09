@@ -104,10 +104,10 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            if (!Accounts.TryGetSecurityQuestions(user, out string q1, out string q2, out string q3))
+            if (!Accounts.TryLoadRecoveryQuestions(user, out string q1, out string q2, out string q3, out string error))
             {
                 MessageBox.Show(
-                    "No security questions are set for that user. Ask IT to reset the password.",
+                    error,
                     Text,
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);

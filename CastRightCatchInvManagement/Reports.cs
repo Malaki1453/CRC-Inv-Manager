@@ -11,10 +11,13 @@ namespace CastRightCatchInvManagement
         private Label _hint = null!;
         private TableLayoutPanel _stats = null!;
         private DataGridView _grid = null!;
+        private TabControl _tabs = null!;
+        private TextBox _filter = null!;
         private Button _export = null!;
         private ReportKind _kind;
         private bool _showingDetail;
         private ReportResult? _current;
+        private readonly HashSet<string> _expanded = new(StringComparer.OrdinalIgnoreCase);
 
         public Reports()
         {
@@ -73,12 +76,12 @@ namespace CastRightCatchInvManagement
 
             var cards = new (ReportKind Kind, string Title, string Hint)[]
             {
-                (ReportKind.Aging, "Aging Report", "Outstanding invoices by age"),
+                (ReportKind.Aging, "Aging Report", "Customers and vendors — tabs and a filter"),
                 (ReportKind.Commission, "Commission Tracker", "Deals by PO / SO — no commission rate is stored yet"),
                 (ReportKind.ProfitLoss, "Monthly P&L", "Revenue vs lot cost by ship month"),
                 (ReportKind.Suppliers, "Supplier Performance", "Vendor volume, cost, and average cost / lb"),
                 (ReportKind.CustomerRisk, "Customer Risk Report", "Credit, terms, and late balances"),
-                (ReportKind.Species, "Profit Per Species", "Margin rolled up by species")
+                (ReportKind.Species, "Profit Per Species", "By species — click to expand item codes")
             };
 
             for (int i = 0; i < cards.Length; i++)
@@ -122,9 +125,22 @@ namespace CastRightCatchInvManagement
             };
             Theme.StyleGoldButton(_export);
             _export.Click += (_, _) => ExportCsv();
+
+            _filter = new TextBox
+            {
+                PlaceholderText = "Filter this table",
+                Size = new Size(220, 28),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            Theme.StyleField(_filter);
+            _filter.TextChanged += (_, _) => ApplyFilter();
             toolbar.Resize += (_, _) =>
-                _export.Location = new Point(Math.Max(140, toolbar.Width - _export.Width), 4);
+            {
+                _export.Location = new Point(Math.Max(360, toolbar.Width - _export.Width), 4);
+                _filter.Location = new Point(Math.Max(140, _export.Left - _filter.Width - 12), 6);
+            };
             toolbar.Controls.Add(_export);
+            toolbar.Controls.Add(_filter);
             toolbar.Controls.Add(back);
 
             _title = new Label
@@ -162,6 +178,15 @@ namespace CastRightCatchInvManagement
                 AllowUserToDeleteRows = false
             };
             Theme.StyleGrid(_grid);
+            _grid.CellClick += OnSpeciesClick;
+
+            _tabs = new TabControl
+            {
+                Dock = DockStyle.Top,
+                Height = 32,
+                Font = Theme.BodyBold,
+                Visible = false
+            };
 
             var card = new CardPanel
             {
@@ -169,6 +194,7 @@ namespace CastRightCatchInvManagement
                 Padding = new Padding(1)
             };
             card.Controls.Add(_grid);
+            card.Controls.Add(_tabs);
 
             host.Controls.Add(card);
             host.Controls.Add(_stats);
@@ -240,25 +266,70 @@ namespace CastRightCatchInvManagement
 
         private void ShowReport(ReportKind kind)
         {
+            if (_kind != kind)
+                _expanded.Clear();
             _kind = kind;
             _showingDetail = true;
             var report = ReportData.Build(kind);
             _current = report;
             _title.Text = report.Title;
             _hint.Text = report.Hint + "  ·  " + ReportData.ScopeHint();
-            FillStats(report);
-            FillGrid(report);
+            _filter.Clear();
+            BuildTabs(report);
+            ShowActiveTab();
             _home.Visible = false;
             _detail.Visible = true;
         }
 
-        private void FillStats(ReportResult report)
+        private void BuildTabs(ReportResult report)
+        {
+            _tabs.SelectedIndexChanged -= TabChanged;
+            _tabs.TabPages.Clear();
+            if (report.Tabs is { Count: > 0 })
+            {
+                foreach (var tab in report.Tabs)
+                    _tabs.TabPages.Add(tab.Name);
+                _tabs.Visible = true;
+                _tabs.SelectedIndex = 0;
+            }
+            else
+            {
+                _tabs.Visible = false;
+            }
+
+            _tabs.SelectedIndexChanged += TabChanged;
+        }
+
+        private void TabChanged(object? sender, EventArgs e) => ShowActiveTab();
+
+        private void ShowActiveTab()
+        {
+            if (_current == null)
+                return;
+            if (_current.Tabs is { Count: > 0 } tabs &&
+                _tabs.SelectedIndex >= 0 &&
+                _tabs.SelectedIndex < tabs.Count)
+            {
+                var tab = tabs[_tabs.SelectedIndex];
+                FillStats(tab.Stats);
+                FillTable(tab.Columns, tab.Rows, tab.Empty, _current.Groups);
+            }
+            else
+            {
+                FillStats(_current.Stats);
+                FillGrid(_current);
+            }
+
+            ApplyFilter();
+        }
+
+        private void FillStats(List<(string Label, string Value)> stats)
         {
             _stats.Controls.Clear();
             for (int i = 0; i < 4; i++)
             {
-                string label = i < report.Stats.Count ? report.Stats[i].Label : "";
-                string value = i < report.Stats.Count ? report.Stats[i].Value : "";
+                string label = i < stats.Count ? stats[i].Label : "";
+                string value = i < stats.Count ? stats[i].Value : "";
                 _stats.Controls.Add(StatChip(label, value), i, 0);
             }
         }
@@ -291,24 +362,96 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
-        private void FillGrid(ReportResult report)
+        private void FillGrid(ReportResult report) =>
+            FillTable(report.Columns, report.Rows, report.Empty, report.Groups);
+
+        private void FillTable(
+            string[] columns,
+            List<string[]> rows,
+            string empty,
+            List<ReportGroup>? groups)
         {
             _grid.Columns.Clear();
             _grid.Rows.Clear();
-            foreach (var column in report.Columns)
+            foreach (var column in columns)
                 _grid.Columns.Add(column, column);
 
-            if (report.Rows.Count == 0)
+            if (groups is { Count: > 0 })
             {
-                if (_grid.Columns.Count > 0)
-                    _grid.Rows.Add(Pad(report.Empty, report.Columns.Length));
+                foreach (var group in groups)
+                {
+                    bool open = _expanded.Contains(group.Key);
+                    var parent = (string[])group.Parent.Clone();
+                    if (parent.Length > 0)
+                        parent[0] = (open ? "▼  " : "▶  ") + group.Key;
+                    int index = _grid.Rows.Add(PadRow(parent, columns.Length));
+                    _grid.Rows[index].Tag = group.Key;
+                    _grid.Rows[index].DefaultCellStyle.Font = Theme.BodyBold;
+                    if (!open)
+                        continue;
+                    foreach (var child in group.Children)
+                    {
+                        int childIndex = _grid.Rows.Add(PadRow(child, columns.Length));
+                        _grid.Rows[childIndex].Tag = null;
+                        _grid.Rows[childIndex].DefaultCellStyle.ForeColor = Theme.Muted;
+                    }
+                }
+
+                Theme.FitAllColumns(_grid);
                 return;
             }
 
-            foreach (var row in report.Rows)
-                _grid.Rows.Add(PadRow(row, report.Columns.Length));
+            if (rows.Count == 0)
+            {
+                if (_grid.Columns.Count > 0)
+                    _grid.Rows.Add(Pad(empty, columns.Length));
+                return;
+            }
+
+            foreach (var row in rows)
+                _grid.Rows.Add(PadRow(row, columns.Length));
 
             Theme.FitAllColumns(_grid);
+        }
+
+        private void ApplyFilter()
+        {
+            string query = _filter.Text.Trim();
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (row.IsNewRow)
+                    continue;
+                if (query.Length == 0)
+                {
+                    row.Visible = true;
+                    continue;
+                }
+
+                bool match = false;
+                foreach (DataGridViewCell cell in row.Cells)
+                {
+                    string text = cell.Value?.ToString() ?? "";
+                    if (text.Contains(query, StringComparison.OrdinalIgnoreCase))
+                    {
+                        match = true;
+                        break;
+                    }
+                }
+
+                row.Visible = match;
+            }
+        }
+
+        private void OnSpeciesClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (_current?.Groups == null || e.RowIndex < 0 || e.ColumnIndex < 0)
+                return;
+            if (_grid.Rows[e.RowIndex].Tag is not string key || key.Length == 0)
+                return;
+            if (!_expanded.Add(key))
+                _expanded.Remove(key);
+            FillGrid(_current);
+            ApplyFilter();
         }
 
         private static object[] Pad(string text, int columns)
@@ -363,11 +506,39 @@ namespace CastRightCatchInvManagement
             foreach (var stat in report.Stats)
                 lines.Add(new[] { stat.Label, stat.Value });
             lines.Add(Array.Empty<string>());
+            if (report.Tabs is { Count: > 0 })
+            {
+                foreach (var tab in report.Tabs)
+                {
+                    lines.Add(Array.Empty<string>());
+                    lines.Add(new[] { tab.Name });
+                    lines.Add(tab.Columns);
+                    if (tab.Rows.Count == 0)
+                        lines.Add(new[] { tab.Empty });
+                    else
+                        lines.AddRange(tab.Rows);
+                }
+
+                return lines;
+            }
+
             lines.Add(report.Columns);
-            if (report.Rows.Count == 0)
+            if (report.Groups is { Count: > 0 })
+            {
+                foreach (var group in report.Groups)
+                {
+                    lines.Add(group.Parent);
+                    lines.AddRange(group.Children);
+                }
+            }
+            else if (report.Rows.Count == 0)
+            {
                 lines.Add(new[] { report.Empty });
+            }
             else
+            {
                 lines.AddRange(report.Rows);
+            }
             return lines;
         }
 

@@ -6,7 +6,7 @@ namespace CastRightCatchInvManagement
         public ItemCodes()
         {
             InitializeComponent();
-            UiStyle.ApplyDataPage(this, "Item Codes", lblTitle, btnUpload, dataGridView1);
+            UiStyle.ApplyDataPage(this, "Inventory", lblTitle, btnUpload, dataGridView1);
             DataFiles.DataChanged += LoadTable;
             LoadTable();
         }
@@ -14,7 +14,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Called when this page is shown. Reloads the item-code grid.</summary>
         public void HighlightCurrentPage() => LoadTable();
 
-        /// <summary>Fill the grid from the item_codes table in the live database.</summary>
+        /// <summary>Fill the inventory (item codes) grid from the live database.</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.ItemCodes);
     }
 }

@@ -152,7 +152,7 @@ namespace CastRightCatchInvManagement
         {
             var card = new CardPanel
             {
-                Height = vendor ? 210 : 340,
+                Height = vendor ? 266 : 340,
                 Padding = new Padding(12, 10, 12, 10)
             };
             var heading = new Label
@@ -166,7 +166,7 @@ namespace CastRightCatchInvManagement
             var grid = new TableLayoutPanel
             {
                 ColumnCount = 4,
-                RowCount = vendor ? 2 : 4,
+                RowCount = vendor ? 3 : 4,
                 Location = new Point(12, 40),
                 Dock = DockStyle.None
             };
@@ -182,10 +182,12 @@ namespace CastRightCatchInvManagement
             {
                 PutReadout(grid, 0, 1, "TERMS", DataFiles.GetRecord(record, "Terms"));
                 PutReadout(grid, 1, 1, "TYPE", DataFiles.GetRecord(record, "Type"));
-                PutReadout(grid, 2, 1, "AMOUNT", DataFiles.GetRecord(record, "Amount"));
-                PutReadout(grid, 3, 1, "CURRENT BALANCE", DataFiles.GetRecord(record, "Current Balance"));
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+                PutReadout(grid, 2, 1, "CONTACT NAME", DataFiles.GetRecord(record, "Contact Name"));
+                PutReadout(grid, 3, 1, "AMOUNT", DataFiles.GetRecord(record, "Amount"));
+                PutReadout(grid, 0, 2, "CURRENT BALANCE", DataFiles.GetRecord(record, "Current Balance"));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 20));
             }
             else
             {

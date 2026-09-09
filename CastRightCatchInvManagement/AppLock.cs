@@ -64,7 +64,7 @@ namespace CastRightCatchInvManagement
             {
                 _loadingShared = true;
                 SqliteInventory.EnsureCreated();
-                var shared = SqliteInventory.ReadSettings();
+                var shared = SqliteInventory.ReadPublicSettings();
                 if (shared.Count == 0)
                 {
                     _loadingShared = false;
@@ -73,6 +73,9 @@ namespace CastRightCatchInvManagement
                 }
 
                 ApplyShared(shared);
+                if (AppState.IsAdmin)
+                    ApplyShared(SqliteInventory.ReadSettings());
+                SqliteInventory.ApplyAdminSmtp();
 
                 string? email = SqliteInventory.ReadUserEmail(Environment.UserName);
                 if (email != null)
@@ -111,26 +114,64 @@ namespace CastRightCatchInvManagement
             WriteLocalJson();
         }
 
-        public static void SaveSettings()
+        public static bool SaveSettings()
         {
-            WriteLocalJson();
+            bool ok = true;
+            try
+            {
+                WriteLocalJson();
+            }
+            catch
+            {
+                ok = false;
+            }
 
             if (!_loadingShared && (HasFolder() || DataLink.IsRemote))
             {
                 try
                 {
-                    SqliteInventory.WriteSettings(CurrentShared());
+                    if (AppState.IsAdmin || !DataLink.IsRemote)
+                        SqliteInventory.WriteSettings(CurrentShared());
                     SqliteInventory.WriteUserEmail(Environment.UserName, AppState.UserEmail);
                     if (!string.IsNullOrWhiteSpace(AppState.CurrentUsername))
                         SqliteInventory.UpdateAccountEmail(AppState.CurrentUsername, AppState.UserEmail);
                 }
                 catch
                 {
-                    // keep the local folder pointer even if the database is busy
+                    ok = false;
                 }
             }
 
             NotifyChanged();
+            return ok;
+        }
+
+        /// <summary>Writes SMTP login fields to the shared database and checks they round-trip.</summary>
+        public static bool SaveSmtp()
+        {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["smtp_host"] = string.IsNullOrWhiteSpace(AppState.SmtpHost)
+                    ? Mailer.DefaultHost
+                    : AppState.SmtpHost.Trim(),
+                ["smtp_port"] = (AppState.SmtpPort > 0 ? AppState.SmtpPort : Mailer.DefaultPort).ToString(),
+                ["smtp_user"] = AppState.SmtpUser ?? "",
+                ["smtp_password"] = AppState.SmtpPassword ?? "",
+                ["smtp_ssl"] = AppState.SmtpSsl ? "1" : "0"
+            };
+            try
+            {
+                SqliteInventory.WriteSettings(values);
+                var check = SqliteInventory.ReadSettings();
+                check.TryGetValue("smtp_user", out var user);
+                check.TryGetValue("smtp_password", out var password);
+                return string.Equals(user ?? "", AppState.SmtpUser ?? "", StringComparison.Ordinal) &&
+                       string.Equals(password ?? "", AppState.SmtpPassword ?? "", StringComparison.Ordinal);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         public static void NotifyChanged() => Changed?.Invoke();
@@ -183,8 +224,10 @@ namespace CastRightCatchInvManagement
                 ["product_number_pattern"] = AppState.ProductNumberPattern ?? "",
                 ["product_number_start"] = AppState.ProductNumberStart ?? "",
                 ["reuse_missing_numbers"] = AppState.ReuseMissingNumbers ? "1" : "0",
-                ["smtp_host"] = AppState.SmtpHost ?? "",
-                ["smtp_port"] = AppState.SmtpPort.ToString(),
+                ["smtp_host"] = string.IsNullOrWhiteSpace(AppState.SmtpHost)
+                    ? Mailer.DefaultHost
+                    : AppState.SmtpHost.Trim(),
+                ["smtp_port"] = (AppState.SmtpPort > 0 ? AppState.SmtpPort : Mailer.DefaultPort).ToString(),
                 ["smtp_user"] = AppState.SmtpUser ?? "",
                 ["smtp_password"] = AppState.SmtpPassword ?? "",
                 ["smtp_ssl"] = AppState.SmtpSsl ? "1" : "0",
@@ -217,9 +260,12 @@ namespace CastRightCatchInvManagement
             AppState.ProductNumberStart = Get(shared, "product_number_start", AppState.ProductNumberStart);
             AppState.ReuseMissingNumbers =
                 Get(shared, "reuse_missing_numbers", AppState.ReuseMissingNumbers ? "1" : "0") != "0";
-            AppState.SmtpHost = Get(shared, "smtp_host", AppState.SmtpHost);
+            string smtpHost = Get(shared, "smtp_host", AppState.SmtpHost);
+            AppState.SmtpHost = string.IsNullOrWhiteSpace(smtpHost) ? Mailer.DefaultHost : smtpHost.Trim();
             if (int.TryParse(Get(shared, "smtp_port", AppState.SmtpPort.ToString()), out int port) && port > 0)
                 AppState.SmtpPort = port;
+            else
+                AppState.SmtpPort = Mailer.DefaultPort;
             AppState.SmtpUser = Get(shared, "smtp_user", AppState.SmtpUser);
             AppState.SmtpPassword = Get(shared, "smtp_password", AppState.SmtpPassword);
             AppState.SmtpSsl = Get(shared, "smtp_ssl", AppState.SmtpSsl ? "1" : "0") != "0";
@@ -332,8 +378,8 @@ namespace CastRightCatchInvManagement
         public static int StaySignedInDays { get; set; } = 30;
         /// <summary>Close the app after this many idle hours when Stay signed in is on. Set on Admin.</summary>
         public static int IdleCloseHours { get; set; } = 5;
-        public static string SmtpHost { get; set; } = "";
-        public static int SmtpPort { get; set; } = 587;
+        public static string SmtpHost { get; set; } = Mailer.DefaultHost;
+        public static int SmtpPort { get; set; } = Mailer.DefaultPort;
         public static string SmtpUser { get; set; } = "";
         public static string SmtpPassword { get; set; } = "";
         public static bool SmtpSsl { get; set; } = true;
@@ -356,6 +402,7 @@ namespace CastRightCatchInvManagement
             StaySignedIn = false;
             ViewingOldInventory = false;
             DeniedTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            DataAccess.Clear();
         }
     }
 }

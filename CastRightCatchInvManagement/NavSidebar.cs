@@ -7,7 +7,10 @@ namespace CastRightCatchInvManagement
     {
         private readonly Dictionary<AppPage, CrcNavButton> _buttons = new();
         private readonly List<NavDropGroup> _groups = new();
+        private readonly List<Control> _navItems = new();
         private readonly Workspace _workspace;
+        private NavyScrollPanel _navHost = null!;
+        private int _menuRevision = -1;
         private CrcToggleSwitch _dbToggle = null!;
         private Label _lblCurrentDb = null!;
         private Label _lblOldDb = null!;
@@ -24,10 +27,28 @@ namespace CastRightCatchInvManagement
             var userRow = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 36,
+                Height = 40,
                 BackColor = Theme.NavyDark,
                 Name = "userRow"
             };
+            var logout = new Button
+            {
+                Name = "btnLogOut",
+                Text = "Log out",
+                Dock = DockStyle.Right,
+                Width = 78,
+                FlatStyle = FlatStyle.Flat,
+                Font = Theme.Small,
+                ForeColor = Theme.GoldLight,
+                BackColor = Theme.NavyDark,
+                Cursor = Cursors.Hand,
+                TabStop = false
+            };
+            logout.FlatAppearance.BorderSize = 0;
+            logout.FlatAppearance.MouseOverBackColor = Theme.NavyHover;
+            logout.FlatAppearance.MouseDownBackColor = Theme.NavyMid;
+            logout.Click += (_, _) => Accounts.LogOutAndRestart();
+            new ToolTip { ShowAlways = true }.SetToolTip(logout, "Sign out on this PC");
             var userLabel = new Label
             {
                 Name = "lblNavUser",
@@ -35,9 +56,10 @@ namespace CastRightCatchInvManagement
                 Font = Theme.Small,
                 ForeColor = Theme.GoldLight,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(18, 0, 12, 0)
+                Padding = new Padding(18, 0, 8, 0)
             };
             userRow.Controls.Add(userLabel);
+            userRow.Controls.Add(logout);
 
             var settingsRow = new Panel
             {
@@ -60,83 +82,19 @@ namespace CastRightCatchInvManagement
             settingsRow.Controls.Add(settings);
             settingsRow.Controls.Add(help);
 
-            var navHost = new NavyScrollPanel
+            _navHost = new NavyScrollPanel
             {
                 Dock = DockStyle.Fill,
                 BackColor = Theme.NavyDark,
                 Padding = new Padding(10, 8, 14, 8)
             };
 
-            var items = new List<Control>();
-            void AddButton(AppPage page, string text)
-            {
-                var btn = BuildButton(page, text);
-                btn.Width = 216;
-                items.Add(btn);
-                navHost.Strip.Controls.Add(btn);
-            }
-
-            AddButton(AppPage.Dashboard, "Dashboard");
-
-            var purchaseGroup = new NavDropGroup(
-                "Purchases",
-                AppPage.PurchaseSales,
-                "Purchase Form",
-                AppPage.AddPurchase,
-                workspace,
-                AddPurchase.OpenNew);
-            purchaseGroup.Width = 216;
-            purchaseGroup.ExpandedChanged += () => LayoutNav(navHost, items);
-            purchaseGroup.Register(_buttons);
-            items.Add(purchaseGroup);
-            navHost.Strip.Controls.Add(purchaseGroup);
-            _groups.Add(purchaseGroup);
-
-            var salesGroup = new NavDropGroup(
-                "Sales",
-                AppPage.Sales,
-                "Sales Form",
-                AppPage.AddSale,
-                workspace,
-                AddSale.OpenNew,
-                "Create Sales Order",
-                AppPage.SalesOrder);
-            salesGroup.Width = 216;
-            salesGroup.ExpandedChanged += () => LayoutNav(navHost, items);
-            salesGroup.Register(_buttons);
-            items.Add(salesGroup);
-            navHost.Strip.Controls.Add(salesGroup);
-            _groups.Add(salesGroup);
-
-            AddButton(AppPage.Customers, "Customers");
-            AddButton(AppPage.Vendors, "Vendors");
-            AddButton(AppPage.ItemCodes, "Item Codes");
-
-            var invoiceGroup = new NavDropGroup(
-                "Invoices",
-                AppPage.Invoicing,
-                "Create Invoice",
-                AppPage.InvoicePdf,
-                workspace);
-            invoiceGroup.Width = 216;
-            invoiceGroup.ExpandedChanged += () => LayoutNav(navHost, items);
-            invoiceGroup.Register(_buttons);
-            items.Add(invoiceGroup);
-            navHost.Strip.Controls.Add(invoiceGroup);
-            _groups.Add(invoiceGroup);
-
-            AddButton(AppPage.Debits, "Debits");
-            AddButton(AppPage.Credits, "Credits");
-            AddButton(AppPage.Banking, "Banking");
-            AddButton(AppPage.Reports, "Reports");
-            AddButton(AppPage.Admin, "Admin");
-
-            navHost.Resize += (_, _) => LayoutNav(navHost, items);
-            LayoutNav(navHost, items);
+            _navHost.Resize += (_, _) => LayoutNav(_navHost, _navItems);
+            RebuildMenu();
 
             var dbSwitch = BuildDatabaseSwitch();
 
-            Controls.Add(navHost);
+            Controls.Add(_navHost);
             Controls.Add(settingsRow);
             Controls.Add(userRow);
             Controls.Add(dbSwitch);
@@ -165,6 +123,9 @@ namespace CastRightCatchInvManagement
             }
 
             bool unlocked = AppLock.HasFolder();
+            if (_menuRevision != MenuLayout.Revision)
+                RebuildMenu();
+
             foreach (var pair in _buttons)
             {
                 bool isSettings = pair.Key == AppPage.Settings || pair.Key == AppPage.Help;
@@ -178,12 +139,36 @@ namespace CastRightCatchInvManagement
                     continue;
                 }
 
-                pair.Value.Enabled = (unlocked || isSettings) && TableAccess.CanPage(pair.Key);
+                if (pair.Key == AppPage.PendingChanges)
+                {
+                    bool review = DataAccess.CanReview();
+                    pair.Value.Visible = review;
+                    pair.Value.Enabled = unlocked && review;
+                    pair.Value.Selected = _workspace.CurrentPage == AppPage.PendingChanges;
+                    continue;
+                }
+
+                bool allowed = TableAccess.CanPage(pair.Key);
+                pair.Value.Enabled = (unlocked || isSettings) && allowed;
                 pair.Value.Selected = pair.Key == _workspace.CurrentPage;
+                if (!isSettings && pair.Key != AppPage.Help)
+                    pair.Value.Visible = allowed;
             }
 
             foreach (var group in _groups)
+            {
+                group.Visible = group.ShouldShow();
+                group.ApplyAccess(unlocked);
                 group.SyncExpanded();
+            }
+
+            LayoutNav(_navHost, _navItems);
+
+            if (_workspace.CurrentPage is AppPage current && !TableAccess.CanPage(current))
+            {
+                Navigator.GoTo(AppPage.Dashboard, _workspace);
+                return;
+            }
 
             if (Controls.Find("lblNavUser", true).FirstOrDefault() is Label userLabel)
             {
@@ -204,6 +189,8 @@ namespace CastRightCatchInvManagement
             int width = Math.Max(160, host.ContentWidth);
             foreach (var item in items)
             {
+                if (!item.Visible)
+                    continue;
                 item.Location = new Point(0, y);
                 item.Width = width;
                 y += item.Height + 4;
@@ -235,7 +222,8 @@ namespace CastRightCatchInvManagement
                     SizeMode = PictureBoxSizeMode.Zoom,
                     Location = new Point(18, 18),
                     Size = new Size(64, 64),
-                    BackColor = Color.Transparent
+                    BackColor = Color.Transparent,
+                    Cursor = Cursors.Hand
                 };
                 brand.Controls.Add(pic);
             }
@@ -271,6 +259,17 @@ namespace CastRightCatchInvManagement
             brand.Controls.Add(title);
             brand.Controls.Add(sub);
             brand.Controls.Add(product);
+
+            brand.Cursor = Cursors.Hand;
+            void GoHome(object? _, EventArgs e) => Navigator.GoTo(AppPage.Dashboard);
+            brand.Click += GoHome;
+            foreach (Control child in brand.Controls)
+            {
+                child.Cursor = Cursors.Hand;
+                child.Click += GoHome;
+            }
+
+            new ToolTip { ShowAlways = true }.SetToolTip(brand, "Home");
             return brand;
         }
 
@@ -346,6 +345,96 @@ namespace CastRightCatchInvManagement
             _lblOldDb.Enabled = unlocked;
             _lblCurrentDb.ForeColor = unlocked && !old ? Theme.GoldLight : Color.FromArgb(140, Theme.Cream);
             _lblOldDb.ForeColor = old ? Theme.GoldLight : Color.FromArgb(140, Theme.Cream);
+        }
+
+        private void RebuildMenu()
+        {
+            foreach (var item in _navItems)
+            {
+                _navHost.Strip.Controls.Remove(item);
+                item.Dispose();
+            }
+
+            _navItems.Clear();
+            _groups.Clear();
+            foreach (var key in _buttons.Keys.Where(page =>
+                         page != AppPage.Settings && page != AppPage.Help).ToList())
+                _buttons.Remove(key);
+
+            var layout = MenuLayout.Load();
+            _menuRevision = MenuLayout.Revision;
+
+            void AddButton(AppPage page, string text)
+            {
+                var btn = BuildButton(page, text);
+                btn.Width = 216;
+                _navItems.Add(btn);
+                _navHost.Strip.Controls.Add(btn);
+            }
+
+            foreach (var node in layout.Root)
+            {
+                if (!node.On)
+                    continue;
+                if (node.IsFolder)
+                {
+                    var drop = BuildDrop(node, 0);
+                    if (drop == null)
+                        continue;
+                    drop.Width = 216;
+                    drop.ExpandedChanged += () => LayoutNav(_navHost, _navItems);
+                    drop.Register(_buttons);
+                    _navItems.Add(drop);
+                    _navHost.Strip.Controls.Add(drop);
+                    CollectDrops(drop);
+                    continue;
+                }
+
+                if (!MenuLayout.TryPage(node.Key, out var page))
+                    continue;
+                AddButton(page, MenuLayout.Label(node.Key));
+            }
+
+            AddButton(AppPage.Admin, "Admin");
+            LayoutNav(_navHost, _navItems);
+        }
+
+        private NavDropGroup? BuildDrop(MenuNode node, int depth)
+        {
+            var drop = new NavDropGroup(node.Title, _workspace, depth);
+            foreach (var child in node.Children)
+            {
+                if (!child.On)
+                    continue;
+                if (child.IsFolder)
+                {
+                    if (depth >= 2)
+                        continue;
+                    var nested = BuildDrop(child, depth + 1);
+                    if (nested == null)
+                        continue;
+                    nested.ExpandedChanged += () =>
+                    {
+                        drop.Relayout();
+                        LayoutNav(_navHost, _navItems);
+                    };
+                    drop.AddNested(nested);
+                    continue;
+                }
+
+                if (!MenuLayout.TryPage(child.Key, out var page))
+                    continue;
+                drop.AddPage(new NavMenuItem(page, MenuLayout.Label(child.Key), MenuLayout.OpenAction(page)));
+            }
+
+            return drop.HasContent ? drop : null;
+        }
+
+        private void CollectDrops(NavDropGroup drop)
+        {
+            _groups.Add(drop);
+            foreach (var nested in drop.Nested)
+                CollectDrops(nested);
         }
 
         private CrcNavButton BuildButton(AppPage page, string text)
@@ -599,42 +688,48 @@ namespace CastRightCatchInvManagement
         }
     }
 
-    /// <summary>Expandable sidebar group (Purchases, Sales, Invoices).</summary>
+    internal readonly struct NavMenuItem
+    {
+        public NavMenuItem(AppPage page, string text, Action? open)
+        {
+            Page = page;
+            Text = text;
+            Open = open;
+        }
+
+        public AppPage Page { get; }
+        public string Text { get; }
+        public Action? Open { get; }
+    }
+
+    /// <summary>Expandable sidebar group of pages, and nested dropdowns.</summary>
     internal sealed class NavDropGroup : Panel
     {
-        private readonly AppPage _headerPage;
-        private readonly AppPage _childPage;
-        private readonly AppPage? _extraPage;
+        private readonly List<AppPage> _pages = new();
+        private readonly List<CrcNavButton> _pageButtons = new();
+        private readonly List<NavDropGroup> _nested = new();
+        private readonly List<Control> _order = new();
         private readonly Workspace _workspace;
         private readonly CrcNavButton _header;
         private readonly Button _arrow;
+        private readonly Panel _headerRow;
         private readonly Panel _children;
-        private readonly CrcNavButton _child;
-        private readonly CrcNavButton? _extra;
-        private readonly int _childCount;
+        private readonly int _headerHeight;
         private bool _expanded;
         private bool _manualOpen;
 
         public event Action? ExpandedChanged;
 
-        public NavDropGroup(
-            string headerText,
-            AppPage headerPage,
-            string childText,
-            AppPage childPage,
-            Workspace workspace,
-            Action? openChild = null,
-            string? extraText = null,
-            AppPage extraPage = AppPage.Dashboard,
-            Action? extraOpen = null)
+        public IReadOnlyList<NavDropGroup> Nested => _nested;
+
+        public bool HasContent => _pages.Count > 0 || _nested.Count > 0;
+
+        public NavDropGroup(string headerText, Workspace workspace, int depth)
         {
-            _headerPage = headerPage;
-            _childPage = childPage;
             _workspace = workspace;
-            _childCount = string.IsNullOrWhiteSpace(extraText) ? 1 : 2;
-            _extraPage = _childCount == 2 ? extraPage : null;
+            _headerHeight = depth == 0 ? 38 : 34;
             BackColor = Theme.NavyDark;
-            Height = 38;
+            Height = _headerHeight;
 
             _arrow = new Button
             {
@@ -649,124 +744,194 @@ namespace CastRightCatchInvManagement
             _arrow.FlatAppearance.MouseDownBackColor = Theme.NavyMid;
             _arrow.BackColor = Theme.NavyDark;
             _arrow.Paint += PaintArrow;
-            _arrow.Click += (_, _) =>
-            {
-                if (IsCurrentRelated())
-                    return;
-                _manualOpen = !_manualOpen;
-                SyncExpanded();
-            };
+            _arrow.Click += (_, _) => ToggleOpen();
 
-            _header = new CrcNavButton { Text = headerText, Dock = DockStyle.Fill, Height = 38 };
-            _header.MouseDown += (_, e) =>
+            _header = new CrcNavButton
             {
-                if (e.Button == MouseButtons.Middle)
-                    Navigator.OpenDetached(_headerPage);
+                Text = headerText,
+                Dock = DockStyle.Fill,
+                Height = _headerHeight,
+                Padding = new Padding(16 + (depth * 12), 0, 8, 0)
             };
-            _header.Click += (_, _) => Navigator.GoTo(_headerPage, _workspace);
+            _header.Click += (_, _) => ToggleOpen();
 
-            var headerRow = new Panel { Dock = DockStyle.Top, Height = 38, BackColor = Theme.NavyDark };
-            headerRow.Controls.Add(_header);
-            headerRow.Controls.Add(_arrow);
-
-            _child = new CrcNavButton
-            {
-                Text = childText,
-                Height = 34,
-                Dock = DockStyle.Top
-            };
-            _child.Padding = new Padding(28, 0, 8, 0);
-            _child.MouseDown += (_, e) =>
-            {
-                if (e.Button == MouseButtons.Middle)
-                    Navigator.OpenDetached(_childPage);
-            };
-            _child.Click += (_, _) =>
-            {
-                Navigator.Activate(_workspace);
-                if (openChild != null)
-                    openChild();
-                else
-                    Navigator.GoTo(_childPage, _workspace);
-            };
+            _headerRow = new Panel { Dock = DockStyle.Top, Height = _headerHeight, BackColor = Theme.NavyDark };
+            _headerRow.Controls.Add(_header);
+            _headerRow.Controls.Add(_arrow);
 
             _children = new Panel
             {
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.Top,
+                Height = 0,
                 BackColor = Theme.NavyDark,
-                Visible = false,
-                Padding = new Padding(0, 4, 0, 0)
+                Visible = false
             };
-            if (_extraPage != null)
-            {
-                _extra = new CrcNavButton
-                {
-                    Text = extraText,
-                    Height = 34,
-                    Dock = DockStyle.Top
-                };
-                _extra.Padding = new Padding(28, 0, 8, 0);
-                var extraTarget = _extraPage.Value;
-                _extra.MouseDown += (_, e) =>
-                {
-                    if (e.Button == MouseButtons.Middle)
-                        Navigator.OpenDetached(extraTarget);
-                };
-                _extra.Click += (_, _) =>
-                {
-                    Navigator.Activate(_workspace);
-                    if (extraOpen != null)
-                        extraOpen();
-                    else
-                        Navigator.GoTo(extraTarget, _workspace);
-                };
-                _children.Controls.Add(_extra);
-            }
-
-            _children.Controls.Add(_child);
+            _children.Resize += (_, _) => LayoutChildren();
 
             Controls.Add(_children);
-            Controls.Add(headerRow);
+            Controls.Add(_headerRow);
+        }
+
+        public void AddPage(NavMenuItem item)
+        {
+            var btn = new CrcNavButton
+            {
+                Text = item.Text,
+                Height = 34,
+                Padding = new Padding(28, 0, 8, 0)
+            };
+            var page = item.Page;
+            var open = item.Open;
+            btn.MouseDown += (_, e) =>
+            {
+                if (e.Button == MouseButtons.Middle)
+                    Navigator.OpenDetached(page);
+            };
+            btn.Click += (_, _) =>
+            {
+                Navigator.Activate(_workspace);
+                if (open != null)
+                    open();
+                else
+                    Navigator.GoTo(page, _workspace);
+            };
+            _pages.Add(page);
+            _pageButtons.Add(btn);
+            _order.Add(btn);
+            _children.Controls.Add(btn);
+        }
+
+        public void AddNested(NavDropGroup nested)
+        {
+            _nested.Add(nested);
+            _order.Add(nested);
+            _children.Controls.Add(nested);
         }
 
         public void Register(Dictionary<AppPage, CrcNavButton> buttons)
         {
-            buttons[_headerPage] = _header;
-            buttons[_childPage] = _child;
-            if (_extra != null && _extraPage != null)
-                buttons[_extraPage.Value] = _extra;
+            for (int i = 0; i < _pages.Count; i++)
+                buttons[_pages[i]] = _pageButtons[i];
+            foreach (var nested in _nested)
+                nested.Register(buttons);
+        }
+
+        public bool ShouldShow() =>
+            _pages.Any(PageAllowed) || _nested.Any(group => group.ShouldShow());
+
+        public void ApplyAccess(bool unlocked)
+        {
+            int visibleChildren = 0;
+            for (int i = 0; i < _pages.Count; i++)
+            {
+                bool allowed = PageAllowed(_pages[i]);
+                _pageButtons[i].Enabled = unlocked && allowed;
+                if (allowed)
+                    visibleChildren++;
+            }
+
+            foreach (var nested in _nested)
+            {
+                nested.ApplyAccess(unlocked);
+                if (nested.ShouldShow())
+                    visibleChildren++;
+            }
+
+            _header.Enabled = unlocked && visibleChildren > 0;
+            _arrow.Enabled = _header.Enabled;
+            Relayout();
         }
 
         public void SyncExpanded()
         {
-            bool related = IsCurrentRelated();
-            if (related)
-                _manualOpen = false;
+            Relayout();
+        }
 
+        public void Relayout()
+        {
+            bool related = IsCurrentRelated();
+            _header.Selected = related;
             _arrow.Enabled = _header.Enabled;
             _arrow.BackColor = Theme.NavyDark;
 
-            bool expand = related || _manualOpen;
-            if (expand == _expanded)
-            {
-                Invalidate(true);
-                return;
-            }
-
+            bool expand = _manualOpen;
             _expanded = expand;
-            _children.Visible = _expanded;
-            Height = _expanded ? 38 + 4 + (34 * _childCount) : 38;
+            SuspendLayout();
+            _children.SuspendLayout();
+            // Show the host before measuring. Control.Visible is false while any
+            // ancestor is hidden, so height must come from access, not Visible.
+            _children.Visible = expand;
+            LayoutChildren();
+            int childHeight = expand ? Math.Max(4, ChildStackHeight()) : 0;
+            _children.Height = childHeight;
+            Height = _headerHeight + childHeight;
+            _children.ResumeLayout(true);
+            ResumeLayout(true);
             _arrow.Invalidate();
             ExpandedChanged?.Invoke();
         }
 
-        private bool IsCurrentRelated()
+        private static bool PageAllowed(AppPage page)
         {
-            return _workspace.CurrentPage is AppPage page && IsRelated(page);
+            if (page == AppPage.PendingChanges)
+                return DataAccess.CanReview();
+            return TableAccess.CanPage(page);
         }
 
-        private bool IsRelated(AppPage page) =>
-            page == _headerPage || page == _childPage || page == _extraPage;
+        private bool ChildShouldShow(Control child, int pageIndex)
+        {
+            if (child is NavDropGroup nested)
+                return nested.ShouldShow();
+            return pageIndex < _pages.Count && PageAllowed(_pages[pageIndex]);
+        }
+
+        private int ChildStackHeight()
+        {
+            int y = 4;
+            int pageIndex = 0;
+            foreach (var child in _order)
+            {
+                bool show = ChildShouldShow(child, pageIndex);
+                if (child is CrcNavButton)
+                    pageIndex++;
+                if (!show)
+                    continue;
+                y += child is CrcNavButton ? 34 : Math.Max(child.Height, 34);
+            }
+
+            return y;
+        }
+
+        private void LayoutChildren()
+        {
+            int y = 4;
+            int width = Math.Max(Width, Math.Max(216, _children.ClientSize.Width));
+            int pageIndex = 0;
+            foreach (var child in _order)
+            {
+                bool show = ChildShouldShow(child, pageIndex);
+                if (child is CrcNavButton)
+                    pageIndex++;
+                child.Visible = show;
+                if (!show)
+                    continue;
+                child.Location = new Point(0, y);
+                child.Width = width;
+                if (child is CrcNavButton)
+                    child.Height = 34;
+                y += child.Height;
+            }
+        }
+
+        private void ToggleOpen()
+        {
+            _manualOpen = !_manualOpen;
+            Relayout();
+        }
+
+        private bool IsCurrentRelated() =>
+            _workspace.CurrentPage is AppPage page &&
+            (_pages.Contains(page) || _nested.Any(group => group.IsCurrentRelated()));
 
         private void PaintArrow(object? sender, PaintEventArgs e)
         {

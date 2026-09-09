@@ -133,11 +133,11 @@ namespace CastRightCatchInvManagement
                 LoadUsers();
         }
 
-        /// <summary>Generate a 6-character temporary password, hash it, and email it if SMTP is set.</summary>
+        /// <summary>Generate a temporary password, hash it, and email it if SMTP is set.</summary>
         private void ResetPassword(string username)
         {
             var confirm = MessageBox.Show(
-                "Generate a new 6-character password and email it to this user? They will have to change it at next sign-in.",
+                "Generate a new password for this user? We will email it if SMTP is set. You can also copy the details to send yourself. They will have to change it at next sign-in.",
                 "Reset password",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
@@ -318,9 +318,24 @@ namespace CastRightCatchInvManagement
                 return;
 
             if (admin)
+            {
                 Accounts.AddAdmin(picked);
+                SqliteInventory.AddAccessGroup(picked, AccessGroups.Admin);
+            }
             else
+            {
                 Accounts.AddIt(picked);
+                SqliteInventory.AddAccessGroup(picked, AccessGroups.IT);
+            }
+
+            if (picked.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
+            {
+                AppState.IsAdmin = Accounts.IsAdmin(picked);
+                AppState.IsIt = Accounts.IsIt(picked);
+                TableAccess.Apply(picked);
+                AppLock.NotifyChanged();
+            }
+
             LoadLists();
         }
 
@@ -336,12 +351,18 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            if (admin)
+                SqliteInventory.RemoveAccessGroup(username, AccessGroups.Admin);
+            else
+                SqliteInventory.RemoveAccessGroup(username, AccessGroups.IT);
+
             if (username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
             {
                 if (admin)
                     AppState.IsAdmin = Accounts.IsAdmin(username);
                 else
                     AppState.IsIt = Accounts.IsIt(username);
+                TableAccess.Apply(username);
                 AppLock.NotifyChanged();
             }
 
@@ -404,6 +425,7 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _user;
         private readonly TextBox _name;
         private readonly TextBox _email;
+        private readonly CheckedListBox _groups;
         private readonly TextBox _password;
         private readonly TextBox _confirm;
 
@@ -418,7 +440,7 @@ namespace CastRightCatchInvManagement
             MinimizeBox = false;
             MaximizeBox = false;
             ShowInTaskbar = false;
-            ClientSize = new Size(400, add ? 300 : 280);
+            ClientSize = new Size(400, add ? 470 : 430);
             BackColor = Theme.Cream;
             Font = Theme.Body;
             if (BrandAssets.AppIcon != null)
@@ -430,18 +452,34 @@ namespace CastRightCatchInvManagement
             _name = Field("NAME", 24, y, 350);
             y += 54;
             _email = Field("EMAIL", 24, y, 350);
+            y += 54;
+            var groupLabel = new Label { Text = "GROUPS", Location = new Point(24, y), AutoSize = true };
+            Theme.StyleFieldLabel(groupLabel);
+            _groups = new CheckedListBox
+            {
+                Location = new Point(24, y + 16),
+                Size = new Size(350, 96),
+                CheckOnClick = true,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Theme.Paper,
+                ForeColor = Theme.Navy
+            };
+            foreach (var (name, _) in SqliteInventory.ListAccessGroups())
+                _groups.Items.Add(name);
+            Controls.Add(groupLabel);
+            Controls.Add(_groups);
             _password = new TextBox { Visible = false };
             _confirm = new TextBox { Visible = false };
 
             var hint = new Label
             {
                 Text = add
-                    ? "A random 6-character password will be emailed. They must change it at first sign-in."
-                    : "Save to update name, email, or username. Use Reset password on the user list for a new temporary password.",
+                    ? "A random password is created (capital, number, and symbol). We email it when SMTP is set. Check every group this user should have. Allowed permissions from any group win."
+                    : "Save to update name, email, username, or groups. Allowed permissions from any group win over blocked ones. Use Reset password on the user list for a new temporary password.",
                 Font = Theme.Small,
                 ForeColor = Theme.Muted,
-                Location = new Point(24, y + 54),
-                Size = new Size(350, 48)
+                Location = new Point(24, y + 120),
+                Size = new Size(350, 52)
             };
             Controls.Add(hint);
 
@@ -454,6 +492,15 @@ namespace CastRightCatchInvManagement
                 {
                     _name.Text = account.DisplayName;
                     _email.Text = account.Email;
+                }
+
+                var assigned = SqliteInventory.GetAccessGroups(_username!);
+                foreach (var group in assigned)
+                {
+                    int index = _groups.Items.IndexOf(group);
+                    if (index < 0)
+                        index = _groups.Items.Add(group);
+                    _groups.SetItemChecked(index, true);
                 }
             }
 
@@ -486,24 +533,30 @@ namespace CastRightCatchInvManagement
         /// <summary>Create or update this user. New users get a temp password emailed when possible.</summary>
         private bool Save()
         {
+            if (!CanAssignSelectedGroup(_username))
+                return false;
+
             string user = _user.Text.Trim();
             string error;
             if (_username == null)
             {
-                if (_email.Text.Trim().Length == 0 || !_email.Text.Contains('@'))
+                string email = _email.Text.Trim();
+                if (email.Length > 0 && !email.Contains('@'))
                 {
-                    MessageBox.Show("Enter an email so we can send their login.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show("That email does not look right.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return false;
                 }
 
                 string password = Accounts.GenerateTemporaryPassword();
-                if (!Accounts.CreateUser(user, password, _name.Text, _email.Text, out error))
+                if (!Accounts.CreateUser(user, password, _name.Text, email, out error))
                 {
                     MessageBox.Show(error, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return false;
                 }
 
-                SendLoginEmail(this, _email.Text.Trim(), user, password);
+                if (!ApplySelectedGroup(user))
+                    return false;
+                SendLoginEmail(this, email, user, password);
                 return true;
             }
 
@@ -514,39 +567,103 @@ namespace CastRightCatchInvManagement
             }
 
             SqliteInventory.UpdateAccount(user, _name.Text.Trim(), _email.Text.Trim());
+            if (!ApplySelectedGroup(user))
+                return false;
             if (user.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase) ||
                 _username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
             {
                 AppState.CurrentUsername = user;
                 AppState.CurrentDisplayName = _name.Text.Trim();
                 AppState.UserEmail = _email.Text.Trim();
+                TableAccess.Apply(user);
                 AppLock.NotifyChanged();
             }
 
             return true;
         }
 
-        internal static void SendLoginEmail(IWin32Window? owner, string email, string username, string password)
+        private List<string> SelectedGroups()
         {
-            if (Mailer.TrySendNewUserDetails(email, username, password, out string error))
+            var selected = new List<string>();
+            foreach (var item in _groups.CheckedItems)
+            {
+                string name = item?.ToString()?.Trim() ?? "";
+                if (name.Length > 0)
+                    selected.Add(name);
+            }
+
+            return selected;
+        }
+
+        private bool CanAssignSelectedGroup(string? username)
+        {
+            var selected = SelectedGroups();
+            var previous = string.IsNullOrWhiteSpace(username)
+                ? new List<string>()
+                : SqliteInventory.GetAccessGroups(username);
+            bool addingAdmin = selected.Any(AccessGroups.IsAdmin) && !previous.Any(AccessGroups.IsAdmin);
+            bool removingAdmin = previous.Any(AccessGroups.IsAdmin) && !selected.Any(AccessGroups.IsAdmin);
+            if ((addingAdmin || removingAdmin) && !AppState.IsAdmin)
             {
                 MessageBox.Show(
-                    owner,
-                    "A login email was sent to " + email + ".",
-                    "Users",
+                    addingAdmin
+                        ? "Only an administrator can assign the Admin group."
+                        : "Only an administrator can move someone out of the Admin group.",
+                    Text,
                     MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+                    MessageBoxIcon.Warning);
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool ApplySelectedGroup(string username)
+        {
+            if (!CanAssignSelectedGroup(username))
+                return false;
+            var selected = SelectedGroups();
+            SqliteInventory.SetAccessGroups(username, selected);
+            if (selected.Any(AccessGroups.IsAdmin))
+                Accounts.AddAdmin(username);
+            if (selected.Any(AccessGroups.IsIt))
+                Accounts.AddIt(username);
+            return true;
+        }
+
+        internal static void SendLoginEmail(IWin32Window? owner, string email, string username, string password)
+        {
+            bool sent;
+            string error;
+            if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+            {
+                sent = Mailer.TrySendNewUserDetails(email, username, password, out error);
+            }
+            else
+            {
+                (sent, error) = WaitForm.Run(owner, "Sending login email…", () =>
+                {
+                    bool ok = Mailer.TrySendNewUserDetails(email, username, password, out string err);
+                    return (ok, err);
+                });
+            }
+
+            if (sent)
+            {
+                if (owner is Control host)
+                    ToastAlert.Success(host, "Login email sent to " + email + ".");
+                else
+                    MessageBox.Show(
+                        owner,
+                        "Login email sent to " + email + ".",
+                        "Users",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
                 return;
             }
 
-            MessageBox.Show(
-                owner,
-                "The user was saved, but the email did not send.\n\n" +
-                error + "\n\nGive them these details:\nUsername: " + username +
-                "\nTemporary password: " + password,
-                "Users",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
+            using var form = new LoginShareForm(email, username, password, sent, error);
+            form.ShowDialog(owner);
         }
 
         private TextBox Field(string caption, int x, int y, int width)
@@ -562,6 +679,150 @@ namespace CastRightCatchInvManagement
             Controls.Add(label);
             Controls.Add(box);
             return box;
+        }
+    }
+
+    /// <summary>Shows the new login so IT can copy it when email is not available.</summary>
+    internal sealed class LoginShareForm : Form
+    {
+        public LoginShareForm(
+            string email,
+            string username,
+            string password,
+            bool emailed,
+            string error)
+        {
+            Text = "User login";
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            MinimizeBox = false;
+            MaximizeBox = true;
+            ShowInTaskbar = false;
+            MinimumSize = new Size(520, 460);
+            ClientSize = new Size(560, 500);
+            BackColor = Theme.Cream;
+            Font = Theme.Body;
+            if (BrandAssets.AppIcon != null)
+                Icon = BrandAssets.AppIcon;
+
+            string body = Mailer.NewUserBody(username, password);
+            string status;
+            if (emailed)
+                status = "A login email was sent to " + email + ". You can also copy the details below.";
+            else if (string.IsNullOrWhiteSpace(email))
+                status = "No email was sent. Copy the details below and send them yourself.";
+            else
+                status = "The email did not send" +
+                         (string.IsNullOrWhiteSpace(error) ? "" : ":\r\n\r\n" + error.Trim()) +
+                         "\r\n\r\nCopy the details below and send them yourself.";
+
+            var heading = new Label
+            {
+                Text = "User saved",
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                Dock = DockStyle.Top,
+                Height = 40,
+                Padding = new Padding(20, 12, 20, 0)
+            };
+            var note = new TextBox
+            {
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
+                WordWrap = true,
+                Text = status,
+                Dock = DockStyle.Top,
+                Height = 110,
+                Font = Theme.Small,
+                ForeColor = emailed ? Theme.Success : Theme.Ink,
+                BorderStyle = BorderStyle.None,
+                BackColor = Theme.Cream,
+                Margin = new Padding(0),
+                TabStop = false
+            };
+            var notePad = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 118,
+                Padding = new Padding(20, 4, 20, 8),
+                BackColor = Theme.Cream
+            };
+            notePad.Controls.Add(note);
+
+            var footer = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 56,
+                BackColor = Theme.Cream
+            };
+            var copy = new Button
+            {
+                Text = "Copy text",
+                Size = new Size(120, 34),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Left
+            };
+            Theme.StyleGoldButton(copy);
+            copy.Click += (_, _) =>
+            {
+                try
+                {
+                    Clipboard.SetText(body);
+                    copy.Text = "Copied";
+                }
+                catch
+                {
+                    MessageBox.Show(
+                        this,
+                        "Could not copy. Select the text and press Ctrl+C.",
+                        Text,
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                }
+            };
+            var close = new Button
+            {
+                Text = "Close",
+                DialogResult = DialogResult.OK,
+                Size = new Size(100, 34),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right
+            };
+            Theme.StyleNavyButton(close);
+            footer.Controls.Add(copy);
+            footer.Controls.Add(close);
+            footer.Resize += (_, _) =>
+            {
+                copy.Location = new Point(20, 10);
+                close.Location = new Point(Math.Max(150, footer.Width - 120), 10);
+            };
+            copy.Location = new Point(20, 10);
+            close.Location = new Point(440, 10);
+            AcceptButton = close;
+            CancelButton = close;
+
+            var box = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
+                Text = body,
+                WordWrap = true
+            };
+            Theme.StyleField(box);
+            box.BackColor = Theme.Paper;
+            var boxPad = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(20, 0, 20, 8),
+                BackColor = Theme.Cream
+            };
+            boxPad.Controls.Add(box);
+
+            Controls.Add(boxPad);
+            Controls.Add(notePad);
+            Controls.Add(heading);
+            Controls.Add(footer);
         }
     }
 }

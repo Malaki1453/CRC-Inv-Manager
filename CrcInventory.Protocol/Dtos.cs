@@ -47,6 +47,7 @@ public sealed class RecoverQuestionsResponse
     public string Q1 { get; set; } = "";
     public string Q2 { get; set; } = "";
     public string Q3 { get; set; } = "";
+    public string Error { get; set; } = "";
 }
 
 public sealed class RecoverRequest
@@ -91,6 +92,7 @@ public sealed class AccountListDto
     public bool IsAdmin { get; set; }
     public bool IsIt { get; set; }
     public bool StaySignedIn { get; set; }
+    public bool LoginLocked { get; set; }
 }
 
 public sealed class AccountGetDto
@@ -178,6 +180,11 @@ public sealed class RolesDto
 }
 
 public sealed class SettingsWriteRequest
+{
+    public Dictionary<string, string> Values { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class PrefsWriteRequest
 {
     public Dictionary<string, string> Values { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

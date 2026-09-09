@@ -20,7 +20,7 @@ namespace CastRightCatchInvManagement
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1000, 640);
             Name = "AddPurchase";
-            Text = "Add Purchase";
+            Text = "New Purchase";
             ResumeLayout(false);
         }
 

@@ -18,6 +18,8 @@ namespace CastRightCatchInvManagement
         public static readonly Color Muted = Color.FromArgb(96, 110, 126);
         public static readonly Color Danger = Color.FromArgb(153, 48, 48);
         public static readonly Color DangerFill = Color.FromArgb(255, 236, 230);
+        public static readonly Color WaitAddFill = Color.FromArgb(255, 246, 220);
+        public static readonly Color WaitEditFill = Color.FromArgb(255, 236, 196);
         public static readonly Color Success = Color.FromArgb(28, 110, 62);
         public static readonly Color SuccessFill = Color.FromArgb(230, 245, 234);
         public static readonly Color GridAlt = Color.FromArgb(250, 247, 241);

@@ -1,8 +1,8 @@
 namespace CastRightCatchInvManagement
 {
     /// <summary>
-    /// Invoice list (SO #, customer, ship date, due date, status, paid).
-    /// Double-click a row to open that invoice PDF. If none is stored, offer to build one from the sales on that invoice.
+    /// Invoice list (SO #, customer, ship date, due date, status, paid, PDF Created).
+    /// Double-click a row for View Details. Right-click Open PDF.
     /// </summary>
     public partial class Invoicing : Form, INavigationPage
     {
@@ -11,8 +11,13 @@ namespace CastRightCatchInvManagement
             InitializeComponent();
             Navigator.Register(AppPage.Invoicing, this);
             UiStyle.ApplyDataPage(this, "Invoices", lblTitle, btnUpload, dataGridView1);
+            UiStyle.BindRowEdit(
+                dataGridView1,
+                onEdit: null,
+                "Invoice",
+                "Edit",
+                ("Open PDF", OpenInvoicePdf));
             DataFiles.DataChanged += LoadTable;
-            dataGridView1.CellDoubleClick += dataGridView1_CellDoubleClick;
             LoadTable();
         }
 
@@ -23,15 +28,11 @@ namespace CastRightCatchInvManagement
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.Invoices);
 
         /// <summary>
-        /// Double-click: open the stored PDF for this invoice number.
+        /// Right-click Open PDF: open the stored file for this invoice number.
         /// If there is no PDF, ask whether to create one from matching sales and then open Create Invoice.
         /// </summary>
-        private void dataGridView1_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        private void OpenInvoicePdf(Dictionary<string, string> record)
         {
-            if (e.RowIndex < 0)
-                return;
-
-            var record = DataFiles.GridRowToRecord(dataGridView1, e.RowIndex);
             string invoiceNumber = DataFiles.GetRecord(record, "Invoice #").Trim();
             if (invoiceNumber.Length == 0)
             {
@@ -50,8 +51,11 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            bool created = DataFiles.InvoicePdfWasCreated(record);
             var ask = MessageBox.Show(
-                $"Invoice {invoiceNumber} does not have a PDF yet.\n\nCreate one from the sales on this invoice?",
+                created
+                    ? $"Invoice {invoiceNumber} was created before, but the PDF file was not found in Stored Invoices.\n\nCreate it again from what was stored on this invoice?"
+                    : $"Invoice {invoiceNumber} does not have a PDF yet.\n\nCreate one from what was stored on this invoice?",
                 "Create Invoice PDF",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);

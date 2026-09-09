@@ -1,6 +1,6 @@
 namespace CastRightCatchInvManagement
 {
-    /// <summary>Forced or voluntary password change. New passwords must be at least 8 characters.</summary>
+    /// <summary>Forced or voluntary password change. New passwords need 8+ characters, a capital, a number, and a symbol.</summary>
     internal sealed class ChangePasswordForm : Form
     {
         private readonly string _username;
@@ -33,8 +33,8 @@ namespace CastRightCatchInvManagement
             var hint = new Label
             {
                 Text = requireCurrent
-                    ? "Enter your current password, then choose a new one (at least 8 characters)."
-                    : "Choose a new password (at least 8 characters) and three security questions.",
+                    ? "Enter your current password, then choose a new one (8+ characters, a capital, a number, and a symbol)."
+                    : "Choose a new password (8+ characters, a capital, a number, and a symbol) and three security questions.",
                 Font = Theme.Small,
                 ForeColor = Theme.Muted,
                 Location = new Point(24, 16),

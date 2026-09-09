@@ -139,7 +139,7 @@ namespace CastRightCatchInvManagement
                     grid.RowCount++;
                 }
 
-                var cell = FieldCell(pair.Key, pair.Value);
+                var cell = FieldCell(DisplayCaption(title, pair.Key), pair.Value);
                 grid.Controls.Add(cell, wide ? 0 : col, row);
                 if (wide)
                 {
@@ -167,6 +167,14 @@ namespace CastRightCatchInvManagement
             Controls.Add(scroller);
             Controls.Add(footer);
             Controls.Add(header);
+        }
+
+        private static string DisplayCaption(string title, string key)
+        {
+            if (title.Equals("Purchase", StringComparison.OrdinalIgnoreCase) &&
+                key.Equals("Description", StringComparison.OrdinalIgnoreCase))
+                return "Species";
+            return key;
         }
 
         private static Panel FieldCell(string caption, string value)
@@ -200,7 +208,10 @@ namespace CastRightCatchInvManagement
         {
             return name.Equals("Notes", StringComparison.OrdinalIgnoreCase) ||
                    name.Equals("Address", StringComparison.OrdinalIgnoreCase) ||
-                   name.Equals("Description", StringComparison.OrdinalIgnoreCase);
+                   name.Equals("Description", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals("Sold To", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals("Ship To", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals(DataFiles.InvoiceLinesColumn, StringComparison.OrdinalIgnoreCase);
         }
 
         private static List<KeyValuePair<string, string>> OrderedFields(
@@ -210,26 +221,35 @@ namespace CastRightCatchInvManagement
             string[] prefer = title.Equals("Customer", StringComparison.OrdinalIgnoreCase)
                 ? new[]
                 {
-                    "Code", "Name", "Company", "Phone", "Email", "Contact Name",
+                    DataFiles.RecordStatus, "Code", "Name", "Company", "Phone", "Email", "Contact Name",
                     "Terms", "Credit Limit", "Current Balance", "Established",
-                    "Address", "Description", "Notes"
+                    "Address", DataFiles.RoutingNumber, DataFiles.AccountNumber, "Description", "Notes"
                 }
                 : title.Equals("Vendor", StringComparison.OrdinalIgnoreCase)
                 ? new[]
                 {
-                    "Code", "Name", "Company", "Phone", "Type", "Terms",
-                    "Amount", "Current Balance", "Finalized", "Description", "Notes"
+                    DataFiles.RecordStatus, "Code", "Name", "Company", "Phone", "Contact Name", "Type", "Terms",
+                    "Amount", "Current Balance", "Finalized",
+                    DataFiles.RoutingNumber, DataFiles.AccountNumber, "Description", "Notes"
                 }
                 : Array.Empty<string>();
 
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var list = new List<KeyValuePair<string, string>>();
+            if (TryGet(record, DataFiles.RecordStatus, out _) || prefer.Length > 0)
+            {
+                used.Add(DataFiles.RecordStatus);
+                list.Add(new KeyValuePair<string, string>(
+                    DataFiles.RecordStatus,
+                    DataFiles.StatusOf(record)));
+            }
+
             foreach (var key in prefer)
             {
-                if (!TryGet(record, key, out var value))
+                if (used.Contains(key) || !TryGet(record, key, out var value))
                     continue;
                 used.Add(key);
-                list.Add(new KeyValuePair<string, string>(key, value));
+                list.Add(new KeyValuePair<string, string>(key, DisplayField(key, value)));
             }
 
             foreach (var pair in record)
@@ -237,10 +257,17 @@ namespace CastRightCatchInvManagement
                 string key = pair.Key.Trim();
                 if (key.Length == 0 || !used.Add(key))
                     continue;
-                list.Add(new KeyValuePair<string, string>(key, pair.Value ?? ""));
+                list.Add(new KeyValuePair<string, string>(key, DisplayField(key, pair.Value ?? "")));
             }
 
             return list;
+        }
+
+        private static string DisplayField(string key, string value)
+        {
+            if (key.Equals(DataFiles.AccountNumber, StringComparison.OrdinalIgnoreCase))
+                return DataFiles.MaskAccountNumber(value);
+            return value ?? "";
         }
 
         private static bool TryGet(Dictionary<string, string> record, string key, out string value)

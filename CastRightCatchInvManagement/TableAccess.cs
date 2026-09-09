@@ -3,8 +3,67 @@ using System.Text.Json;
 namespace CastRightCatchInvManagement
 {
     /// <summary>
+    /// Built-in access groups. Admin is locked: Settings and User management, no tables.
+    /// Only an administrator can change IT group permissions.
+    /// </summary>
+    internal static class AccessGroups
+    {
+        public const string Admin = "Admin";
+        public const string IT = "IT";
+
+        public static bool IsAdmin(string? name) =>
+            Admin.Equals((name ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsIt(string? name) =>
+            IT.Equals((name ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsBuiltIn(string? name) => IsAdmin(name) || IsIt(name);
+
+        public static bool CanEdit(string? name)
+        {
+            if (IsAdmin(name))
+                return false;
+            if (IsIt(name))
+                return AppState.IsAdmin;
+            return true;
+        }
+
+        public static bool CanDelete(string? name) => !IsBuiltIn(name);
+
+        public static string LockedAdminJson() =>
+            TableAccess.ToJson(TableAccess.All.Select(item => item.Key));
+
+        public static List<string> Parse(string? stored)
+        {
+            if (string.IsNullOrWhiteSpace(stored))
+                return new List<string>();
+            return stored
+                .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(name => name.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        public static string Join(IEnumerable<string>? groups)
+        {
+            return string.Join(", ", (groups ?? Array.Empty<string>())
+                .Select(name => (name ?? "").Trim())
+                .Where(name => name.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase));
+        }
+
+        public static bool Contains(string? stored, string? name)
+        {
+            name = (name ?? "").Trim();
+            return name.Length > 0 &&
+                   Parse(stored).Any(group => group.Equals(name, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    /// <summary>
     /// Per-user table restrictions set by an administrator.
-    /// Admins and IT always have full access. Missing keys mean allowed.
+    /// Missing keys mean allowed. Admin and IT no longer bypass table rules;
+    /// their access comes from the Admin / IT groups (or a custom group).
     /// </summary>
     internal static class TableAccess
     {
@@ -26,7 +85,7 @@ namespace CastRightCatchInvManagement
             (Invoices, "Invoices"),
             (Customers, "Customers"),
             (Vendors, "Vendors"),
-            (Items, "Item codes"),
+            (Items, "Inventory"),
             (Banking, "Banking"),
             (Debits, "Debits"),
             (Credits, "Credits"),
@@ -36,13 +95,13 @@ namespace CastRightCatchInvManagement
         /// <summary>Load this user’s denied tables into AppState.</summary>
         public static void Apply(string username)
         {
-            AppState.DeniedTables = ParseDenied(SqliteInventory.GetTableAccess(username));
+            string json = SqliteInventory.GetEffectiveTableAccess(username);
+            AppState.DeniedTables = ParseDenied(json);
+            DataAccess.Apply(json);
         }
 
         public static bool Can(string key)
         {
-            if (AppState.IsAdmin || AppState.IsIt)
-                return true;
             if (string.IsNullOrWhiteSpace(key))
                 return true;
             return !AppState.DeniedTables.Contains(key);
@@ -62,6 +121,7 @@ namespace CastRightCatchInvManagement
                 AppPage.Debits => Can(Debits),
                 AppPage.Credits => Can(Credits),
                 AppPage.Reports => Can(Reports),
+                AppPage.PendingChanges => DataAccess.CanReview(),
                 AppPage.Admin or AppPage.ItUsers or AppPage.ItAccess => AppState.IsAdmin || AppState.IsIt,
                 _ => true
             };
@@ -108,8 +168,22 @@ namespace CastRightCatchInvManagement
             var denied = ParseDenied(json);
             if (denied.Count == 0)
                 return "All tables";
+            if (All.All(item => denied.Contains(item.Key)))
+                return "No tables";
             return "Blocked: " + string.Join(", ",
                 All.Where(item => denied.Contains(item.Key)).Select(item => item.Label));
+        }
+
+        public static string UserSummary(string username)
+        {
+            var groups = SqliteInventory.GetAccessGroups(username);
+            string json = SqliteInventory.GetEffectiveTableAccess(username);
+            string access = Summary(json);
+            bool overrides = SqliteInventory.HasAccessOverride(username);
+            if (groups.Count == 0)
+                return overrides ? "Custom  ·  " + access : access;
+            string prefix = AccessGroups.Join(groups);
+            return overrides ? prefix + "  ·  overrides  ·  " + access : prefix + "  ·  " + access;
         }
     }
 }

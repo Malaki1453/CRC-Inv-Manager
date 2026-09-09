@@ -26,6 +26,7 @@ namespace CastRightCatchInvManagement
             [AppPage.Credits]       = () => new Credits(),
             [AppPage.Banking]       = () => new Banking(),
             [AppPage.Reports]       = () => new Reports(),
+            [AppPage.PendingChanges] = () => new PendingChanges(),
             [AppPage.Settings]      = () => new Settings(),
             [AppPage.Help]          = () => new Help(),
             [AppPage.ItUsers]       = () => new ItUsersForm(),
@@ -602,6 +603,7 @@ namespace CastRightCatchInvManagement
             AutoScaleDimensions = new SizeF(7F, 15F);
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
+            WindowChrome.Apply(this);
 
             Host = new Panel
             {

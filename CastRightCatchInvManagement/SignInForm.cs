@@ -39,6 +39,7 @@ namespace CastRightCatchInvManagement
             ForeColor = Theme.Ink;
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
+            WindowChrome.Apply(this);
 
             var header = new Panel
             {

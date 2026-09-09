@@ -17,6 +17,7 @@ namespace CastRightCatchInvManagement
         public bool IsIt { get; set; }
         public bool MustChangePassword { get; set; }
         public bool StaySignedIn { get; set; }
+        public bool LoginLocked { get; set; }
         public string? SessionToken { get; set; }
     }
 
@@ -94,13 +95,17 @@ namespace CastRightCatchInvManagement
 
         public static string GenerateTemporaryPassword()
         {
-            const string letters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+            const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+            const string lower = "abcdefghijkmnopqrstuvwxyz";
             const string digits = "23456789";
-            const string all = letters + digits;
-            var chars = new char[6];
-            chars[0] = letters[RandomNumberGenerator.GetInt32(letters.Length)];
-            chars[1] = digits[RandomNumberGenerator.GetInt32(digits.Length)];
-            for (int i = 2; i < chars.Length; i++)
+            const string symbols = "!@#$%*?-";
+            const string all = upper + lower + digits + symbols;
+            var chars = new char[10];
+            chars[0] = upper[RandomNumberGenerator.GetInt32(upper.Length)];
+            chars[1] = lower[RandomNumberGenerator.GetInt32(lower.Length)];
+            chars[2] = digits[RandomNumberGenerator.GetInt32(digits.Length)];
+            chars[3] = symbols[RandomNumberGenerator.GetInt32(symbols.Length)];
+            for (int i = 4; i < chars.Length; i++)
                 chars[i] = all[RandomNumberGenerator.GetInt32(all.Length)];
 
             for (int i = chars.Length - 1; i > 0; i--)
@@ -261,7 +266,7 @@ namespace CastRightCatchInvManagement
             password ??= "";
             if (password.Length == 0)
                 password = GenerateTemporaryPassword();
-            if (!PasswordMeetsPolicy(password, out error, minimumLength: 6))
+            if (!PasswordMeetsPolicy(password, out error))
                 return false;
 
             if (DataLink.IsRemote)
@@ -306,7 +311,7 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
-            if (!PasswordMeetsPolicy(password, out error, minimumLength: mustChange == true ? 6 : PasswordMinLength))
+            if (!PasswordMeetsPolicy(password, out error))
                 return false;
 
             if (DataLink.IsRemote)
@@ -422,7 +427,8 @@ namespace CastRightCatchInvManagement
                     Email = row.Email,
                     IsAdmin = admins.Contains(row.Username) || row.IsAdmin,
                     IsIt = it.Contains(row.Username) || row.IsIt,
-                    StaySignedIn = row.StaySignedIn
+                    StaySignedIn = row.StaySignedIn,
+                    LoginLocked = row.LoginLocked
                 })
                 .ToList();
         }
@@ -463,6 +469,9 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            if (!SqliteInventory.AllowLogin(username, out error))
+                return false;
+
             if (!SqliteInventory.TryGetAccount(username, out string hash, out string salt, out string display, out string email, out bool mustChange))
             {
                 error = "That username or password is not right.";
@@ -471,9 +480,11 @@ namespace CastRightCatchInvManagement
 
             if (!VerifyPassword(password, hash, salt))
             {
-                error = "That username or password is not right.";
+                error = SqliteInventory.NoteLoginFailure(username);
                 return false;
             }
+
+            SqliteInventory.ClearLoginFails(username);
 
             if (!hash.StartsWith("$argon2id$", StringComparison.Ordinal))
                 SetPassword(username, password, out _);
@@ -491,6 +502,43 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>IT clears a sign-in lock after confirming the person on the phone.</summary>
+        public static bool UnlockLogin(string username, out string error)
+        {
+            error = "";
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+            {
+                error = "Pick a user.";
+                return false;
+            }
+
+            if (!AppState.IsIt && !AppState.IsAdmin)
+            {
+                error = "IT can unlock this account.";
+                return false;
+            }
+
+            if (DataLink.IsRemote)
+            {
+                try
+                {
+                    DataLink.Call<bool>(
+                        ServerOps.AccountsUnlock,
+                        new AccountWriteRequest { Username = username });
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
+            }
+
+            SqliteInventory.ClearLoginFails(username);
+            return true;
+        }
+
         public static void Apply(AppAccount account)
         {
             AppState.CurrentUsername = account.Username;
@@ -502,6 +550,7 @@ namespace CastRightCatchInvManagement
                 AppState.UserEmail = account.Email;
             AppState.CurrentDisplayName = account.DisplayName;
             TableAccess.Apply(account.Username);
+            AppLock.LoadSharedSettings();
         }
 
         private static AppAccount FromAuth(AuthResponse auth)
@@ -601,7 +650,8 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
-            if (!SqliteInventory.TryGetAccount(username, out _, out _, out string display, out string email, out bool mustChange) ||
+            if (!SqliteInventory.AllowLogin(username, out _) ||
+                !SqliteInventory.TryGetAccount(username, out _, out _, out string display, out string email, out bool mustChange) ||
                 mustChange)
             {
                 ClearLocalSession();
@@ -620,6 +670,16 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>Sign out on this PC, drop Stay signed in, and reopen at the login screen.</summary>
+        public static void LogOutAndRestart()
+        {
+            IdleWatch.Stop();
+            BankLiveWatch.Stop();
+            ForgetThisPc();
+            AppState.SignOut();
+            Application.Restart();
+        }
+
         /// <summary>Remove this PC’s stay-signed-in token. Other computers are unchanged.</summary>
         public static void ForgetThisPc()
         {
@@ -631,16 +691,8 @@ namespace CastRightCatchInvManagement
 
         public static void ClearLocalSession()
         {
-            try
-            {
-                string path = LocalSessionPath();
-                if (File.Exists(path))
-                    File.Delete(path);
-            }
-            catch
-            {
-                // keep going even if the local file is locked
-            }
+            TryDelete(LocalSessionPath());
+            TryDelete(LegacySessionPath());
         }
 
         public static void SetStaySignedIn(string username, bool enabled)
@@ -660,7 +712,23 @@ namespace CastRightCatchInvManagement
             return Convert.ToHexString(bytes);
         }
 
+        private static readonly byte[] SessionEntropy = Encoding.UTF8.GetBytes("CastRightCatch.session.v1");
+
         private static string LocalSessionPath()
+        {
+            return Path.Combine(LocalDataFolder(), "session.dat");
+        }
+
+        private static string LocalDataFolder()
+        {
+            string folder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "CastRightCatch");
+            Directory.CreateDirectory(folder);
+            return folder;
+        }
+
+        private static string LegacySessionPath()
         {
             return Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory,
@@ -682,31 +750,83 @@ namespace CastRightCatchInvManagement
                 Token = token,
                 Expires = expires.ToString("o")
             };
-            File.WriteAllText(
-                LocalSessionPath(),
-                JsonSerializer.Serialize(payload, JsonOptions));
+            byte[] json = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, JsonOptions));
+            byte[] protectedBytes = ProtectedData.Protect(json, SessionEntropy, DataProtectionScope.CurrentUser);
+            File.WriteAllBytes(LocalSessionPath(), protectedBytes);
+            TryDelete(LegacySessionPath());
         }
 
         private static (string Username, string Token, DateTime Expires)? ReadLocalSession()
         {
-            string path = LocalSessionPath();
-            if (!File.Exists(path))
+            var modern = ReadProtectedSession(LocalSessionPath());
+            if (modern != null)
+                return modern;
+
+            var legacy = ReadLegacySession();
+            if (legacy == null)
                 return null;
 
+            WriteLocalSession(legacy.Value.Username, legacy.Value.Token, legacy.Value.Expires);
+            return legacy;
+        }
+
+        private static (string Username, string Token, DateTime Expires)? ReadProtectedSession(string path)
+        {
+            if (!File.Exists(path))
+                return null;
             try
             {
-                var payload = JsonSerializer.Deserialize<LocalSession>(File.ReadAllText(path), JsonOptions);
-                if (payload == null ||
-                    string.IsNullOrWhiteSpace(payload.Username) ||
-                    string.IsNullOrWhiteSpace(payload.Token) ||
-                    !DateTime.TryParse(payload.Expires, out var expires))
-                    return null;
+                byte[] protectedBytes = File.ReadAllBytes(path);
+                byte[] json = ProtectedData.Unprotect(protectedBytes, SessionEntropy, DataProtectionScope.CurrentUser);
+                return ParseSession(Encoding.UTF8.GetString(json));
+            }
+            catch
+            {
+                TryDelete(path);
+                return null;
+            }
+        }
 
-                return (payload.Username, payload.Token, expires);
+        private static (string Username, string Token, DateTime Expires)? ReadLegacySession()
+        {
+            string path = LegacySessionPath();
+            if (!File.Exists(path))
+                return null;
+            try
+            {
+                return ParseSession(File.ReadAllText(path));
             }
             catch
             {
                 return null;
+            }
+            finally
+            {
+                TryDelete(path);
+            }
+        }
+
+        private static (string Username, string Token, DateTime Expires)? ParseSession(string json)
+        {
+            var payload = JsonSerializer.Deserialize<LocalSession>(json, JsonOptions);
+            if (payload == null ||
+                string.IsNullOrWhiteSpace(payload.Username) ||
+                string.IsNullOrWhiteSpace(payload.Token) ||
+                !DateTime.TryParse(payload.Expires, out var expires))
+                return null;
+            return (payload.Username, payload.Token, expires);
+        }
+
+        private static void TryDelete(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch
+            {
+                // keep going even if the local file is locked
             }
         }
 
@@ -725,6 +845,65 @@ namespace CastRightCatchInvManagement
         public static bool TryGetSecurityQuestions(string username, out string q1, out string q2, out string q3)
         {
             return SqliteInventory.TryGetSecurityQuestions(username, out q1, out q2, out q3);
+        }
+
+        /// <summary>Forgot-password flow: lockout first, then the three questions.</summary>
+        public static bool TryLoadRecoveryQuestions(
+            string username,
+            out string q1,
+            out string q2,
+            out string q3,
+            out string error)
+        {
+            q1 = q2 = q3 = "";
+            error = "";
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+            {
+                error = "Enter your username.";
+                return false;
+            }
+
+            if (DataLink.IsRemote)
+            {
+                try
+                {
+                    var questions = DataLink.Call<RecoverQuestionsResponse>(
+                        ServerOps.AuthRecoverQuestions,
+                        new RecoverQuestionsRequest { Username = username });
+                    if (!string.IsNullOrWhiteSpace(questions.Error))
+                    {
+                        error = questions.Error;
+                        return false;
+                    }
+
+                    q1 = questions.Q1;
+                    q2 = questions.Q2;
+                    q3 = questions.Q3;
+                    if (!questions.Found)
+                    {
+                        error = "No security questions are set for that user. Ask IT to reset the password.";
+                        return false;
+                    }
+
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
+            }
+
+            if (!SqliteInventory.AllowRecovery(username, out error))
+                return false;
+            if (!SqliteInventory.TryGetSecurityQuestions(username, out q1, out q2, out q3))
+            {
+                error = "No security questions are set for that user. Ask IT to reset the password.";
+                return false;
+            }
+
+            return true;
         }
 
         public static bool SetSecurityQuestions(
@@ -797,9 +976,12 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            if (!SqliteInventory.AllowRecovery(username, out error))
+                return false;
+
             if (!VerifySecurityAnswers(username, a1, a2, a3))
             {
-                error = "Those answers are not right.";
+                error = SqliteInventory.NoteRecoveryFailure(username);
                 return false;
             }
 
@@ -956,24 +1138,13 @@ namespace CastRightCatchInvManagement
             File.Delete(temp);
         }
 
-        private const int PasswordMinLength = 8;
         private const int ArgonMemoryKb = 19456;
         private const int ArgonIterations = 2;
         private const int ArgonParallelism = 1;
         private const int ArgonHashLength = 32;
 
-        private static bool PasswordMeetsPolicy(string password, out string error, int? minimumLength = null)
-        {
-            error = "";
-            int min = minimumLength ?? PasswordMinLength;
-            if (password.Length < min)
-            {
-                error = "Password must be at least " + min + " characters.";
-                return false;
-            }
-
-            return true;
-        }
+        private static bool PasswordMeetsPolicy(string password, out string error) =>
+            PasswordRules.Meets(password, out error);
 
         private static void HashPassword(string password, out string hash, out string salt)
         {

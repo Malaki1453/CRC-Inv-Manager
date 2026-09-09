@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Text.Json;
 
 namespace CastRightCatchInvManagement
 {
@@ -17,10 +18,25 @@ namespace CastRightCatchInvManagement
         public const string BankTransactions = "bank_transactions";
         public const string Debits = "debits";
         public const string Credits = "credits";
+        public const string PendingChanges = "pending_changes";
+        public const string RecordStatus = "Record Status";
+        public const string RecordLive = "Live";
+        public const string RecordWaitingAdd = "Waiting for confirmation to add";
+        public const string RecordWaitingEdit = "Waiting for confirmation to edit";
+        public const string RecordWaitingDelete = "Waiting for confirmation to delete";
         public const string StoredInvoicesFolderName = "Stored Invoices";
         public const string StoredSalesOrdersFolderName = "Stored Sales Orders";
         public const string PdfKindInvoice = "invoice";
         public const string PdfKindSalesOrder = "sales_order";
+        public const string InvoicePdfCreatedColumn = "PDF Created";
+        public const string RoutingNumber = "Routing Number";
+        public const string AccountNumber = "Account Number";
+        public const string InvoiceLinesColumn = "Lines Json";
+        public const string InvoiceDateColumn = "Invoice Date";
+        public const string InvoiceTaxModeColumn = "Tax Mode";
+        public const string InvoiceTypeColumn = "Type";
+        public const string InvoiceTypeIssued = "Issued";
+        public const string InvoiceTypeReceived = "Received";
 
         public static readonly string[] All =
         {
@@ -231,13 +247,14 @@ namespace CastRightCatchInvManagement
 
         public static string SaveStoredPdf(string kind, string key, string fileName, byte[] content)
         {
-            SqliteInventory.SavePdf(kind, key, fileName, content);
-            if (DataLink.IsRemote)
+            if (kind != PdfKindInvoice)
+                SqliteInventory.SavePdf(kind, key, fileName, content);
+
+            if (DataLink.IsRemote && kind != PdfKindInvoice)
                 return WritePdfCopy(kind, fileName, content);
 
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 throw new InvalidOperationException("Select a data folder first.");
-
 
             string? folder = kind == PdfKindInvoice
                 ? GetStoredInvoicesFolder()
@@ -248,6 +265,8 @@ namespace CastRightCatchInvManagement
             Directory.CreateDirectory(folder);
             string path = Path.Combine(folder, fileName);
             File.WriteAllBytes(path, content);
+            if (kind == PdfKindInvoice)
+                MarkInvoicePdfCreated(key);
             return path;
         }
 
@@ -259,24 +278,140 @@ namespace CastRightCatchInvManagement
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) && !DataLink.IsRemote)
                 return null;
 
-            var stored = SqliteInventory.TryGetPdf(kind, key);
-            if (stored != null)
-                return WritePdfCopy(kind, stored.Value.FileName, stored.Value.Content);
+            if (kind != PdfKindInvoice)
+            {
+                var stored = SqliteInventory.TryGetPdf(kind, key);
+                if (stored != null)
+                    return WritePdfCopy(kind, stored.Value.FileName, stored.Value.Content);
+            }
 
             string? disk = FindPdfOnDisk(kind, key);
             if (disk == null)
                 return null;
 
-            try
+            if (kind != PdfKindInvoice)
             {
-                SqliteInventory.SavePdf(kind, key, Path.GetFileName(disk), File.ReadAllBytes(disk));
-            }
-            catch
-            {
-                // still open the file even if the database write fails
+                try
+                {
+                    SqliteInventory.SavePdf(kind, key, Path.GetFileName(disk), File.ReadAllBytes(disk));
+                }
+                catch
+                {
+                    // still open the file even if the database write fails
+                }
             }
 
             return disk;
+        }
+
+        public static bool InvoicePdfWasCreated(Dictionary<string, string> invoice)
+        {
+            return IsTrueFlag(GetRecord(invoice, InvoicePdfCreatedColumn));
+        }
+
+        public static void MarkInvoicePdfCreated(string? invoiceNumber)
+        {
+            invoiceNumber = (invoiceNumber ?? "").Trim();
+            if (invoiceNumber.Length == 0)
+                return;
+
+            SqliteInventory.EnsureColumns(Invoices, InvoicePdfCreatedColumn);
+            foreach (var (id, fields) in SqliteInventory.ReadWithIds(Invoices))
+            {
+                if (!GetRecord(fields, "Invoice #").Trim()
+                        .Equals(invoiceNumber, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (IsTrueFlag(GetRecord(fields, InvoicePdfCreatedColumn)))
+                    return;
+
+                fields[InvoicePdfCreatedColumn] = "true";
+                SqliteInventory.UpdateById(Invoices, id, fields);
+                NotifyDataChanged();
+                return;
+            }
+        }
+
+        public static void MigrateInvoicePdfsOutOfDatabase()
+        {
+            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+                return;
+
+            SqliteInventory.EnsureCreated();
+            SqliteInventory.EnsureColumns(Invoices, InvoicePdfCreatedColumn);
+            EnsureStoredInvoicesFolder();
+
+            var created = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string? folder = GetStoredInvoicesFolder();
+            if (folder != null)
+                Directory.CreateDirectory(folder);
+
+            foreach (var (key, fileName, content) in SqliteInventory.ListPdfs(PdfKindInvoice))
+            {
+                if (key.Length > 0)
+                    created.Add(key);
+                if (folder == null || content.Length == 0)
+                    continue;
+
+                string name = string.IsNullOrWhiteSpace(fileName) ? ("Invoice " + key + ".pdf") : fileName;
+                string path = Path.Combine(folder, name);
+                if (!File.Exists(path))
+                {
+                    try
+                    {
+                        File.WriteAllBytes(path, content);
+                    }
+                    catch
+                    {
+                        // keep going so the database blob can still be removed
+                    }
+                }
+            }
+
+            SqliteInventory.DeletePdfs(PdfKindInvoice);
+
+            if (folder != null && Directory.Exists(folder))
+            {
+                foreach (var path in Directory.GetFiles(folder, "*.pdf"))
+                {
+                    string stem = Path.GetFileNameWithoutExtension(path);
+                    string key = stem;
+                    if (stem.StartsWith("Invoice ", StringComparison.OrdinalIgnoreCase))
+                    {
+                        key = stem["Invoice ".Length..].Trim();
+                        int dash = key.IndexOf(" - ", StringComparison.Ordinal);
+                        if (dash >= 0)
+                            key = key[..dash].Trim();
+                    }
+
+                    if (key.Length > 0)
+                        created.Add(key);
+                }
+            }
+
+            foreach (var (id, fields) in SqliteInventory.ReadWithIds(Invoices))
+            {
+                string current = GetRecord(fields, InvoicePdfCreatedColumn);
+                if (IsTrueFlag(current))
+                    continue;
+
+                string number = GetRecord(fields, "Invoice #").Trim();
+                string next = number.Length > 0 && created.Contains(number) ? "true" : "false";
+                if (current.Equals(next, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                fields[InvoicePdfCreatedColumn] = next;
+                SqliteInventory.UpdateById(Invoices, id, fields);
+            }
+        }
+
+        private static bool IsTrueFlag(string? text)
+        {
+            string value = (text ?? "").Trim();
+            return value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                   value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+                   value.Equals("y", StringComparison.OrdinalIgnoreCase) ||
+                   value.Equals("1", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string? FindPdfOnDisk(string kind, string key)
@@ -467,6 +602,7 @@ namespace CastRightCatchInvManagement
             SqliteInventory.EnsureCreated();
             SqliteInventory.ImportCsvsIfEmpty();
             SqliteInventory.ImportPdfsFromFolders();
+            MigrateInvoicePdfsOutOfDatabase();
             SyncTermStartFromFiles();
         }
 
@@ -522,35 +658,42 @@ namespace CastRightCatchInvManagement
             return baseName switch
             {
                 PurchaseSales =>
-                    "PO #,Vendor Invoice #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Volume Received,Price Paid / LB,Overhead / LB,Freight / LB,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status",
+                    "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Volume Received,Price Paid / LB,Overhead / LB,Freight / LB,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Record Status",
 
                 Sales =>
-                    "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status",
+                    "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Record Status",
 
                 Customers =>
-                    "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes,Description",
+                    "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes,Description,Routing Number,Account Number,Record Status",
 
                 Vendors =>
-                    "Code,Name,Company,Type,Terms,Amount,Phone,Current Balance,Notes,Description,Finalized",
+                    "Code,Name,Company,Type,Terms,Amount,Phone,Contact Name,Current Balance,Notes,Description,Finalized,Routing Number,Account Number,Record Status",
 
                 ItemCodes =>
-                    "Code,Description,COO,Farmed / Wild,Fresh / Frozen,Proc Country,Species,Scientific Name",
+                    "Code,Description,COO,Farmed / Wild,Fresh / Frozen,Proc Country,Species,Scientific Name,Record Status",
 
                 Invoices =>
-                    "Invoice #,SO #,Customer Code,Customer,Ship Date,Due Date,Amount,Paid,Outstanding,Status,Payment Date,Payment Method",
+                    "Invoice #,Type,SO #,PO #,Customer Code,Customer,Vendor Code,Vendor,Ship Date,Due Date,Amount,Paid,Outstanding,Status,Payment Date,Payment Method,PDF Created,Invoice Date,Terms,Ship Via,Sales Rep,Sold To,Ship To,Discount,Freight,Tax,Tax Mode,Lines Json,Record Status",
 
                 BankTransactions =>
-                    "Date,Amount,Method,Reference,Invoice #,SO #,Customer Code,Notes",
+                    "Date,Amount,Method,Reference,Invoice #,SO #,Customer Code,Notes,Record Status",
 
                 Debits =>
-                    "Debit #,Date Submitted,Vendor Code,Vendor,PO #,Date Received,Date of Issue,Item Code,Description,Reason,LBS Received,Price / LB,Value,LBS Claimed,Claim Value,Claim %,Sales Rep,Vendor Approved,Notes",
+                    "Debit #,Date Submitted,Vendor Code,Vendor,PO #,Date Received,Date of Issue,Item Code,Description,Reason,LBS Received,Price / LB,Value,LBS Claimed,Claim Value,Claim %,Sales Rep,Vendor Approved,Notes,Record Status",
 
                 Credits =>
-                    "Credit #,Date Submitted,Customer Code,Customer,Invoice #,Date Received,Date of Issue,Item Code,Description,Reason,LBS Received,Price / LB,Value,LBS Claimed,Claim Value,Claim %,Contact,Approved,Notes",
+                    "Credit #,Date Submitted,Customer Code,Customer,Invoice #,Date Received,Date of Issue,Item Code,Description,Reason,LBS Received,Price / LB,Value,LBS Claimed,Claim Value,Claim %,Contact,Approved,Notes,Record Status",
+
+                PendingChanges =>
+                    "Table,Action,Summary,Match Json,Before Json,After Json,Requested By,Requested At,Status,Reviewed By,Reviewed At",
 
                 _ => ""
             };
         }
+
+        /// <summary>Rows this user is allowed to see. Blocked parties/products and hidden columns are omitted.</summary>
+        public static List<Dictionary<string, string>> VisibleRecords(string baseName) =>
+            ReadRecords(baseName);
 
         public static List<Dictionary<string, string>> ReadRecords(string baseName)
         {
@@ -558,16 +701,73 @@ namespace CastRightCatchInvManagement
                 return new List<Dictionary<string, string>>();
 
             if (baseName == Customers)
-                EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes", "Description");
+                EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes", "Description", RoutingNumber, AccountNumber);
             if (baseName == Vendors)
-                EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes", "Description");
+                EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes", "Description", RoutingNumber, AccountNumber);
 
             return SqliteInventory.Read(baseName);
+        }
+
+        /// <summary>Every row, including blocked ones. Used for numbering and unique-code checks.</summary>
+        public static List<Dictionary<string, string>> ReadAllRecords(string baseName)
+        {
+            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+                return new List<Dictionary<string, string>>();
+            return SqliteInventory.ReadUnrestricted(baseName);
         }
 
         public static string GetRecord(Dictionary<string, string> record, string column)
         {
             return record.TryGetValue(column, out var value) ? value ?? "" : "";
+        }
+
+        public static string DigitsOnly(string? text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return "";
+            var chars = text.Where(char.IsDigit).ToArray();
+            return new string(chars);
+        }
+
+        public static string MaskAccountNumber(string? raw)
+        {
+            string digits = DigitsOnly(raw);
+            if (digits.Length == 0)
+                return "";
+            if (digits.Length <= 4)
+                return digits;
+            return "•••• " + digits[^4..];
+        }
+
+        public static string ResolveAccountNumber(string typed, string stored)
+        {
+            string typedDigits = DigitsOnly(typed);
+            string storedDigits = DigitsOnly(stored);
+            if (typedDigits.Length == 0)
+                return "";
+            if (storedDigits.Length > 4 &&
+                (typedDigits == storedDigits[^4..] ||
+                 typed.Trim() == MaskAccountNumber(storedDigits)))
+                return storedDigits;
+            return typedDigits;
+        }
+
+        /// <summary>Row workflow state. Blank (older rows) counts as Live.</summary>
+        public static string StatusOf(Dictionary<string, string> record)
+        {
+            string value = GetRecord(record, RecordStatus).Trim();
+            return value.Length == 0 ? RecordLive : value;
+        }
+
+        public static bool IsWaitingAdd(Dictionary<string, string> record) =>
+            StatusOf(record).Equals(RecordWaitingAdd, StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsWaiting(Dictionary<string, string> record)
+        {
+            string status = StatusOf(record);
+            return status.Equals(RecordWaitingAdd, StringComparison.OrdinalIgnoreCase) ||
+                   status.Equals(RecordWaitingEdit, StringComparison.OrdinalIgnoreCase) ||
+                   status.Equals(RecordWaitingDelete, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>Parse a money or quantity cell ($1,234.50), (50), or blank → 0.</summary>
@@ -602,6 +802,8 @@ namespace CastRightCatchInvManagement
             {
                 foreach (var sale in ReadRecords(Sales))
                 {
+                    if (IsWaitingAdd(sale))
+                        continue;
                     revenue += ParseMoney(GetRecord(sale, "Amount"));
                     string po = SalePo(sale);
                     string so = GetRecord(sale, "SO #").Trim();
@@ -615,14 +817,18 @@ namespace CastRightCatchInvManagement
             else if (TableAccess.Can(TableAccess.Invoices))
             {
                 foreach (var invoice in ReadRecords(Invoices))
+                {
+                    if (IsWaitingAdd(invoice) || IsReceivedInvoice(invoice))
+                        continue;
                     revenue += ParseMoney(GetRecord(invoice, "Amount"));
+                }
             }
 
             if (TableAccess.Can(TableAccess.Invoices))
             {
                 foreach (var invoice in ReadRecords(Invoices))
                 {
-                    if (InvoiceIsClosed(invoice))
+                    if (IsWaitingAdd(invoice) || IsReceivedInvoice(invoice) || InvoiceIsClosed(invoice))
                         continue;
 
                     decimal due = InvoiceOutstanding(invoice);
@@ -643,6 +849,8 @@ namespace CastRightCatchInvManagement
             {
                 foreach (var invoice in ReadRecords(Invoices))
                 {
+                    if (IsWaitingAdd(invoice) || IsReceivedInvoice(invoice))
+                        continue;
                     string so = GetRecord(invoice, "SO #").Trim();
                     string number = GetRecord(invoice, "Invoice #").Trim();
                     string key = so.Length > 0 ? so : number;
@@ -671,6 +879,33 @@ namespace CastRightCatchInvManagement
             decimal amount = ParseMoney(GetRecord(invoice, "Amount"));
             decimal paid = ParseMoney(GetRecord(invoice, "Paid"));
             return Math.Max(0, amount - paid);
+        }
+
+        internal static bool IsReceivedInvoice(Dictionary<string, string> invoice)
+        {
+            string type = GetRecord(invoice, InvoiceTypeColumn).Trim();
+            if (type.Equals(InvoiceTypeReceived, StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (type.Equals(InvoiceTypeIssued, StringComparison.OrdinalIgnoreCase))
+                return false;
+            return GetRecord(invoice, "Vendor").Trim().Length > 0 &&
+                   GetRecord(invoice, "Customer").Trim().Length == 0;
+        }
+
+        public static string CompanyAddressBlock()
+        {
+            var lines = new List<string>();
+            string name = (AppState.BusinessName ?? "").Trim();
+            if (name.Length == 0)
+                name = "Cast Right Catch Co.";
+            lines.Add(name);
+            string address = (AppState.Address ?? "").Trim();
+            if (address.Length > 0)
+                lines.Add(address);
+            string phone = (AppState.Phone ?? "").Trim();
+            if (phone.Length > 0)
+                lines.Add(phone);
+            return string.Join(Environment.NewLine, lines);
         }
 
         internal static bool InvoiceIsClosed(Dictionary<string, string> invoice)
@@ -795,6 +1030,81 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        internal static bool TryInvoiceDraft(Dictionary<string, string> invoice, out InvoiceDraft draft)
+        {
+            draft = InvoiceDraft.FromJson(GetRecord(invoice, InvoiceLinesColumn)) ?? new InvoiceDraft();
+            if (draft.Lines.Count > 0)
+            {
+                if (draft.InvoiceNumber.Length == 0)
+                    draft.InvoiceNumber = GetRecord(invoice, "Invoice #").Trim();
+                return true;
+            }
+
+            return false;
+        }
+
+        internal static void UpsertInvoiceFromDraft(InvoiceDraft draft, DateTime due)
+        {
+            string number = (draft.InvoiceNumber ?? "").Trim();
+            if (number.Length == 0)
+                throw new InvalidOperationException("Enter an invoice number.");
+
+            Dictionary<string, string>? existing = null;
+            foreach (var record in ReadAllRecords(Invoices))
+            {
+                if (!GetRecord(record, "Invoice #").Trim()
+                        .Equals(number, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                existing = record;
+                break;
+            }
+
+            var values = existing == null
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(existing, StringComparer.OrdinalIgnoreCase);
+
+            decimal paid = ParseMoney(GetRecord(values, "Paid"));
+            decimal total = draft.InvoiceTotal;
+            values["Invoice #"] = number;
+            values[InvoiceTypeColumn] = draft.Received ? InvoiceTypeReceived : InvoiceTypeIssued;
+            values["SO #"] = draft.SoNumber ?? "";
+            values["PO #"] = draft.PoNumber ?? "";
+            values["Customer Code"] = draft.Received ? "" : (draft.CustomerCode ?? "");
+            values["Customer"] = draft.Received ? "" : (draft.CustomerName ?? "");
+            values["Vendor Code"] = draft.Received ? (draft.VendorCode ?? "") : "";
+            values["Vendor"] = draft.Received ? (draft.VendorName ?? "") : "";
+            values["Ship Date"] = CsvIO.Date(draft.ShipDate);
+            values["Due Date"] = CsvIO.Date(due);
+            values["Amount"] = CsvIO.Money((double)total);
+            if (GetRecord(values, "Paid").Length == 0)
+                values["Paid"] = "";
+            values["Outstanding"] = CsvIO.Money((double)Math.Max(0m, total - paid));
+            if (GetRecord(values, "Status").Length == 0)
+                values["Status"] = "Open";
+            values[InvoicePdfCreatedColumn] = "true";
+            values[InvoiceDateColumn] = CsvIO.Date(draft.InvoiceDate);
+            values["Terms"] = draft.Terms ?? "";
+            values["Ship Via"] = draft.ShipVia ?? "";
+            values["Sales Rep"] = draft.SalesRep ?? "";
+            values["Sold To"] = draft.SoldTo ?? "";
+            values["Ship To"] = draft.ShipTo ?? "";
+            values["Discount"] = draft.Discount.ToString("0.##", CultureInfo.InvariantCulture);
+            values["Freight"] = draft.Freight.ToString("0.##", CultureInfo.InvariantCulture);
+            values["Tax"] = draft.TaxRate.ToString("0.##", CultureInfo.InvariantCulture);
+            values[InvoiceTaxModeColumn] = draft.TaxIsPercent ? "%" : "#";
+            values[InvoiceLinesColumn] = draft.ToJson();
+
+            MutateResult result = existing == null
+                ? MutateInsert(Invoices, values)
+                : MutateUpdate(
+                    Invoices,
+                    row => GetRecord(row, "Invoice #").Trim()
+                        .Equals(number, StringComparison.OrdinalIgnoreCase),
+                    values);
+            if (!result.Ok)
+                throw new InvalidOperationException(result.Message);
+        }
+
         public static List<Dictionary<string, string>> FindInvoiceSourcesForInvoice(
             string? invoiceNumber,
             string? soNumber,
@@ -873,6 +1183,58 @@ namespace CastRightCatchInvManagement
             }
 
             return result;
+        }
+
+        public static List<Dictionary<string, string>> FindPurchaseSourcesForKey(
+            string? key,
+            string? vendorCode = null,
+            string? vendorName = null)
+        {
+            var result = new List<Dictionary<string, string>>();
+            string needle = NormalizePo(key);
+            if (needle.Length < 3)
+                return result;
+
+            var seenItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var purchase in ReadRecords(PurchaseSales))
+            {
+                if (!MatchesVendor(purchase, vendorCode, vendorName))
+                    continue;
+
+                string po = NormalizePo(GetRecord(purchase, "PO #"));
+                if (!po.Equals(needle, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string item = GetRecord(purchase, "Item Code").Trim();
+                string distinct = item.Length > 0 ? item : GetRecord(purchase, "Description").Trim();
+                if (distinct.Length == 0)
+                    distinct = result.Count.ToString();
+                if (!seenItems.Add(distinct))
+                    continue;
+
+                result.Add(purchase);
+            }
+
+            return result;
+        }
+
+        public static AutoCompleteStringCollection PurchasePoSuggestions(
+            string? vendorCode = null,
+            string? vendorName = null)
+        {
+            var source = new AutoCompleteStringCollection();
+            foreach (var record in ReadRecords(PurchaseSales))
+            {
+                if (!MatchesVendor(record, vendorCode, vendorName))
+                    continue;
+
+                string po = GetRecord(record, "PO #").Trim();
+                if (po.Length == 0 || source.Contains(po))
+                    continue;
+                source.Add(po);
+            }
+
+            return source;
         }
 
         public static List<Dictionary<string, string>> FindSalesOrderSourcesForKey(
@@ -1137,7 +1499,7 @@ namespace CastRightCatchInvManagement
             string prefix = $"CRC{year:00}-";
             var used = new List<int>();
 
-            foreach (var record in ReadRecords(PurchaseSales))
+            foreach (var record in ReadAllRecords(PurchaseSales))
             {
                 string po = GetRecord(record, "PO #");
                 if (!po.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
@@ -1157,7 +1519,7 @@ namespace CastRightCatchInvManagement
         public static string NextNumber(string baseName, string column, int fallback)
         {
             var used = new List<int>();
-            foreach (var record in ReadRecords(baseName))
+            foreach (var record in ReadAllRecords(baseName))
             {
                 if (int.TryParse(GetRecord(record, column).Trim(), out int n))
                     used.Add(n);
@@ -1196,7 +1558,7 @@ namespace CastRightCatchInvManagement
                 floor = start;
 
             var used = new List<int>();
-            foreach (var record in ReadRecords(baseName))
+            foreach (var record in ReadAllRecords(baseName))
             {
                 if (TryReadPatternNumber(GetRecord(record, column), prefix, suffix, out int n))
                     used.Add(n);
@@ -1334,8 +1696,308 @@ namespace CastRightCatchInvManagement
 
         public static void AppendNamedRow(string baseName, Dictionary<string, string> values)
         {
-            SqliteInventory.Insert(baseName, values);
+            var result = MutateInsert(baseName, values);
+            if (!result.Ok)
+                throw new InvalidOperationException(result.Message);
             NotifyDataChanged();
+        }
+
+        public static MutateResult MutateInsert(string baseName, Dictionary<string, string> values)
+        {
+            var gate = GateWrite(baseName, "add", values, null);
+            if (!gate.Ok)
+                return gate;
+
+            values[RecordStatus] = gate.Queued ? RecordWaitingAdd : RecordLive;
+            SqliteInventory.Insert(baseName, values);
+            if (gate.Queued)
+                QueuePending(baseName, "add", values, null);
+            NotifyDataChanged();
+            return gate.Queued ? MutateResult.QueuedForReview() : MutateResult.Saved();
+        }
+
+        public static MutateResult MutateUpdate(
+            string baseName,
+            Func<Dictionary<string, string>, bool> match,
+            Dictionary<string, string> values)
+        {
+            Dictionary<string, string>? before = null;
+            foreach (var record in ReadAllRecords(baseName))
+            {
+                if (!match(record))
+                    continue;
+                before = record;
+                break;
+            }
+
+            var gate = GateWrite(baseName, "edit", values, before);
+            if (!gate.Ok)
+                return gate;
+
+            values[RecordStatus] = gate.Queued ? RecordWaitingEdit : RecordLive;
+            bool updated = ReplaceMatchingRowRaw(baseName, match, values);
+            if (!updated)
+                return MutateResult.Deny("Could not find that record to update.");
+            if (gate.Queued)
+                QueuePending(baseName, "edit", values, before);
+            NotifyDataChanged();
+            return gate.Queued ? MutateResult.QueuedForReview() : MutateResult.Saved();
+        }
+
+        public static MutateResult MutateDelete(string baseName, Dictionary<string, string> record)
+        {
+            var gate = GateWrite(baseName, "delete", record, record);
+            if (!gate.Ok)
+                return gate;
+
+            var identity = IdentityOf(baseName, record);
+            bool found = false;
+            foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(baseName))
+            {
+                if (!MatchesIdentity(identity, map))
+                    continue;
+                found = true;
+                if (gate.Queued)
+                {
+                    map[RecordStatus] = RecordWaitingDelete;
+                    SqliteInventory.UpdateById(baseName, id, map);
+                    QueuePending(baseName, "delete", record, record);
+                }
+                else
+                {
+                    SqliteInventory.DeleteById(baseName, id);
+                }
+
+                break;
+            }
+
+            if (!found)
+                return MutateResult.Deny("Could not find that record to delete.");
+            NotifyDataChanged();
+            return gate.Queued ? MutateResult.QueuedForReview() : MutateResult.Saved();
+        }
+
+        private static MutateResult GateWrite(
+            string baseName,
+            string action,
+            Dictionary<string, string> after,
+            Dictionary<string, string>? before)
+        {
+            if (DataAccess.WriteMode(baseName) == DataWriteMode.View)
+                return MutateResult.Deny("This account can only view that table.");
+            if (DataAccess.IsCompanyBlocked(after) || DataAccess.IsCompanyBlocked(before))
+                return MutateResult.Deny("You cannot work with that company.");
+
+            if (DataAccess.WriteMode(baseName) == DataWriteMode.Confirm)
+                return MutateResult.QueuedForReview();
+            return MutateResult.Saved();
+        }
+
+        private static void QueuePending(
+            string baseName,
+            string action,
+            Dictionary<string, string> after,
+            Dictionary<string, string>? before)
+        {
+            string name = after.TryGetValue("Name", out var n) ? n :
+                after.TryGetValue("Vendor", out n) ? n :
+                after.TryGetValue("Customer", out n) ? n :
+                after.TryGetValue("PO #", out n) ? n :
+                after.TryGetValue("Code", out n) ? n : "";
+            string summary = action + " · " + baseName + (name.Length > 0 ? " · " + name : "");
+            SqliteInventory.Insert(PendingChanges, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Table"] = baseName,
+                ["Action"] = action,
+                ["Summary"] = summary,
+                ["Match Json"] = JsonSerializer.Serialize(IdentityOf(baseName, before ?? after)),
+                ["Before Json"] = before == null ? "" : JsonSerializer.Serialize(before),
+                ["After Json"] = action == "delete" ? "" : JsonSerializer.Serialize(after),
+                ["Requested By"] = AppState.CurrentUsername,
+                ["Requested At"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm"),
+                ["Status"] = "pending"
+            });
+        }
+
+        public static Dictionary<string, string> IdentityOf(
+            string baseName,
+            Dictionary<string, string> record)
+        {
+            string[] keys = baseName switch
+            {
+                PurchaseSales => new[] { "PO #", "Item Code" },
+                Sales => new[] { "PO #", "Item Code", "Customer Code" },
+                Customers or Vendors or ItemCodes => new[] { "Code" },
+                Invoices => new[] { "Invoice #" },
+                Debits => new[] { "Debit #" },
+                Credits => new[] { "Credit #" },
+                _ => Array.Empty<string>()
+            };
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (keys.Length == 0)
+            {
+                foreach (var pair in record)
+                    map[pair.Key] = pair.Value ?? "";
+                return map;
+            }
+
+            foreach (var key in keys)
+                map[key] = GetRecord(record, key);
+            return map;
+        }
+
+        public static bool MatchesIdentity(
+            Dictionary<string, string> identity,
+            Dictionary<string, string> record)
+        {
+            foreach (var pair in identity)
+            {
+                if (!GetRecord(record, pair.Key).Equals(pair.Value ?? "", StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+
+            return identity.Count > 0;
+        }
+
+        public static bool AcceptPending(Dictionary<string, string> pending)
+        {
+            string table = GetRecord(pending, "Table");
+            string action = GetRecord(pending, "Action");
+            var after = ParseJsonMap(GetRecord(pending, "After Json"));
+            var match = ParseJsonMap(GetRecord(pending, "Match Json"));
+            DataAccess.ApplyingReview = true;
+            try
+            {
+                if (action.Equals("add", StringComparison.OrdinalIgnoreCase) ||
+                    action.Equals("edit", StringComparison.OrdinalIgnoreCase))
+                {
+                    after[RecordStatus] = RecordLive;
+                    ReplaceMatchingRowRaw(table, row => MatchesIdentity(match, row), after);
+                }
+                else if (action.Equals("delete", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(table))
+                    {
+                        if (!MatchesIdentity(match, map))
+                            continue;
+                        SqliteInventory.DeleteById(table, id);
+                        break;
+                    }
+                }
+            }
+            finally
+            {
+                DataAccess.ApplyingReview = false;
+            }
+
+            return MarkPending(pending, "accepted");
+        }
+
+        public static bool RejectPending(Dictionary<string, string> pending)
+        {
+            string table = GetRecord(pending, "Table");
+            string action = GetRecord(pending, "Action");
+            var before = ParseJsonMap(GetRecord(pending, "Before Json"));
+            var match = ParseJsonMap(GetRecord(pending, "Match Json"));
+            DataAccess.ApplyingReview = true;
+            try
+            {
+                if (action.Equals("add", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(table))
+                    {
+                        if (!MatchesIdentity(match, map))
+                            continue;
+                        SqliteInventory.DeleteById(table, id);
+                        break;
+                    }
+                }
+                else if (action.Equals("edit", StringComparison.OrdinalIgnoreCase))
+                {
+                    before[RecordStatus] = RecordLive;
+                    ReplaceMatchingRowRaw(table, row => MatchesIdentity(match, row), before);
+                }
+                else if (action.Equals("delete", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(table))
+                    {
+                        if (!MatchesIdentity(match, map))
+                            continue;
+                        map[RecordStatus] = RecordLive;
+                        SqliteInventory.UpdateById(table, id, map);
+                        break;
+                    }
+                }
+            }
+            finally
+            {
+                DataAccess.ApplyingReview = false;
+            }
+
+            return MarkPending(pending, "rejected");
+        }
+
+        private static bool MarkPending(Dictionary<string, string> pending, string status)
+        {
+            string requestedAt = GetRecord(pending, "Requested At");
+            string by = GetRecord(pending, "Requested By");
+            string summary = GetRecord(pending, "Summary");
+            bool ok = false;
+            foreach (var (id, map) in SqliteInventory.ReadWithIds(PendingChanges))
+            {
+                if (!GetRecord(map, "Summary").Equals(summary, StringComparison.OrdinalIgnoreCase) ||
+                    !GetRecord(map, "Requested By").Equals(by, StringComparison.OrdinalIgnoreCase) ||
+                    !GetRecord(map, "Requested At").Equals(requestedAt, StringComparison.OrdinalIgnoreCase) ||
+                    !GetRecord(map, "Status").Equals("pending", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                map["Status"] = status;
+                map["Reviewed By"] = AppState.CurrentUsername;
+                map["Reviewed At"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+                SqliteInventory.UpdateById(PendingChanges, id, map);
+                ok = true;
+                break;
+            }
+
+            if (ok)
+                NotifyDataChanged();
+            return ok;
+        }
+
+        private static Dictionary<string, string> ParseJsonMap(string json)
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            json = (json ?? "").Trim();
+            if (json.Length == 0)
+                return map;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                foreach (var pair in doc.RootElement.EnumerateObject())
+                    map[pair.Name] = pair.Value.GetString() ?? pair.Value.ToString();
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return map;
+        }
+
+        private static bool ReplaceMatchingRowRaw(
+            string baseName,
+            Func<Dictionary<string, string>, bool> match,
+            Dictionary<string, string> values)
+        {
+            foreach (var (id, map) in SqliteInventory.ReadWithIds(baseName))
+            {
+                if (!match(map))
+                    continue;
+                SqliteInventory.UpdateById(baseName, id, values);
+                return true;
+            }
+
+            return false;
         }
 
         public static string[] NamedRow(string baseName, Dictionary<string, string> values)
@@ -1383,13 +2045,19 @@ namespace CastRightCatchInvManagement
 
         public static void AppendRow(string baseName, IEnumerable<string> fields)
         {
+            var result = MutateInsert(baseName, RowFromFields(baseName, fields));
+            if (!result.Ok)
+                throw new InvalidOperationException(result.Message);
+        }
+
+        public static Dictionary<string, string> RowFromFields(string baseName, IEnumerable<string> fields)
+        {
             var header = SqliteInventory.Headers(baseName);
             var cells = fields.ToList();
             var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < header.Length; i++)
                 values[header[i]] = i < cells.Count ? cells[i] ?? "" : "";
-            SqliteInventory.Insert(baseName, values);
-            NotifyDataChanged();
+            return values;
         }
 
         public static Dictionary<string, string> GridRowToRecord(DataGridView grid, int rowIndex)
@@ -1437,9 +2105,13 @@ namespace CastRightCatchInvManagement
         public static string DisplayColumnHeader(string baseName, string[] fileHeader, string name)
         {
             name = name.Trim();
-            if (baseName == PurchaseSales &&
-                name.Equals("Agreement Date", StringComparison.OrdinalIgnoreCase))
-                return "Order Date";
+            if (baseName == PurchaseSales)
+            {
+                if (name.Equals("Agreement Date", StringComparison.OrdinalIgnoreCase))
+                    return "Order Date";
+                if (name.Equals("Description", StringComparison.OrdinalIgnoreCase))
+                    return "Species";
+            }
 
             if (baseName != Sales)
                 return name;
@@ -1464,6 +2136,7 @@ namespace CastRightCatchInvManagement
                 PurchaseSales => new[]
                 {
                     "PO #",
+                    "Record Status",
                     "Status",
                     "Ship Date",
                     "Order Date"
@@ -1471,12 +2144,14 @@ namespace CastRightCatchInvManagement
                 Sales => new[]
                 {
                     "SO #",
+                    "Record Status",
                     "Status",
                     "Ship Date",
                     "PO #"
                 },
                 Customers => new[]
                 {
+                    "Record Status",
                     "Name",
                     "Company",
                     "Phone",
@@ -1484,6 +2159,7 @@ namespace CastRightCatchInvManagement
                 },
                 Vendors => new[]
                 {
+                    "Record Status",
                     "Name",
                     "Company",
                     "Phone",
@@ -1492,19 +2168,48 @@ namespace CastRightCatchInvManagement
                 Invoices => new[]
                 {
                     "SO #",
+                    "PO #",
+                    "Record Status",
+                    "Type",
                     "Customer",
+                    "Vendor",
                     "Ship Date",
                     "Due Date",
                     "Status",
-                    "Paid"
+                    "Paid",
+                    "PDF Created"
                 },
                 BankTransactions => new[]
                 {
                     "Date",
+                    "Record Status",
                     "Amount",
                     "Account",
                     "Description",
                     "Invoice #"
+                },
+                ItemCodes => new[]
+                {
+                    "Record Status",
+                    "Code",
+                    "Description",
+                    "Species"
+                },
+                Debits => new[]
+                {
+                    "Record Status",
+                    "Debit #",
+                    "Vendor",
+                    "PO #",
+                    "Date Submitted"
+                },
+                Credits => new[]
+                {
+                    "Record Status",
+                    "Credit #",
+                    "Customer",
+                    "Invoice #",
+                    "Date Submitted"
                 },
                 _ => null
             };
@@ -1550,6 +2255,10 @@ namespace CastRightCatchInvManagement
                 }
 
                 col.Visible = IsSummaryColumn(baseName ?? "", col.HeaderText);
+                if (IsRecordStatusColumn(col) &&
+                    (string.IsNullOrWhiteSpace(baseName) ||
+                     !DataAccess.IsColumnHidden(baseName, RecordStatus)))
+                    col.Visible = true;
             }
 
             Theme.FitAllColumns(grid);
@@ -1562,12 +2271,12 @@ namespace CastRightCatchInvManagement
         {
             string[]? visible = baseName switch
             {
-                PurchaseSales => new[] { "PO #", "Status", "Ship Date", "Order Date" },
-                Sales => new[] { "SO #", "Status", "Ship Date", "PO #" },
-                Customers => new[] { "Name", "Company", "Phone", "Current Balance" },
-                Vendors => new[] { "Name", "Company", "Phone", "Current Balance" },
-                Invoices => new[] { "SO #", "Customer", "Ship Date", "Due Date", "Status", "Paid" },
-                BankTransactions => new[] { "Date", "Amount", "Account", "Description", "Invoice #" },
+                PurchaseSales => new[] { "PO #", "Record Status", "Status", "Ship Date", "Order Date" },
+                Sales => new[] { "SO #", "Record Status", "Status", "Ship Date", "PO #" },
+                Customers => new[] { "Record Status", "Name", "Company", "Phone", "Current Balance" },
+                Vendors => new[] { "Record Status", "Name", "Company", "Phone", "Current Balance" },
+                Invoices => new[] { "SO #", "PO #", "Record Status", "Type", "Customer", "Vendor", "Ship Date", "Due Date", "Status", "Paid", "PDF Created" },
+                BankTransactions => new[] { "Date", "Record Status", "Amount", "Account", "Description", "Invoice #" },
                 _ => null
             };
             if (visible == null)
@@ -1576,6 +2285,68 @@ namespace CastRightCatchInvManagement
             return visible.Any(name =>
                 name.Equals(displayHeader, StringComparison.OrdinalIgnoreCase));
         }
+
+        private static bool IsRecordStatusColumn(DataGridViewColumn col)
+        {
+            string key = col.Tag as string ?? col.Name;
+            return key.Equals(RecordStatus, StringComparison.OrdinalIgnoreCase) ||
+                   col.HeaderText.Equals(RecordStatus, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void StyleRecordStatusRow(DataGridViewRow row, string status)
+        {
+            if (status.Equals(RecordWaitingAdd, StringComparison.OrdinalIgnoreCase))
+            {
+                row.DefaultCellStyle.BackColor = Theme.WaitAddFill;
+                row.DefaultCellStyle.SelectionBackColor = Theme.GoldLight;
+                row.DefaultCellStyle.ForeColor = Theme.Navy;
+            }
+            else if (status.Equals(RecordWaitingEdit, StringComparison.OrdinalIgnoreCase))
+            {
+                row.DefaultCellStyle.BackColor = Theme.WaitEditFill;
+                row.DefaultCellStyle.SelectionBackColor = Theme.GoldLight;
+                row.DefaultCellStyle.ForeColor = Theme.Navy;
+            }
+            else if (status.Equals(RecordWaitingDelete, StringComparison.OrdinalIgnoreCase))
+            {
+                row.DefaultCellStyle.BackColor = Theme.DangerFill;
+                row.DefaultCellStyle.SelectionBackColor = Color.FromArgb(240, 180, 170);
+                row.DefaultCellStyle.ForeColor = Theme.Danger;
+            }
+
+            if (!IsWaitingStatus(status))
+                return;
+
+            foreach (DataGridViewCell cell in row.Cells)
+            {
+                var grid = row.DataGridView;
+                if (grid == null)
+                    break;
+                var col = grid.Columns[cell.ColumnIndex];
+                if (!IsRecordStatusColumn(col))
+                    continue;
+                cell.Style.Font = Theme.BodyBold;
+                break;
+            }
+        }
+
+        private static void MaskAccountCells(object? sender, DataGridViewCellFormattingEventArgs e)
+        {
+            if (sender is not DataGridView grid || e.RowIndex < 0 || e.ColumnIndex < 0)
+                return;
+            var col = grid.Columns[e.ColumnIndex];
+            string key = col.Tag as string ?? col.Name;
+            if (!key.Equals(AccountNumber, StringComparison.OrdinalIgnoreCase) &&
+                !col.HeaderText.Equals(AccountNumber, StringComparison.OrdinalIgnoreCase))
+                return;
+            e.Value = MaskAccountNumber(e.Value?.ToString());
+            e.FormattingApplied = true;
+        }
+
+        private static bool IsWaitingStatus(string status) =>
+            status.Equals(RecordWaitingAdd, StringComparison.OrdinalIgnoreCase) ||
+            status.Equals(RecordWaitingEdit, StringComparison.OrdinalIgnoreCase) ||
+            status.Equals(RecordWaitingDelete, StringComparison.OrdinalIgnoreCase);
 
         public static event Action? DataChanged;
 
@@ -1609,9 +2380,9 @@ namespace CastRightCatchInvManagement
             try
             {
                 if (baseName == Customers)
-                    EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes", "Description");
+                    EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes", "Description", RoutingNumber, AccountNumber);
                 if (baseName == Vendors)
-                    EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes", "Description");
+                    EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes", "Description", RoutingNumber, AccountNumber);
 
                 if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) || !Exists(baseName))
                 {
@@ -1621,7 +2392,7 @@ namespace CastRightCatchInvManagement
                 }
 
                 var header = SqliteInventory.Headers(baseName);
-                var records = ReadRecords(baseName);
+                var records = VisibleRecords(baseName);
                 int[] order = ColumnDisplayOrder(baseName, header);
                 foreach (int c in order)
                 {
@@ -1633,7 +2404,24 @@ namespace CastRightCatchInvManagement
                 }
 
                 Theme.EnsureAddColumn(grid);
+                grid.CellFormatting -= MaskAccountCells;
+                grid.CellFormatting += MaskAccountCells;
                 GridLayout.Apply(grid, baseName);
+                foreach (DataGridViewColumn col in grid.Columns)
+                {
+                    if (Theme.IsAddColumn(col))
+                        continue;
+                    string key = col.Tag as string ?? col.Name;
+                    if (DataAccess.IsColumnHidden(baseName, key) ||
+                        DataAccess.IsColumnHidden(baseName, col.HeaderText))
+                    {
+                        col.Visible = false;
+                        continue;
+                    }
+
+                    if (IsRecordStatusColumn(col))
+                        col.Visible = true;
+                }
 
                 foreach (var record in records)
                 {
@@ -1641,9 +2429,13 @@ namespace CastRightCatchInvManagement
                     for (int n = 0; n < order.Length; n++)
                     {
                         int c = order[n];
-                        cells[n] = GetRecord(record, header[c]);
+                        string value = GetRecord(record, header[c]);
+                        if (header[c].Trim().Equals(RecordStatus, StringComparison.OrdinalIgnoreCase))
+                            value = string.IsNullOrWhiteSpace(value) ? RecordLive : value.Trim();
+                        cells[n] = value;
                     }
-                    grid.Rows.Add(cells);
+                    int rowIndex = grid.Rows.Add(cells);
+                    StyleRecordStatusRow(grid.Rows[rowIndex], StatusOf(record));
                 }
             }
             finally
@@ -1664,6 +2456,12 @@ namespace CastRightCatchInvManagement
             if (string.IsNullOrWhiteSpace(baseName))
             {
                 message = "This page does not have a table in the database.";
+                return false;
+            }
+
+            if (DataAccess.WriteMode(baseName) != DataWriteMode.Auto)
+            {
+                message = "Import requires automatic add / edit / delete access.";
                 return false;
             }
 
@@ -1712,9 +2510,9 @@ namespace CastRightCatchInvManagement
             }
 
             if (baseName == Customers)
-                EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes", "Description");
+                EnsureFileColumns(Customers, "Address", "Email", "Phone", "Company", "Current Balance", "Notes", "Description", RoutingNumber, AccountNumber);
             if (baseName == Vendors)
-                EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes", "Description");
+                EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes", "Description", RoutingNumber, AccountNumber);
 
             SqliteInventory.EnsureCreated();
 

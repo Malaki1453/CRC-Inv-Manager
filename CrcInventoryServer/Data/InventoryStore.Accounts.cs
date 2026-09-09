@@ -1,5 +1,5 @@
 using CrcInventory.Protocol;
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
 
 namespace CrcInventory.Server;
 
@@ -12,7 +12,7 @@ internal sealed partial class InventoryStore
             using var db = Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = "SELECT COUNT(*) FROM app_accounts;";
-            return Convert.ToInt32(cmd.ExecuteScalar());
+            return Convert.ToInt32(cmd.Scalar(_engine));
         }
     }
 
@@ -35,8 +35,8 @@ internal sealed partial class InventoryStore
                        COALESCE(table_access, '')
                 FROM app_accounts WHERE username = $user;
                 """;
-            cmd.Parameters.AddWithValue("$user", username);
-            using var reader = cmd.ExecuteReader();
+            cmd.AddParam("$user", username);
+            using var reader = cmd.Query(_engine);
             if (!reader.Read())
                 return false;
 
@@ -76,11 +76,12 @@ internal sealed partial class InventoryStore
                 """
                 SELECT username, display_name, email,
                        COALESCE(is_admin, 0), COALESCE(is_it, 0),
-                       COALESCE(stay_signed_in, 0)
+                       COALESCE(stay_signed_in, 0),
+                       COALESCE(login_lock_until, '')
                 FROM app_accounts
                 ORDER BY username COLLATE NOCASE;
                 """;
-            using var reader = cmd.ExecuteReader();
+            using var reader = cmd.Query(_engine);
             while (reader.Read())
             {
                 string username = reader.IsDBNull(0) ? "" : reader.GetString(0);
@@ -91,7 +92,8 @@ internal sealed partial class InventoryStore
                     Email = reader.IsDBNull(2) ? "" : reader.GetString(2),
                     IsAdmin = Roles.IsAdmin(username) || (!reader.IsDBNull(3) && reader.GetInt32(3) != 0),
                     IsIt = Roles.IsIt(username) || (!reader.IsDBNull(4) && reader.GetInt32(4) != 0),
-                    StaySignedIn = !reader.IsDBNull(5) && reader.GetInt32(5) != 0
+                    StaySignedIn = !reader.IsDBNull(5) && reader.GetInt32(5) != 0,
+                    LoginLocked = RecoveryGuard.IsItLock(reader.IsDBNull(6) ? "" : reader.GetValue(6)?.ToString())
                 });
             }
 
@@ -126,21 +128,21 @@ internal sealed partial class InventoryStore
                      is_admin, is_it, must_change_password)
                 VALUES ($user, $name, $hash, $salt, $email, $at, $admin, $it, $must);
                 """;
-            cmd.Parameters.AddWithValue("$user", username);
-            cmd.Parameters.AddWithValue("$name", displayName ?? "");
-            cmd.Parameters.AddWithValue("$hash", hash);
-            cmd.Parameters.AddWithValue("$salt", salt);
-            cmd.Parameters.AddWithValue("$email", email ?? "");
-            cmd.Parameters.AddWithValue("$at", NowStamp());
-            cmd.Parameters.AddWithValue("$admin", isAdmin ? 1 : 0);
-            cmd.Parameters.AddWithValue("$it", isIt ? 1 : 0);
-            cmd.Parameters.AddWithValue("$must", mustChange ? 1 : 0);
+            cmd.AddParam("$user", username);
+            cmd.AddParam("$name", displayName ?? "");
+            cmd.AddParam("$hash", hash);
+            cmd.AddParam("$salt", salt);
+            cmd.AddParam("$email", email ?? "");
+            cmd.AddParam("$at", NowStamp());
+            cmd.AddParam("$admin", isAdmin ? 1 : 0);
+            cmd.AddParam("$it", isIt ? 1 : 0);
+            cmd.AddParam("$must", mustChange ? 1 : 0);
             try
             {
-                if (cmd.ExecuteNonQuery() <= 0)
+                if (cmd.Exec(_engine) <= 0)
                     return false;
             }
-            catch (SqliteException)
+            catch (DbException)
             {
                 return false;
             }
@@ -165,10 +167,10 @@ internal sealed partial class InventoryStore
                 SET display_name = $name, email = $email
                 WHERE username = $user;
                 """;
-            cmd.Parameters.AddWithValue("$name", displayName ?? "");
-            cmd.Parameters.AddWithValue("$email", email ?? "");
-            cmd.Parameters.AddWithValue("$user", username);
-            return cmd.ExecuteNonQuery() > 0;
+            cmd.AddParam("$name", displayName ?? "");
+            cmd.AddParam("$email", email ?? "");
+            cmd.AddParam("$user", username);
+            return cmd.Exec(_engine) > 0;
         }
     }
 
@@ -189,12 +191,16 @@ internal sealed partial class InventoryStore
                 SET password_hash = $hash, password_salt = $salt
                 WHERE username = $user;
                 """;
-            cmd.Parameters.AddWithValue("$hash", hash);
-            cmd.Parameters.AddWithValue("$salt", salt);
-            cmd.Parameters.AddWithValue("$user", username);
-            bool updated = cmd.ExecuteNonQuery() > 0;
+            cmd.AddParam("$hash", hash);
+            cmd.AddParam("$salt", salt);
+            cmd.AddParam("$user", username);
+            bool updated = cmd.Exec(_engine) > 0;
             if (updated)
+            {
                 DeleteSessionsForUserUnlocked(username);
+                ClearRecoveryFailsUnlocked(username);
+                ClearLoginFailsUnlocked(username);
+            }
             return updated;
         }
     }
@@ -210,9 +216,9 @@ internal sealed partial class InventoryStore
             using var cmd = db.CreateCommand();
             cmd.CommandText =
                 "UPDATE app_accounts SET must_change_password = $flag WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$flag", mustChange ? 1 : 0);
-            cmd.Parameters.AddWithValue("$user", username);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$flag", mustChange ? 1 : 0);
+            cmd.AddParam("$user", username);
+            cmd.Exec(_engine);
         }
     }
 
@@ -230,15 +236,15 @@ internal sealed partial class InventoryStore
             using var db = Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = "UPDATE app_accounts SET username = $new WHERE username = $old;";
-            cmd.Parameters.AddWithValue("$new", newUsername);
-            cmd.Parameters.AddWithValue("$old", oldUsername);
+            cmd.AddParam("$new", newUsername);
+            cmd.AddParam("$old", oldUsername);
             try
             {
-                if (cmd.ExecuteNonQuery() <= 0)
+                if (cmd.Exec(_engine) <= 0)
                     return false;
                 RenameSessionsUnlocked(oldUsername, newUsername);
             }
-            catch (SqliteException)
+            catch (DbException)
             {
                 return false;
             }
@@ -258,9 +264,9 @@ internal sealed partial class InventoryStore
             using var db = Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = "UPDATE app_accounts SET email = $email WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$email", email ?? "");
-            cmd.Parameters.AddWithValue("$user", username);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$email", email ?? "");
+            cmd.AddParam("$user", username);
+            cmd.Exec(_engine);
         }
     }
 
@@ -276,8 +282,8 @@ internal sealed partial class InventoryStore
             using var db = Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = "DELETE FROM app_accounts WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$user", username);
-            if (cmd.ExecuteNonQuery() <= 0)
+            cmd.AddParam("$user", username);
+            if (cmd.Exec(_engine) <= 0)
                 return false;
         }
 
@@ -303,9 +309,9 @@ internal sealed partial class InventoryStore
             using var cmd = db.CreateCommand();
             cmd.CommandText =
                 "UPDATE app_accounts SET stay_signed_in = $flag WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$flag", enabled ? 1 : 0);
-            cmd.Parameters.AddWithValue("$user", username);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$flag", enabled ? 1 : 0);
+            cmd.AddParam("$user", username);
+            cmd.Exec(_engine);
             if (!enabled)
                 DeleteSessionsForUserUnlocked(username);
         }
@@ -322,20 +328,74 @@ internal sealed partial class InventoryStore
             using var cmd = db.CreateCommand();
             cmd.CommandText =
                 "UPDATE app_accounts SET is_admin = $admin, is_it = $it WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$admin", isAdmin ? 1 : 0);
-            cmd.Parameters.AddWithValue("$it", isIt ? 1 : 0);
-            cmd.Parameters.AddWithValue("$user", username);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$admin", isAdmin ? 1 : 0);
+            cmd.AddParam("$it", isIt ? 1 : 0);
+            cmd.AddParam("$user", username);
+            cmd.Exec(_engine);
         }
 
         Roles.Ensure(username, isAdmin, isIt);
+    }
+
+    public string GetStoredTableAccess(string username)
+    {
+        if (!TryGetAccountRecord(username, out var record))
+            return "";
+        return record.TableAccess;
     }
 
     public string GetTableAccess(string username)
     {
         if (!TryGetAccountRecord(username, out var record))
             return "";
-        return record.TableAccess;
+        var groups = SplitGroups(GetAccessGroup(username));
+        string baseline = groups.Count == 0
+            ? ""
+            : groups.Count == 1
+                ? GetGroupAccess(groups[0])
+                : AccessFilter.Merge(groups.Select(GetGroupAccess));
+        return AccessFilter.Overlay(baseline, record.TableAccess);
+    }
+
+    public string GetAccessGroup(string username)
+    {
+        username = (username ?? "").Trim();
+        if (username.Length == 0)
+            return "";
+        lock (_gate)
+        {
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT COALESCE(access_group, '') FROM app_accounts WHERE username = $user;";
+            cmd.AddParam("$user", username);
+            return (cmd.Scalar(_engine)?.ToString() ?? "").Trim();
+        }
+    }
+
+    private static List<string> SplitGroups(string stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored))
+            return new List<string>();
+        return stored
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(name => name.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public string GetGroupAccess(string name)
+    {
+        name = (name ?? "").Trim();
+        if (name.Length == 0)
+            return "";
+        lock (_gate)
+        {
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT COALESCE(table_access, '') FROM access_groups WHERE name = $name;";
+            cmd.AddParam("$name", name);
+            return cmd.Scalar(_engine)?.ToString() ?? "";
+        }
     }
 
     public void SetTableAccess(string username, string json)
@@ -348,9 +408,9 @@ internal sealed partial class InventoryStore
             using var db = Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = "UPDATE app_accounts SET table_access = $json WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$json", json ?? "");
-            cmd.Parameters.AddWithValue("$user", username);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$json", json ?? "");
+            cmd.AddParam("$user", username);
+            cmd.Exec(_engine);
         }
     }
 
@@ -367,8 +427,8 @@ internal sealed partial class InventoryStore
             using var cmd = db.CreateCommand();
             cmd.CommandText =
                 "SELECT security_q1, security_q2, security_q3 FROM app_accounts WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$user", username);
-            using var reader = cmd.ExecuteReader();
+            cmd.AddParam("$user", username);
+            using var reader = cmd.Query(_engine);
             if (!reader.Read())
                 return result;
 
@@ -406,14 +466,14 @@ internal sealed partial class InventoryStore
                     security_q3 = $q3, security_a3 = $a3
                 WHERE username = $user;
                 """;
-            cmd.Parameters.AddWithValue("$q1", q1 ?? "");
-            cmd.Parameters.AddWithValue("$a1", h1);
-            cmd.Parameters.AddWithValue("$q2", q2 ?? "");
-            cmd.Parameters.AddWithValue("$a2", h2);
-            cmd.Parameters.AddWithValue("$q3", q3 ?? "");
-            cmd.Parameters.AddWithValue("$a3", h3);
-            cmd.Parameters.AddWithValue("$user", username);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$q1", q1 ?? "");
+            cmd.AddParam("$a1", h1);
+            cmd.AddParam("$q2", q2 ?? "");
+            cmd.AddParam("$a2", h2);
+            cmd.AddParam("$q3", q3 ?? "");
+            cmd.AddParam("$a3", h3);
+            cmd.AddParam("$user", username);
+            cmd.Exec(_engine);
         }
     }
 
@@ -430,8 +490,8 @@ internal sealed partial class InventoryStore
             using var cmd = db.CreateCommand();
             cmd.CommandText =
                 "SELECT security_a1, security_a2, security_a3 FROM app_accounts WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$user", username);
-            using var reader = cmd.ExecuteReader();
+            cmd.AddParam("$user", username);
+            using var reader = cmd.Query(_engine);
             if (!reader.Read())
                 return false;
             h1 = reader.IsDBNull(0) ? "" : reader.GetString(0);
@@ -442,6 +502,201 @@ internal sealed partial class InventoryStore
         return Passwords.Verify(Passwords.NormalizeAnswer(a1), h1, "argon2id") &&
                Passwords.Verify(Passwords.NormalizeAnswer(a2), h2, "argon2id") &&
                Passwords.Verify(Passwords.NormalizeAnswer(a3), h3, "argon2id");
+    }
+
+    public bool AllowRecovery(string username, out string error)
+    {
+        error = "";
+        username = (username ?? "").Trim();
+        if (username.Length == 0)
+        {
+            error = "Enter your username.";
+            return false;
+        }
+
+        lock (_gate)
+        {
+            string untilText = "";
+            using (var db = Open())
+            using (var cmd = db.CreateCommand())
+            {
+                cmd.CommandText =
+                    "SELECT COALESCE(recover_lock_until, '') FROM app_accounts WHERE username = $user;";
+                cmd.AddParam("$user", username);
+                untilText = cmd.Scalar(_engine)?.ToString() ?? "";
+            }
+
+            if (DateTime.TryParse(untilText, out var until) && until > DateTime.Now)
+            {
+                error = RecoveryGuard.LockedMessage(until);
+                return false;
+            }
+
+            if (untilText.Length > 0)
+                ClearRecoveryFailsUnlocked(username);
+            return true;
+        }
+    }
+
+    public string NoteRecoveryFailure(string username)
+    {
+        username = (username ?? "").Trim();
+        if (username.Length == 0)
+            return RecoveryGuard.WrongMessage(RecoveryGuard.MaxTries - 1);
+
+        lock (_gate)
+        {
+            using var db = Open();
+            using var read = db.CreateCommand();
+            read.CommandText =
+                "SELECT COALESCE(recover_fails, 0) FROM app_accounts WHERE username = $user;";
+            read.AddParam("$user", username);
+            int fails = Convert.ToInt32(read.Scalar(_engine) ?? 0) + 1;
+            int left = Math.Max(0, RecoveryGuard.MaxTries - fails);
+            string until = "";
+            if (left == 0)
+                until = DateTime.Now.AddMinutes(RecoveryGuard.LockMinutes).ToString("o");
+
+            using var write = db.CreateCommand();
+            write.CommandText =
+                """
+                UPDATE app_accounts
+                SET recover_fails = $fails, recover_lock_until = $until
+                WHERE username = $user;
+                """;
+            write.AddParam("$fails", fails);
+            write.AddParam("$until", until);
+            write.AddParam("$user", username);
+            write.Exec(_engine);
+
+            return left == 0 && DateTime.TryParse(until, out var lockUntil)
+                ? RecoveryGuard.LockedMessage(lockUntil)
+                : RecoveryGuard.WrongMessage(left);
+        }
+    }
+
+    public void ClearRecoveryFails(string username)
+    {
+        username = (username ?? "").Trim();
+        if (username.Length == 0)
+            return;
+        lock (_gate)
+            ClearRecoveryFailsUnlocked(username);
+    }
+
+    private void ClearRecoveryFailsUnlocked(string username)
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText =
+            "UPDATE app_accounts SET recover_fails = 0, recover_lock_until = '' WHERE username = $user;";
+        cmd.AddParam("$user", username);
+        cmd.Exec(_engine);
+    }
+
+    public bool AllowLogin(string username, out string error)
+    {
+        error = "";
+        username = (username ?? "").Trim();
+        if (username.Length == 0)
+        {
+            error = "Enter a username and password.";
+            return false;
+        }
+
+        lock (_gate)
+        {
+            string untilText = "";
+            using (var db = Open())
+            using (var cmd = db.CreateCommand())
+            {
+                cmd.CommandText =
+                    "SELECT COALESCE(login_lock_until, '') FROM app_accounts WHERE username = $user;";
+                cmd.AddParam("$user", username);
+                untilText = cmd.Scalar(_engine)?.ToString() ?? "";
+            }
+
+            if (RecoveryGuard.IsItLock(untilText))
+            {
+                error = RecoveryGuard.ItLockMessage;
+                return false;
+            }
+
+            if (DateTime.TryParse(untilText, out var until) && until > DateTime.Now)
+            {
+                error = RecoveryGuard.LockedMessage(until);
+                return false;
+            }
+
+            if (untilText.Length > 0)
+                ClearLoginTimeLockUnlocked(username);
+            return true;
+        }
+    }
+
+    public string NoteLoginFailure(string username)
+    {
+        username = (username ?? "").Trim();
+        if (username.Length == 0)
+            return "That username or password is not right.";
+
+        lock (_gate)
+        {
+            using var db = Open();
+            using var read = db.CreateCommand();
+            read.CommandText =
+                "SELECT COALESCE(login_fails, 0) FROM app_accounts WHERE username = $user;";
+            read.AddParam("$user", username);
+            object? raw = read.Scalar(_engine);
+            if (raw == null)
+                return "That username or password is not right.";
+
+            int fails = Convert.ToInt32(raw) + 1;
+            var penalty = RecoveryGuard.NextLoginPenalty(fails);
+
+            using var write = db.CreateCommand();
+            write.CommandText =
+                """
+                UPDATE app_accounts
+                SET login_fails = $fails, login_lock_until = $until
+                WHERE username = $user;
+                """;
+            write.AddParam("$fails", fails);
+            write.AddParam("$until", penalty.Until);
+            write.AddParam("$user", username);
+            write.Exec(_engine);
+
+            return penalty.Message;
+        }
+    }
+
+    public void ClearLoginFails(string username)
+    {
+        username = (username ?? "").Trim();
+        if (username.Length == 0)
+            return;
+        lock (_gate)
+            ClearLoginFailsUnlocked(username);
+    }
+
+    private void ClearLoginFailsUnlocked(string username)
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText =
+            "UPDATE app_accounts SET login_fails = 0, login_lock_until = '' WHERE username = $user;";
+        cmd.AddParam("$user", username);
+        cmd.Exec(_engine);
+    }
+
+    private void ClearLoginTimeLockUnlocked(string username)
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText =
+            "UPDATE app_accounts SET login_lock_until = '' WHERE username = $user;";
+        cmd.AddParam("$user", username);
+        cmd.Exec(_engine);
     }
 
     public string InsertSession(string username, DateTime expiresAt)
@@ -458,11 +713,11 @@ internal sealed partial class InventoryStore
                 INSERT INTO app_sessions (token_hash, username, expires_at, created_at)
                 VALUES ($hash, $user, $exp, $at);
                 """;
-            cmd.Parameters.AddWithValue("$hash", tokenHash);
-            cmd.Parameters.AddWithValue("$user", username);
-            cmd.Parameters.AddWithValue("$exp", expiresAt.ToString("o"));
-            cmd.Parameters.AddWithValue("$at", NowStamp());
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$hash", tokenHash);
+            cmd.AddParam("$user", username);
+            cmd.AddParam("$exp", expiresAt.ToString("o"));
+            cmd.AddParam("$at", NowStamp());
+            cmd.Exec(_engine);
         }
 
         return token;
@@ -482,9 +737,9 @@ internal sealed partial class InventoryStore
                 WHERE token_hash = $hash AND expires_at >= $now
                 LIMIT 1;
                 """;
-            cmd.Parameters.AddWithValue("$hash", tokenHash);
-            cmd.Parameters.AddWithValue("$now", DateTime.Now.ToString("o"));
-            return cmd.ExecuteScalar()?.ToString();
+            cmd.AddParam("$hash", tokenHash);
+            cmd.AddParam("$now", DateTime.Now.ToString("o"));
+            return cmd.Scalar(_engine)?.ToString();
         }
     }
 
@@ -496,8 +751,8 @@ internal sealed partial class InventoryStore
             using var db = Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = "DELETE FROM app_sessions WHERE token_hash = $hash;";
-            cmd.Parameters.AddWithValue("$hash", tokenHash);
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$hash", tokenHash);
+            cmd.Exec(_engine);
         }
     }
 
@@ -541,8 +796,8 @@ internal sealed partial class InventoryStore
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = "DELETE FROM app_sessions WHERE username = $user;";
-        cmd.Parameters.AddWithValue("$user", username);
-        cmd.ExecuteNonQuery();
+        cmd.AddParam("$user", username);
+        cmd.Exec(_engine);
     }
 
     private void RenameSessionsUnlocked(string oldUsername, string newUsername)
@@ -550,9 +805,9 @@ internal sealed partial class InventoryStore
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = "UPDATE app_sessions SET username = $new WHERE username = $old;";
-        cmd.Parameters.AddWithValue("$new", newUsername);
-        cmd.Parameters.AddWithValue("$old", oldUsername);
-        cmd.ExecuteNonQuery();
+        cmd.AddParam("$new", newUsername);
+        cmd.AddParam("$old", oldUsername);
+        cmd.Exec(_engine);
     }
 
     private void DeleteExpiredSessionsUnlocked()
@@ -560,8 +815,8 @@ internal sealed partial class InventoryStore
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = "DELETE FROM app_sessions WHERE expires_at < $now;";
-        cmd.Parameters.AddWithValue("$now", DateTime.Now.ToString("o"));
-        cmd.ExecuteNonQuery();
+        cmd.AddParam("$now", DateTime.Now.ToString("o"));
+        cmd.Exec(_engine);
     }
 }
 

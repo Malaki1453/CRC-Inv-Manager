@@ -20,6 +20,7 @@
         Credits,
         Banking,
         Reports,
+        PendingChanges,
         Settings,
         Help,
         ItUsers,

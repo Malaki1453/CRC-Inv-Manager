@@ -3,7 +3,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 namespace CastRightCatchInvManagement
 {
-    /// <summary>Dedicated PDF window (WebView2). Save to database, print, replace, or edit.</summary>
+    /// <summary>Dedicated PDF window (WebView2). Save, print, replace, or edit.</summary>
     internal sealed class PdfViewForm : Form
     {
         private static readonly Dictionary<string, PdfViewForm> OpenDocs =
@@ -247,14 +247,16 @@ namespace CastRightCatchInvManagement
             {
                 _edit.Text = "Edit invoice";
                 _edit.Visible = true;
+                _save.Text = "Save PDF";
                 _subtitle.Text = stored
-                    ? "Mark up in this window, then Save to database. Edit invoice opens Create Invoice."
+                    ? "Mark up in this window, then Save PDF to Stored Invoices. Edit invoice opens Create Invoice."
                     : "Mark up, print, or replace this PDF.";
             }
             else if (_kind == DataFiles.PdfKindSalesOrder)
             {
                 _edit.Text = "Edit sales order";
                 _edit.Visible = true;
+                _save.Text = "Save to database";
                 _subtitle.Text = stored
                     ? "Mark up in this window, then Save to database. Edit sales order opens Create Sales Order."
                     : "Mark up, print, or replace this PDF.";
@@ -262,6 +264,7 @@ namespace CastRightCatchInvManagement
             else
             {
                 _edit.Visible = false;
+                _save.Text = "Save to database";
                 _subtitle.Text = "Mark up, print, or replace this PDF.";
             }
 
@@ -320,7 +323,9 @@ namespace CastRightCatchInvManagement
             {
                 byte[] bytes = File.ReadAllBytes(_path);
                 _path = DataFiles.SaveStoredPdf(_kind, _key, Path.GetFileName(_path), bytes);
-                ToastAlert.Success(this, "Saved to the database.");
+                ToastAlert.Success(this, _kind == DataFiles.PdfKindInvoice
+                    ? "Saved to Stored Invoices."
+                    : "Saved to the database.");
             }
             catch (Exception ex)
             {

@@ -32,7 +32,10 @@ public static class ServerOps
     public const string TableLatestTerm = "table.latestTerm";
 
     public const string SettingsRead = "settings.read";
+    public const string SettingsReadPublic = "settings.readPublic";
     public const string SettingsWrite = "settings.write";
+    public const string PrefsRead = "prefs.read";
+    public const string PrefsWrite = "prefs.write";
     public const string UserEmailRead = "userEmail.read";
     public const string UserEmailWrite = "userEmail.write";
 
@@ -46,6 +49,7 @@ public static class ServerOps
     public const string AccountsRename = "accounts.rename";
     public const string AccountsEmail = "accounts.email";
     public const string AccountsDelete = "accounts.delete";
+    public const string AccountsUnlock = "accounts.unlock";
     public const string AccountsStayGet = "accounts.stayGet";
     public const string AccountsStaySet = "accounts.staySet";
     public const string AccountsRoles = "accounts.roles";

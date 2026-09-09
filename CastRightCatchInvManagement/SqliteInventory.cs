@@ -61,6 +61,8 @@ namespace CastRightCatchInvManagement
         /// <summary>Create both database files and any missing tables or columns.</summary>
         public static void EnsureCreated()
         {
+            if (!string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+                SecretProtect.UseFolder(AppState.InventoryFolder);
             if (DataLink.Try(ServerOps.TableEnsure, new { }, out bool _))
                 return;
             EnsureCreated(archive: false);
@@ -98,6 +100,9 @@ namespace CastRightCatchInvManagement
                 cmd.ExecuteNonQuery();
                 foreach (var column in columns)
                     EnsureTextColumn(table, column, archive);
+                BackfillLiveStatus(table, archive);
+                if (table == DataFiles.PurchaseSales)
+                    DropTextColumn(table, "Vendor Invoice #", archive);
             }
 
             if (archive)
@@ -114,10 +119,35 @@ namespace CastRightCatchInvManagement
 
             cmd.CommandText =
                 """
+                CREATE TABLE IF NOT EXISTS admin_smtp (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    login_email TEXT NOT NULL DEFAULT '',
+                    password TEXT NOT NULL DEFAULT '',
+                    host TEXT NOT NULL DEFAULT '',
+                    port TEXT NOT NULL DEFAULT '587',
+                    ssl INTEGER NOT NULL DEFAULT 1
+                );
+                """;
+            cmd.ExecuteNonQuery();
+            SeedAdminSmtpFromSettings();
+
+            cmd.CommandText =
+                """
                 CREATE TABLE IF NOT EXISTS app_users (
                     windows_user TEXT PRIMARY KEY NOT NULL,
                     email TEXT NOT NULL DEFAULT '',
                     updated_at TEXT NOT NULL
+                );
+                """;
+            cmd.ExecuteNonQuery();
+
+            cmd.CommandText =
+                """
+                CREATE TABLE IF NOT EXISTS app_prefs (
+                    username TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    PRIMARY KEY (username, key)
                 );
                 """;
             cmd.ExecuteNonQuery();
@@ -158,6 +188,41 @@ namespace CastRightCatchInvManagement
             EnsureAccountColumn("security_a3", "TEXT NOT NULL DEFAULT ''");
             EnsureAccountColumn("stay_signed_in", "INTEGER NOT NULL DEFAULT 0");
             EnsureAccountColumn("table_access", "TEXT NOT NULL DEFAULT ''");
+            EnsureAccountColumn("access_group", "TEXT NOT NULL DEFAULT ''");
+            EnsureAccountColumn("recover_fails", "INTEGER NOT NULL DEFAULT 0");
+            EnsureAccountColumn("recover_lock_until", "TEXT NOT NULL DEFAULT ''");
+            EnsureAccountColumn("login_fails", "INTEGER NOT NULL DEFAULT 0");
+            EnsureAccountColumn("login_lock_until", "TEXT NOT NULL DEFAULT ''");
+
+            cmd.CommandText =
+                """
+                CREATE TABLE IF NOT EXISTS access_groups (
+                    name TEXT PRIMARY KEY NOT NULL COLLATE NOCASE,
+                    table_access TEXT NOT NULL DEFAULT ''
+                );
+                """;
+            cmd.ExecuteNonQuery();
+            SeedAccessGroups(cmd);
+
+            cmd.CommandText =
+                """
+                CREATE TABLE IF NOT EXISTS "pending_changes" (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    term_start TEXT NOT NULL DEFAULT '',
+                    "Table" TEXT NOT NULL DEFAULT '',
+                    "Action" TEXT NOT NULL DEFAULT '',
+                    "Summary" TEXT NOT NULL DEFAULT '',
+                    "Match Json" TEXT NOT NULL DEFAULT '',
+                    "Before Json" TEXT NOT NULL DEFAULT '',
+                    "After Json" TEXT NOT NULL DEFAULT '',
+                    "Requested By" TEXT NOT NULL DEFAULT '',
+                    "Requested At" TEXT NOT NULL DEFAULT '',
+                    "Status" TEXT NOT NULL DEFAULT 'pending',
+                    "Reviewed By" TEXT NOT NULL DEFAULT '',
+                    "Reviewed At" TEXT NOT NULL DEFAULT ''
+                );
+                """;
+            cmd.ExecuteNonQuery();
 
             cmd.CommandText =
                 """
@@ -186,6 +251,7 @@ namespace CastRightCatchInvManagement
             EnsureAccountColumn("bank_accounts", "plaid_item_id", "TEXT NOT NULL DEFAULT ''");
             EnsureAccountColumn("bank_accounts", "plaid_account_id", "TEXT NOT NULL DEFAULT ''");
             EnsureAccountColumn("bank_accounts", "plaid_cursor", "TEXT NOT NULL DEFAULT ''");
+            UpgradeSecrets();
         }
 
         public static void ImportCsvsIfEmpty()
@@ -262,7 +328,11 @@ namespace CastRightCatchInvManagement
         /// <summary>
         /// Current view: live rows only. Old view: archived process rows, then live rows.
         /// </summary>
-        public static List<Dictionary<string, string>> Read(string table)
+        public static List<Dictionary<string, string>> Read(string table) =>
+            DataAccess.RestrictRows(table, ReadUnrestricted(table));
+
+        /// <summary>Every row, ignoring the signed-in user's blocks. For numbering and access expansion.</summary>
+        public static List<Dictionary<string, string>> ReadUnrestricted(string table)
         {
             if (DataLink.Try(ServerOps.TableRead, DataLink.Table(table), out List<Dictionary<string, string>>? rows) &&
                 rows != null)
@@ -279,7 +349,10 @@ namespace CastRightCatchInvManagement
         /// Same as <see cref="Read"/>, with row ids. Archive ids are stored negative so they
         /// cannot collide with live ids when both databases are shown.
         /// </summary>
-        public static List<(long Id, Dictionary<string, string> Fields)> ReadWithIds(string table)
+        public static List<(long Id, Dictionary<string, string> Fields)> ReadWithIds(string table) =>
+            DataAccess.RestrictRows(table, ReadWithIdsUnrestricted(table));
+
+        public static List<(long Id, Dictionary<string, string> Fields)> ReadWithIdsUnrestricted(string table)
         {
             if (DataLink.Try(ServerOps.TableReadIds, DataLink.Table(table), out List<IdFieldsDto>? remote) &&
                 remote != null)
@@ -316,7 +389,7 @@ namespace CastRightCatchInvManagement
                 cols.Add(Quote(name));
                 string p = "$c" + i;
                 pars.Add(p);
-                cmd.Parameters.AddWithValue(p, Lookup(values, name));
+                cmd.Parameters.AddWithValue(p, CellValue(table, values, name));
             }
 
             cmd.CommandText =
@@ -351,7 +424,7 @@ namespace CastRightCatchInvManagement
                     cols.Add(Quote(name));
                     string p = "$c" + i;
                     pars.Add(p);
-                    cmd.Parameters.AddWithValue(p, Lookup(values, name));
+                    cmd.Parameters.AddWithValue(p, CellValue(table, values, name));
                 }
 
                 cmd.CommandText =
@@ -388,12 +461,24 @@ namespace CastRightCatchInvManagement
                 string name = headers[i];
                 string p = "$c" + i;
                 sets.Add($"{Quote(name)} = {p}");
-                cmd.Parameters.AddWithValue(p, Lookup(values, name));
+                cmd.Parameters.AddWithValue(p, CellValue(table, values, name));
             }
 
             cmd.Parameters.AddWithValue("$id", rawId);
             cmd.CommandText = $"UPDATE {Quote(table)} SET {string.Join(",", sets)} WHERE id = $id;";
             return cmd.ExecuteNonQuery() > 0;
+        }
+
+        public static bool DeleteById(string table, long id)
+        {
+            if (DataLink.IsRemote)
+            {
+                // Remote updates go through table.update; delete uses a blank-row replace locally first.
+            }
+
+            EnsureCreated();
+            DeleteByIds(table, new List<long> { id });
+            return true;
         }
 
         public static void EnsureColumns(string table, params string[] columns)
@@ -531,9 +616,31 @@ namespace CastRightCatchInvManagement
 
         public static Dictionary<string, string> ReadSettings()
         {
-            if (DataLink.Try(ServerOps.SettingsRead, new { }, out Dictionary<string, string>? remote) && remote != null)
+            if (AppState.IsAdmin &&
+                DataLink.Try(ServerOps.SettingsRead, new { }, out Dictionary<string, string>? admin) &&
+                admin != null)
+                return admin;
+            if (DataLink.Try(ServerOps.SettingsReadPublic, new { }, out Dictionary<string, string>? pub) &&
+                pub != null)
+                return pub;
+            EnsureCreated();
+            var map = ReadSettingsRaw();
+            return AppState.IsAdmin
+                ? SecretProtect.RevealSettings(map)
+                : SecretProtect.WithoutSecrets(map);
+        }
+
+        public static Dictionary<string, string> ReadPublicSettings()
+        {
+            if (DataLink.Try(ServerOps.SettingsReadPublic, new { }, out Dictionary<string, string>? remote) &&
+                remote != null)
                 return remote;
             EnsureCreated();
+            return SecretProtect.WithoutSecrets(ReadSettingsRaw());
+        }
+
+        private static Dictionary<string, string> ReadSettingsRaw()
+        {
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             using var db = Open();
             using var cmd = db.CreateCommand();
@@ -549,6 +656,183 @@ namespace CastRightCatchInvManagement
             return map;
         }
 
+        public static Dictionary<string, string> ReadPrefs()
+        {
+            string user = (AppState.CurrentUsername ?? "").Trim();
+            if (user.Length == 0)
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (DataLink.Try(ServerOps.PrefsRead, new { }, out Dictionary<string, string>? remote) &&
+                remote != null)
+                return remote;
+            EnsureCreated();
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT key, value FROM app_prefs WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$user", user);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                map[reader.GetString(0)] = reader.IsDBNull(1) ? "" : reader.GetString(1);
+            return map;
+        }
+
+        public static void WritePrefs(Dictionary<string, string> values)
+        {
+            string user = (AppState.CurrentUsername ?? "").Trim();
+            if (user.Length == 0 || values.Count == 0)
+                return;
+            if (DataLink.IsRemote)
+            {
+                DataLink.Send(ServerOps.PrefsWrite, new PrefsWriteRequest { Values = values });
+                return;
+            }
+
+            EnsureCreated();
+            using var db = Open();
+            using var tx = db.BeginTransaction();
+            foreach (var pair in values)
+            {
+                using var cmd = db.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText =
+                    """
+                    INSERT INTO app_prefs (username, key, value)
+                    VALUES ($user, $key, $value)
+                    ON CONFLICT(username, key) DO UPDATE SET value = excluded.value;
+                    """;
+                cmd.Parameters.AddWithValue("$user", user);
+                cmd.Parameters.AddWithValue("$key", pair.Key);
+                cmd.Parameters.AddWithValue("$value", pair.Value ?? "");
+                cmd.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+
+        public static (string Email, string Password, string Host, int Port) LoadAdminSmtp()
+        {
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "SELECT login_email, password, host, port FROM admin_smtp WHERE id = 1;";
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+                return ("", "", Mailer.DefaultHost, Mailer.DefaultPort);
+
+            string email = reader.IsDBNull(0) ? "" : reader.GetString(0);
+            string password = SecretProtect.Open(reader.IsDBNull(1) ? "" : reader.GetString(1));
+            string host = reader.IsDBNull(2) ? "" : reader.GetString(2);
+            int port = Mailer.DefaultPort;
+            if (!reader.IsDBNull(3) && int.TryParse(reader.GetString(3), out int parsed) && parsed > 0)
+                port = parsed;
+            return (email ?? "", password ?? "", host ?? "", port);
+        }
+
+        public static void ApplyAdminSmtp()
+        {
+            var row = LoadAdminSmtp();
+            if (row.Email.Length > 0)
+                AppState.SmtpUser = row.Email;
+            if (row.Password.Length > 0)
+                AppState.SmtpPassword = row.Password;
+            if (row.Host.Length > 0)
+                AppState.SmtpHost = row.Host;
+            if (row.Port > 0)
+                AppState.SmtpPort = row.Port;
+        }
+
+        /// <summary>Empty password keeps the password already in the table.</summary>
+        public static bool SaveAdminSmtp(string email, string password, string host, int port, out string error)
+        {
+            error = "";
+            try
+            {
+                EnsureCreated();
+                using var db = Open();
+                using var cmd = db.CreateCommand();
+                cmd.CommandText =
+                    """
+                    INSERT INTO admin_smtp (id, login_email, password, host, port, ssl)
+                    VALUES (1, $email, $password, $host, $port, 1)
+                    ON CONFLICT(id) DO UPDATE SET
+                        login_email = excluded.login_email,
+                        password = CASE
+                            WHEN excluded.password = '' THEN admin_smtp.password
+                            ELSE excluded.password
+                        END,
+                        host = excluded.host,
+                        port = excluded.port;
+                    """;
+                cmd.Parameters.AddWithValue("$email", email ?? "");
+                cmd.Parameters.AddWithValue("$password", SecretProtect.Seal(password));
+                cmd.Parameters.AddWithValue("$host", string.IsNullOrWhiteSpace(host) ? Mailer.DefaultHost : host.Trim());
+                cmd.Parameters.AddWithValue("$port", (port > 0 ? port : Mailer.DefaultPort).ToString());
+                cmd.ExecuteNonQuery();
+
+                var check = LoadAdminSmtp();
+                if (!string.Equals(check.Email, email ?? "", StringComparison.Ordinal))
+                {
+                    error = "The database did not keep the login email.";
+                    return false;
+                }
+
+                if ((password ?? "").Length > 0 &&
+                    !string.Equals(check.Password, password, StringComparison.Ordinal))
+                {
+                    error = "The database did not keep the password.";
+                    return false;
+                }
+
+                ApplyAdminSmtp();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private static void SeedAdminSmtpFromSettings()
+        {
+            using var db = Open();
+            using var exists = db.CreateCommand();
+            exists.CommandText = "SELECT COUNT(*) FROM admin_smtp WHERE id = 1;";
+            if (Convert.ToInt32(exists.ExecuteScalar()) > 0)
+                return;
+
+            string email = "", password = "", host = Mailer.DefaultHost, port = Mailer.DefaultPort.ToString();
+            using var read = db.CreateCommand();
+            read.CommandText = "SELECT key, value FROM app_settings WHERE key LIKE 'smtp_%';";
+            using var reader = read.ExecuteReader();
+            while (reader.Read())
+            {
+                string key = reader.GetString(0);
+                string value = reader.IsDBNull(1) ? "" : reader.GetString(1);
+                if (key.Equals("smtp_user", StringComparison.OrdinalIgnoreCase))
+                    email = value;
+                else if (key.Equals("smtp_password", StringComparison.OrdinalIgnoreCase))
+                    password = value;
+                else if (key.Equals("smtp_host", StringComparison.OrdinalIgnoreCase) && value.Length > 0)
+                    host = value;
+                else if (key.Equals("smtp_port", StringComparison.OrdinalIgnoreCase) && value.Length > 0)
+                    port = value;
+            }
+
+            using var insert = db.CreateCommand();
+            insert.CommandText =
+                """
+                INSERT INTO admin_smtp (id, login_email, password, host, port, ssl)
+                VALUES (1, $email, $password, $host, $port, 1);
+                """;
+            insert.Parameters.AddWithValue("$email", email);
+            insert.Parameters.AddWithValue("$password", SecretProtect.Seal(password));
+            insert.Parameters.AddWithValue("$host", host);
+            insert.Parameters.AddWithValue("$port", port);
+            insert.ExecuteNonQuery();
+        }
+
         public static void WriteSettings(Dictionary<string, string> values)
         {
             if (DataLink.IsRemote)
@@ -561,6 +845,9 @@ namespace CastRightCatchInvManagement
             using var tx = db.BeginTransaction();
             foreach (var pair in values)
             {
+                if (SecretProtect.IsSecretSetting(pair.Key) &&
+                    (!AppState.IsAdmin || string.IsNullOrEmpty(pair.Value)))
+                    continue;
                 using var cmd = db.CreateCommand();
                 cmd.Transaction = tx;
                 cmd.CommandText =
@@ -570,7 +857,7 @@ namespace CastRightCatchInvManagement
                     ON CONFLICT(key) DO UPDATE SET value = excluded.value;
                     """;
                 cmd.Parameters.AddWithValue("$key", pair.Key);
-                cmd.Parameters.AddWithValue("$value", pair.Value ?? "");
+                cmd.Parameters.AddWithValue("$value", SecretProtect.StoreSetting(pair.Key, pair.Value));
                 cmd.ExecuteNonQuery();
             }
 
@@ -715,22 +1002,23 @@ namespace CastRightCatchInvManagement
             }
         }
 
-        public static List<(string Username, string DisplayName, string Email, bool IsAdmin, bool IsIt, bool StaySignedIn)> ListAccounts()
+        public static List<(string Username, string DisplayName, string Email, bool IsAdmin, bool IsIt, bool StaySignedIn, bool LoginLocked)> ListAccounts()
         {
             if (DataLink.Try(ServerOps.AccountsList, new { }, out List<AccountListDto>? remote) && remote != null)
             {
                 return remote.Select(a => (
-                    a.Username, a.DisplayName, a.Email, a.IsAdmin, a.IsIt, a.StaySignedIn)).ToList();
+                    a.Username, a.DisplayName, a.Email, a.IsAdmin, a.IsIt, a.StaySignedIn, a.LoginLocked)).ToList();
             }
             EnsureCreated();
-            var list = new List<(string, string, string, bool, bool, bool)>();
+            var list = new List<(string, string, string, bool, bool, bool, bool)>();
             using var db = Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText =
                 """
                 SELECT username, display_name, email,
                        COALESCE(is_admin, 0), COALESCE(is_it, 0),
-                       COALESCE(stay_signed_in, 0)
+                       COALESCE(stay_signed_in, 0),
+                       COALESCE(login_lock_until, '')
                 FROM app_accounts
                 ORDER BY username COLLATE NOCASE;
                 """;
@@ -743,7 +1031,8 @@ namespace CastRightCatchInvManagement
                     reader.IsDBNull(2) ? "" : reader.GetString(2),
                     !reader.IsDBNull(3) && reader.GetInt32(3) != 0,
                     !reader.IsDBNull(4) && reader.GetInt32(4) != 0,
-                    !reader.IsDBNull(5) && reader.GetInt32(5) != 0));
+                    !reader.IsDBNull(5) && reader.GetInt32(5) != 0,
+                    RecoveryGuard.IsItLock(reader.IsDBNull(6) ? "" : reader.GetValue(6)?.ToString())));
             }
 
             return list;
@@ -800,7 +1089,11 @@ namespace CastRightCatchInvManagement
             cmd.Parameters.AddWithValue("$user", username);
             bool updated = cmd.ExecuteNonQuery() > 0;
             if (updated)
+            {
                 DeleteSessionsForUser(username);
+                ClearRecoveryFails(username);
+                ClearLoginFails(username);
+            }
             return updated;
         }
 
@@ -950,6 +1243,175 @@ namespace CastRightCatchInvManagement
             a2 = reader.IsDBNull(1) ? "" : reader.GetString(1);
             a3 = reader.IsDBNull(2) ? "" : reader.GetString(2);
             return true;
+        }
+
+        public static bool AllowRecovery(string username, out string error)
+        {
+            error = "";
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+            {
+                error = "Enter your username.";
+                return false;
+            }
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "SELECT COALESCE(recover_lock_until, '') FROM app_accounts WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$user", username);
+            string untilText = cmd.ExecuteScalar()?.ToString() ?? "";
+            if (DateTime.TryParse(untilText, out var until) && until > DateTime.Now)
+            {
+                error = RecoveryGuard.LockedMessage(until);
+                return false;
+            }
+
+            if (untilText.Length > 0)
+                ClearRecoveryFails(username);
+            return true;
+        }
+
+        public static string NoteRecoveryFailure(string username)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return RecoveryGuard.WrongMessage(RecoveryGuard.MaxTries - 1);
+
+            EnsureCreated();
+            using var db = Open();
+            using var read = db.CreateCommand();
+            read.CommandText =
+                "SELECT COALESCE(recover_fails, 0) FROM app_accounts WHERE username = $user;";
+            read.Parameters.AddWithValue("$user", username);
+            int fails = Convert.ToInt32(read.ExecuteScalar() ?? 0) + 1;
+            int left = Math.Max(0, RecoveryGuard.MaxTries - fails);
+            string until = left == 0
+                ? DateTime.Now.AddMinutes(RecoveryGuard.LockMinutes).ToString("o")
+                : "";
+
+            using var write = db.CreateCommand();
+            write.CommandText =
+                """
+                UPDATE app_accounts
+                SET recover_fails = $fails, recover_lock_until = $until
+                WHERE username = $user;
+                """;
+            write.Parameters.AddWithValue("$fails", fails);
+            write.Parameters.AddWithValue("$until", until);
+            write.Parameters.AddWithValue("$user", username);
+            write.ExecuteNonQuery();
+
+            return left == 0 && DateTime.TryParse(until, out var lockUntil)
+                ? RecoveryGuard.LockedMessage(lockUntil)
+                : RecoveryGuard.WrongMessage(left);
+        }
+
+        public static void ClearRecoveryFails(string username)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return;
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "UPDATE app_accounts SET recover_fails = 0, recover_lock_until = '' WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$user", username);
+            cmd.ExecuteNonQuery();
+        }
+
+        public static bool AllowLogin(string username, out string error)
+        {
+            error = "";
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+            {
+                error = "Enter a username and password.";
+                return false;
+            }
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "SELECT COALESCE(login_lock_until, '') FROM app_accounts WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$user", username);
+            string untilText = cmd.ExecuteScalar()?.ToString() ?? "";
+            if (RecoveryGuard.IsItLock(untilText))
+            {
+                error = RecoveryGuard.ItLockMessage;
+                return false;
+            }
+
+            if (DateTime.TryParse(untilText, out var until) && until > DateTime.Now)
+            {
+                error = RecoveryGuard.LockedMessage(until);
+                return false;
+            }
+
+            if (untilText.Length > 0)
+                ClearLoginTimeLock(username);
+            return true;
+        }
+
+        public static string NoteLoginFailure(string username)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return "That username or password is not right.";
+
+            EnsureCreated();
+            using var db = Open();
+            using var read = db.CreateCommand();
+            read.CommandText =
+                "SELECT COALESCE(login_fails, 0) FROM app_accounts WHERE username = $user;";
+            read.Parameters.AddWithValue("$user", username);
+            object? raw = read.ExecuteScalar();
+            if (raw == null)
+                return "That username or password is not right.";
+
+            int fails = Convert.ToInt32(raw) + 1;
+            var penalty = RecoveryGuard.NextLoginPenalty(fails);
+
+            using var write = db.CreateCommand();
+            write.CommandText =
+                """
+                UPDATE app_accounts
+                SET login_fails = $fails, login_lock_until = $until
+                WHERE username = $user;
+                """;
+            write.Parameters.AddWithValue("$fails", fails);
+            write.Parameters.AddWithValue("$until", penalty.Until);
+            write.Parameters.AddWithValue("$user", username);
+            write.ExecuteNonQuery();
+
+            return penalty.Message;
+        }
+
+        private static void ClearLoginTimeLock(string username)
+        {
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "UPDATE app_accounts SET login_lock_until = '' WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$user", username);
+            cmd.ExecuteNonQuery();
+        }
+
+        public static void ClearLoginFails(string username)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return;
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "UPDATE app_accounts SET login_fails = 0, login_lock_until = '' WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$user", username);
+            cmd.ExecuteNonQuery();
         }
 
         public static void SetSecurityQuestions(
@@ -1283,6 +1745,28 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        private static void SeedAccessGroups(SqliteCommand cmd)
+        {
+            cmd.Parameters.Clear();
+            cmd.CommandText =
+                """
+                INSERT INTO access_groups (name, table_access)
+                VALUES ('Admin', $admin)
+                ON CONFLICT(name) DO UPDATE SET table_access = excluded.table_access;
+                """;
+            cmd.Parameters.AddWithValue("$admin", AccessGroups.LockedAdminJson());
+            cmd.ExecuteNonQuery();
+
+            cmd.Parameters.Clear();
+            cmd.CommandText =
+                """
+                INSERT INTO access_groups (name, table_access)
+                VALUES ('IT', '')
+                ON CONFLICT(name) DO NOTHING;
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
         public static string GetTableAccess(string username)
         {
             username = (username ?? "").Trim();
@@ -1297,6 +1781,237 @@ namespace CastRightCatchInvManagement
             cmd.CommandText = "SELECT COALESCE(table_access, '') FROM app_accounts WHERE username = $user;";
             cmd.Parameters.AddWithValue("$user", username);
             return cmd.ExecuteScalar()?.ToString() ?? "";
+        }
+
+        public static string GetGroupAccessMerged(string username)
+        {
+            var groups = GetAccessGroups(username);
+            if (groups.Count == 0)
+                return "";
+            if (groups.Count == 1)
+                return GetGroupAccess(groups[0]);
+            return DataAccess.Merge(groups.Select(GetGroupAccess));
+        }
+
+        public static string GetEffectiveTableAccess(string username) =>
+            DataAccess.Overlay(GetGroupAccessMerged(username), GetTableAccess(username));
+
+        public static bool HasAccessOverride(string username) =>
+            !string.IsNullOrWhiteSpace(GetTableAccess(username));
+
+        public static string GetAccessGroup(string username) =>
+            AccessGroups.Join(GetAccessGroups(username));
+
+        public static List<string> GetAccessGroups(string username)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return new List<string>();
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT COALESCE(access_group, '') FROM app_accounts WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$user", username);
+            return AccessGroups.Parse(cmd.ExecuteScalar()?.ToString());
+        }
+
+        public static void SetAccessGroup(string username, string group) =>
+            SetAccessGroups(username, AccessGroups.Parse(group));
+
+        public static void SetAccessGroups(string username, IEnumerable<string> groups)
+        {
+            username = (username ?? "").Trim();
+            if (username.Length == 0)
+                return;
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "UPDATE app_accounts SET access_group = $group WHERE username = $user;";
+            cmd.Parameters.AddWithValue("$group", AccessGroups.Join(groups));
+            cmd.Parameters.AddWithValue("$user", username);
+            cmd.ExecuteNonQuery();
+        }
+
+        public static void AddAccessGroup(string username, string group)
+        {
+            group = (group ?? "").Trim();
+            if (group.Length == 0)
+                return;
+            var groups = GetAccessGroups(username);
+            if (groups.Any(name => name.Equals(group, StringComparison.OrdinalIgnoreCase)))
+                return;
+            groups.Add(group);
+            SetAccessGroups(username, groups);
+        }
+
+        public static void RemoveAccessGroup(string username, string group)
+        {
+            group = (group ?? "").Trim();
+            if (group.Length == 0)
+                return;
+            SetAccessGroups(username, GetAccessGroups(username)
+                .Where(name => !name.Equals(group, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        public static List<(string Name, string Access)> ListAccessGroups()
+        {
+            EnsureCreated();
+            var list = new List<(string Name, string Access)>();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "SELECT name, COALESCE(table_access, '') FROM access_groups ORDER BY name COLLATE NOCASE;";
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                list.Add((reader.IsDBNull(0) ? "" : reader.GetString(0), reader.IsDBNull(1) ? "" : reader.GetString(1)));
+            list.Sort((a, b) =>
+            {
+                int Rank(string name) =>
+                    AccessGroups.IsAdmin(name) ? 0 : AccessGroups.IsIt(name) ? 1 : 2;
+                int rank = Rank(a.Name).CompareTo(Rank(b.Name));
+                return rank != 0
+                    ? rank
+                    : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+            });
+            return list;
+        }
+
+        public static string GetGroupAccess(string name)
+        {
+            name = (name ?? "").Trim();
+            if (name.Length == 0)
+                return "";
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT COALESCE(table_access, '') FROM access_groups WHERE name = $name;";
+            cmd.Parameters.AddWithValue("$name", name);
+            return cmd.ExecuteScalar()?.ToString() ?? "";
+        }
+
+        public static bool SaveAccessGroup(string name, string json, out string error)
+        {
+            error = "";
+            name = (name ?? "").Trim();
+            if (name.Length == 0)
+            {
+                error = "Enter a group name.";
+                return false;
+            }
+
+            if (name.Contains(',') || name.Contains(';'))
+            {
+                error = "Group names cannot contain commas.";
+                return false;
+            }
+
+            if (AccessGroups.IsAdmin(name))
+            {
+                error = "The Admin group cannot be changed.";
+                return false;
+            }
+
+            if (AccessGroups.IsIt(name) && !AppState.IsAdmin)
+            {
+                error = "Only an administrator can change the IT group.";
+                return false;
+            }
+
+            try
+            {
+                EnsureCreated();
+                using var db = Open();
+                using var cmd = db.CreateCommand();
+                cmd.CommandText =
+                    """
+                    INSERT INTO access_groups (name, table_access)
+                    VALUES ($name, $json)
+                    ON CONFLICT(name) DO UPDATE SET table_access = excluded.table_access;
+                    """;
+                cmd.Parameters.AddWithValue("$name", name);
+                cmd.Parameters.AddWithValue("$json", json ?? "");
+                cmd.ExecuteNonQuery();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        public static bool DeleteAccessGroup(string name, out string error)
+        {
+            error = "";
+            name = (name ?? "").Trim();
+            if (name.Length == 0)
+                return false;
+            if (AccessGroups.IsBuiltIn(name))
+            {
+                error = "The " + name + " group cannot be deleted.";
+                return false;
+            }
+
+            try
+            {
+                EnsureCreated();
+                using var db = Open();
+                using (var list = db.CreateCommand())
+                {
+                    list.CommandText = "SELECT username, COALESCE(access_group, '') FROM app_accounts;";
+                    using var reader = list.ExecuteReader();
+                    var updates = new List<(string User, string Groups)>();
+                    while (reader.Read())
+                    {
+                        string user = reader.IsDBNull(0) ? "" : reader.GetString(0);
+                        string stored = reader.IsDBNull(1) ? "" : reader.GetString(1);
+                        if (!AccessGroups.Contains(stored, name))
+                            continue;
+                        updates.Add((user, AccessGroups.Join(AccessGroups.Parse(stored)
+                            .Where(group => !group.Equals(name, StringComparison.OrdinalIgnoreCase)))));
+                    }
+
+                    reader.Close();
+                    foreach (var (user, groups) in updates)
+                    {
+                        using var update = db.CreateCommand();
+                        update.CommandText = "UPDATE app_accounts SET access_group = $group WHERE username = $user;";
+                        update.Parameters.AddWithValue("$group", groups);
+                        update.Parameters.AddWithValue("$user", user);
+                        update.ExecuteNonQuery();
+                    }
+                }
+                using var cmd = db.CreateCommand();
+                cmd.CommandText = "DELETE FROM access_groups WHERE name = $name;";
+                cmd.Parameters.AddWithValue("$name", name);
+                cmd.ExecuteNonQuery();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        public static int CountGroupMembers(string name)
+        {
+            name = (name ?? "").Trim();
+            if (name.Length == 0)
+                return 0;
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT COALESCE(access_group, '') FROM app_accounts;";
+            using var reader = cmd.ExecuteReader();
+            int count = 0;
+            while (reader.Read())
+            {
+                if (AccessGroups.Contains(reader.IsDBNull(0) ? "" : reader.GetString(0), name))
+                    count++;
+            }
+
+            return count;
         }
 
         public static void SetTableAccess(string username, string json)
@@ -1342,7 +2057,7 @@ namespace CastRightCatchInvManagement
             if (!reader.Read())
                 return ("", "", "", "");
             return (
-                reader.IsDBNull(0) ? "" : reader.GetString(0),
+                SecretProtect.Open(reader.IsDBNull(0) ? "" : reader.GetString(0)),
                 reader.IsDBNull(1) ? "" : reader.GetString(1),
                 reader.IsDBNull(2) ? "" : reader.GetString(2),
                 reader.IsDBNull(3) ? "" : reader.GetString(3));
@@ -1379,7 +2094,7 @@ namespace CastRightCatchInvManagement
                     plaid_cursor = $cursor
                 WHERE id = $id;
                 """;
-            cmd.Parameters.AddWithValue("$token", accessToken ?? "");
+            cmd.Parameters.AddWithValue("$token", SecretProtect.Seal(accessToken));
             cmd.Parameters.AddWithValue("$item", itemId ?? "");
             cmd.Parameters.AddWithValue("$account", accountId ?? "");
             cmd.Parameters.AddWithValue("$cursor", cursor ?? "");
@@ -1413,6 +2128,35 @@ namespace CastRightCatchInvManagement
             using var cmd = db.CreateCommand();
             cmd.CommandText = $"ALTER TABLE {Quote(table)} ADD COLUMN {Quote(column)} TEXT;";
             cmd.ExecuteNonQuery();
+            if (column.Equals(DataFiles.RecordStatus, StringComparison.OrdinalIgnoreCase))
+                BackfillLiveStatus(table, archive);
+        }
+
+        private static void BackfillLiveStatus(string table, bool archive = false)
+        {
+            var existing = new HashSet<string>(TableColumns(table, archive), StringComparer.OrdinalIgnoreCase);
+            if (!existing.Contains(DataFiles.RecordStatus))
+                return;
+
+            using var db = Open(archive);
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                $"UPDATE {Quote(table)} SET {Quote(DataFiles.RecordStatus)} = $live " +
+                $"WHERE {Quote(DataFiles.RecordStatus)} IS NULL OR TRIM({Quote(DataFiles.RecordStatus)}) = '';";
+            cmd.Parameters.AddWithValue("$live", DataFiles.RecordLive);
+            cmd.ExecuteNonQuery();
+        }
+
+        private static void DropTextColumn(string table, string column, bool archive = false)
+        {
+            var existing = new HashSet<string>(TableColumns(table, archive), StringComparer.OrdinalIgnoreCase);
+            if (!existing.Contains(column))
+                return;
+
+            using var db = Open(archive);
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE {Quote(table)} DROP COLUMN {Quote(column)};";
+            cmd.ExecuteNonQuery();
         }
 
         private static void EnsureAccountColumn(string column, string definition)
@@ -1438,6 +2182,8 @@ namespace CastRightCatchInvManagement
             key = (key ?? "").Trim();
             fileName = (fileName ?? "").Trim();
             if (kind.Length == 0 || key.Length == 0 || fileName.Length == 0 || content.Length == 0)
+                return;
+            if (kind.Equals(DataFiles.PdfKindInvoice, StringComparison.OrdinalIgnoreCase))
                 return;
             if (DataLink.IsRemote)
             {
@@ -1542,8 +2288,48 @@ namespace CastRightCatchInvManagement
                 return;
 
             EnsureCreated();
-            ImportPdfFolder(DataFiles.GetStoredInvoicesFolder(), DataFiles.PdfKindInvoice, "Invoice ");
             ImportPdfFolder(DataFiles.GetStoredSalesOrdersFolder(), DataFiles.PdfKindSalesOrder, "Sales Order ");
+        }
+
+        public static List<(string Key, string FileName, byte[] Content)> ListPdfs(string kind)
+        {
+            kind = (kind ?? "").Trim();
+            var list = new List<(string, string, byte[])>();
+            if (kind.Length == 0 || GetPath() == null)
+                return list;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                "SELECT doc_key, file_name, content FROM stored_pdfs WHERE kind = $kind;";
+            cmd.Parameters.AddWithValue("$kind", kind);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                string key = reader.IsDBNull(0) ? "" : reader.GetString(0);
+                string name = reader.IsDBNull(1) ? "" : reader.GetString(1);
+                byte[] bytes = reader.IsDBNull(2)
+                    ? Array.Empty<byte>()
+                    : reader.GetFieldValue<byte[]>(2);
+                list.Add((key, name, bytes));
+            }
+
+            return list;
+        }
+
+        public static void DeletePdfs(string kind)
+        {
+            kind = (kind ?? "").Trim();
+            if (kind.Length == 0 || GetPath() == null)
+                return;
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "DELETE FROM stored_pdfs WHERE kind = $kind;";
+            cmd.Parameters.AddWithValue("$kind", kind);
+            cmd.ExecuteNonQuery();
         }
 
         private static void ImportPdfFolder(string? folder, string kind, string prefix)
@@ -1578,7 +2364,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
-        private static Dictionary<string, string> ReadRow(SqliteDataReader reader)
+        private static Dictionary<string, string> ReadRow(string table, SqliteDataReader reader)
         {
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < reader.FieldCount; i++)
@@ -1587,7 +2373,8 @@ namespace CastRightCatchInvManagement
                 if (name.Equals("id", StringComparison.OrdinalIgnoreCase) ||
                     name.Equals("term_start", StringComparison.OrdinalIgnoreCase))
                     continue;
-                map[name] = reader.IsDBNull(i) ? "" : reader.GetValue(i)?.ToString() ?? "";
+                string value = reader.IsDBNull(i) ? "" : reader.GetValue(i)?.ToString() ?? "";
+                map[name] = SecretProtect.RevealField(table, name, value);
             }
 
             return map;
@@ -1603,7 +2390,7 @@ namespace CastRightCatchInvManagement
             cmd.CommandText = $"SELECT * FROM {Quote(table)} ORDER BY id;";
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
-                result.Add(ReadRow(reader));
+                result.Add(ReadRow(table, reader));
         }
 
         private static void AppendRowsWithIds(
@@ -1620,7 +2407,7 @@ namespace CastRightCatchInvManagement
                 long id = reader.GetInt64(reader.GetOrdinal("id"));
                 if (archive)
                     id = EncodeArchiveRowId(id);
-                result.Add((id, ReadRow(reader)));
+                result.Add((id, ReadRow(table, reader)));
             }
         }
 
@@ -1708,6 +2495,87 @@ namespace CastRightCatchInvManagement
                 pragma.ExecuteNonQuery();
             }
             return db;
+        }
+
+        private static void UpgradeSecrets()
+        {
+            UpgradeSetting("smtp_password");
+            UpgradeSetting("plaid_secret");
+            UpgradeSmtpPassword();
+            UpgradeColumn("bank_accounts", "plaid_access_token");
+            UpgradeColumn(DataFiles.Customers, DataFiles.RoutingNumber);
+            UpgradeColumn(DataFiles.Customers, DataFiles.AccountNumber);
+            UpgradeColumn(DataFiles.Vendors, DataFiles.RoutingNumber);
+            UpgradeColumn(DataFiles.Vendors, DataFiles.AccountNumber);
+        }
+
+        private static void UpgradeSetting(string key)
+        {
+            using var db = Open();
+            using var read = db.CreateCommand();
+            read.CommandText = "SELECT value FROM app_settings WHERE key = $key;";
+            read.Parameters.AddWithValue("$key", key);
+            string? value = read.ExecuteScalar()?.ToString();
+            if (string.IsNullOrEmpty(value) || SecretProtect.IsSealed(value))
+                return;
+            using var write = db.CreateCommand();
+            write.CommandText = "UPDATE app_settings SET value = $value WHERE key = $key;";
+            write.Parameters.AddWithValue("$value", SecretProtect.Seal(value));
+            write.Parameters.AddWithValue("$key", key);
+            write.ExecuteNonQuery();
+        }
+
+        private static void UpgradeSmtpPassword()
+        {
+            using var db = Open();
+            using var read = db.CreateCommand();
+            read.CommandText = "SELECT password FROM admin_smtp WHERE id = 1;";
+            string? value = read.ExecuteScalar()?.ToString();
+            if (string.IsNullOrEmpty(value) || SecretProtect.IsSealed(value))
+                return;
+            using var write = db.CreateCommand();
+            write.CommandText = "UPDATE admin_smtp SET password = $value WHERE id = 1;";
+            write.Parameters.AddWithValue("$value", SecretProtect.Seal(value));
+            write.ExecuteNonQuery();
+        }
+
+        private static void UpgradeColumn(string table, string column)
+        {
+            var columns = TableColumns(table);
+            if (!columns.Contains(column, StringComparer.OrdinalIgnoreCase))
+                return;
+            using var db = Open();
+            using var read = db.CreateCommand();
+            read.CommandText = $"SELECT id, {Quote(column)} FROM {Quote(table)};";
+            var updates = new List<(long Id, string Value)>();
+            using (var reader = read.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    string value = reader.IsDBNull(1) ? "" : reader.GetValue(1)?.ToString() ?? "";
+                    if (value.Length == 0 || SecretProtect.IsSealed(value))
+                        continue;
+                    updates.Add((reader.GetInt64(0), SecretProtect.Seal(value)));
+                }
+            }
+
+            foreach (var row in updates)
+            {
+                using var write = db.CreateCommand();
+                write.CommandText = $"UPDATE {Quote(table)} SET {Quote(column)} = $value WHERE id = $id;";
+                write.Parameters.AddWithValue("$value", row.Value);
+                write.Parameters.AddWithValue("$id", row.Id);
+                write.ExecuteNonQuery();
+            }
+        }
+
+        private static string CellValue(string table, Dictionary<string, string> values, string name)
+        {
+            string value = Lookup(values, name);
+            if (name.Equals(DataFiles.RecordStatus, StringComparison.OrdinalIgnoreCase) &&
+                string.IsNullOrWhiteSpace(value))
+                return DataFiles.RecordLive;
+            return SecretProtect.StoreField(table, name, value);
         }
 
         private static string Lookup(Dictionary<string, string> values, string name)
@@ -1868,7 +2736,7 @@ namespace CastRightCatchInvManagement
                 long id = reader.GetInt64(reader.GetOrdinal("id"));
                 int termOrd = reader.GetOrdinal("term_start");
                 string term = reader.IsDBNull(termOrd) ? "" : reader.GetValue(termOrd)?.ToString() ?? "";
-                result.Add((id, term, ReadRow(reader)));
+                result.Add((id, term, ReadRow(table, reader)));
             }
 
             return result;
@@ -1913,7 +2781,7 @@ namespace CastRightCatchInvManagement
                 cols.Add(Quote(name));
                 string p = "$c" + i;
                 pars.Add(p);
-                cmd.Parameters.AddWithValue(p, Lookup(values, name));
+                cmd.Parameters.AddWithValue(p, SecretProtect.StoreField(table, name, Lookup(values, name)));
                 i++;
             }
 

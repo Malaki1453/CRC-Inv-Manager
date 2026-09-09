@@ -17,11 +17,20 @@ internal static class Schema
     public const string BankTransactions = "bank_transactions";
     public const string Debits = "debits";
     public const string Credits = "credits";
+    public const string PendingChanges = "pending_changes";
+    public const string RecordStatus = "Record Status";
+    public const string RecordLive = "Live";
+    public const string AdminGroup = "Admin";
+    public const string ItGroup = "IT";
+
+    /// <summary>Admin group: Settings and user management only; every inventory table is denied.</summary>
+    public const string AdminGroupAccessJson =
+        "{\"purchases\":false,\"sales\":false,\"invoices\":false,\"customers\":false,\"vendors\":false,\"items\":false,\"banking\":false,\"debits\":false,\"credits\":false,\"reports\":false}";
 
     public static readonly string[] All =
     {
         PurchaseSales, Sales, Customers, Vendors, ItemCodes,
-        Invoices, BankTransactions, Debits, Credits
+        Invoices, BankTransactions, Debits, Credits, PendingChanges
     };
 
     public static readonly HashSet<string> MasterTables = new(StringComparer.OrdinalIgnoreCase)
@@ -45,23 +54,25 @@ internal static class Schema
         string header = table.ToLowerInvariant() switch
         {
             PurchaseSales =>
-                "PO #,Vendor Invoice #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Volume Received,Price Paid / LB,Overhead / LB,Freight / LB,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status",
+                "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Volume Received,Price Paid / LB,Overhead / LB,Freight / LB,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Record Status",
             Sales =>
-                "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status",
+                "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Record Status",
             Customers =>
-                "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes,Description",
+                "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes,Description,Routing Number,Account Number,Record Status",
             Vendors =>
-                "Code,Name,Company,Type,Terms,Amount,Phone,Current Balance,Notes,Description,Finalized",
+                "Code,Name,Company,Type,Terms,Amount,Phone,Contact Name,Current Balance,Notes,Description,Finalized,Routing Number,Account Number,Record Status",
             ItemCodes =>
-                "Code,Description,COO,Farmed / Wild,Fresh / Frozen,Proc Country,Species,Scientific Name",
+                "Code,Description,COO,Farmed / Wild,Fresh / Frozen,Proc Country,Species,Scientific Name,Record Status",
             Invoices =>
-                "Invoice #,SO #,Customer Code,Customer,Ship Date,Due Date,Amount,Paid,Outstanding,Status,Payment Date,Payment Method",
+                "Invoice #,Type,SO #,PO #,Customer Code,Customer,Vendor Code,Vendor,Ship Date,Due Date,Amount,Paid,Outstanding,Status,Payment Date,Payment Method,PDF Created,Invoice Date,Terms,Ship Via,Sales Rep,Sold To,Ship To,Discount,Freight,Tax,Tax Mode,Lines Json,Record Status",
             BankTransactions =>
-                "Date,Amount,Method,Reference,Invoice #,SO #,Customer Code,Notes",
+                "Date,Amount,Method,Reference,Invoice #,SO #,Customer Code,Notes,Record Status",
             Debits =>
-                "Debit #,Date Submitted,Vendor Code,Vendor,PO #,Date Received,Date of Issue,Item Code,Description,Reason,LBS Received,Price / LB,Value,LBS Claimed,Claim Value,Claim %,Sales Rep,Vendor Approved,Notes",
+                "Debit #,Date Submitted,Vendor Code,Vendor,PO #,Date Received,Date of Issue,Item Code,Description,Reason,LBS Received,Price / LB,Value,LBS Claimed,Claim Value,Claim %,Sales Rep,Vendor Approved,Notes,Record Status",
             Credits =>
-                "Credit #,Date Submitted,Customer Code,Customer,Invoice #,Date Received,Date of Issue,Item Code,Description,Reason,LBS Received,Price / LB,Value,LBS Claimed,Claim Value,Claim %,Contact,Approved,Notes",
+                "Credit #,Date Submitted,Customer Code,Customer,Invoice #,Date Received,Date of Issue,Item Code,Description,Reason,LBS Received,Price / LB,Value,LBS Claimed,Claim Value,Claim %,Contact,Approved,Notes,Record Status",
+            PendingChanges =>
+                "Table,Action,Summary,Match Json,Before Json,After Json,Requested By,Requested At,Status,Reviewed By,Reviewed At",
             _ => ""
         };
 
@@ -105,6 +116,15 @@ internal static class Schema
             return IsApproved(Lookup(values, "Approved"));
 
         return !IsProcessTable(table);
+    }
+
+    public static string CellValue(Dictionary<string, string> values, string name)
+    {
+        string value = Lookup(values, name);
+        if (name.Equals(RecordStatus, StringComparison.OrdinalIgnoreCase) &&
+            string.IsNullOrWhiteSpace(value))
+            return RecordLive;
+        return value;
     }
 
     public static string Lookup(Dictionary<string, string> values, string name)

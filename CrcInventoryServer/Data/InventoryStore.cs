@@ -1,24 +1,34 @@
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
+using CrcInventory.Protocol;
 
 namespace CrcInventory.Server;
 
 internal sealed partial class InventoryStore
 {
     private readonly string _folder;
+    private readonly StoreEngine _engine;
     private readonly object _gate = new();
 
-    public InventoryStore(string dataFolder)
+    public InventoryStore(string dataFolder, string? postgres = null)
     {
         _folder = Path.GetFullPath(dataFolder);
         Directory.CreateDirectory(_folder);
+        _engine = string.IsNullOrWhiteSpace(postgres)
+            ? StoreEngine.Sqlite(_folder)
+            : StoreEngine.Postgres(postgres);
         Roles = new RolesFile(_folder);
         Roles.Load();
+        SecretProtect.UseFolder(_folder);
         EnsureCreated();
     }
 
     public RolesFile Roles { get; }
 
     public string Folder => _folder;
+
+    public string EngineName => _engine.Name;
+
+    public bool UsesPostgres => _engine.IsPostgres;
 
     public string LivePath => Path.Combine(_folder, Schema.LiveFileName);
 
@@ -37,8 +47,11 @@ internal sealed partial class InventoryStore
     {
         using var db = Open(archive);
         using var cmd = db.CreateCommand();
-        cmd.CommandText = "PRAGMA journal_mode=WAL;";
-        cmd.ExecuteNonQuery();
+        if (!_engine.IsPostgres)
+        {
+            cmd.CommandText = "PRAGMA journal_mode=WAL;";
+            cmd.Exec(_engine);
+        }
 
         IEnumerable<string> tables = archive ? Schema.ProcessTables : Schema.All;
         foreach (var table in tables)
@@ -46,14 +59,17 @@ internal sealed partial class InventoryStore
             var columns = Schema.Headers(table);
             var defs = new List<string>
             {
-                "id INTEGER PRIMARY KEY AUTOINCREMENT",
+                _engine.IdColumn,
                 "term_start TEXT NOT NULL DEFAULT ''"
             };
             defs.AddRange(columns.Select(c => $"{Quote(c)} TEXT"));
             cmd.CommandText = $"CREATE TABLE IF NOT EXISTS {Quote(table)} ({string.Join(", ", defs)});";
-            cmd.ExecuteNonQuery();
+            cmd.Exec(_engine);
             foreach (var column in columns)
                 EnsureTextColumn(table, column, archive);
+            BackfillLiveStatus(table, archive);
+            if (table.Equals(Schema.PurchaseSales, StringComparison.OrdinalIgnoreCase))
+                DropTextColumn(table, "Vendor Invoice #", archive);
         }
 
         if (archive)
@@ -66,7 +82,20 @@ internal sealed partial class InventoryStore
                 value TEXT NOT NULL
             );
             """;
-        cmd.ExecuteNonQuery();
+        cmd.Exec(_engine);
+
+        cmd.CommandText =
+            """
+            CREATE TABLE IF NOT EXISTS admin_smtp (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                login_email TEXT NOT NULL DEFAULT '',
+                password TEXT NOT NULL DEFAULT '',
+                host TEXT NOT NULL DEFAULT '',
+                port TEXT NOT NULL DEFAULT '587',
+                ssl INTEGER NOT NULL DEFAULT 1
+            );
+            """;
+        cmd.Exec(_engine);
 
         cmd.CommandText =
             """
@@ -76,25 +105,36 @@ internal sealed partial class InventoryStore
                 updated_at TEXT NOT NULL
             );
             """;
-        cmd.ExecuteNonQuery();
+        cmd.Exec(_engine);
 
         cmd.CommandText =
-            """
+            $"""
+            CREATE TABLE IF NOT EXISTS app_prefs (
+                username {_engine.NoCaseText} NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (username, key)
+            );
+            """;
+        cmd.Exec(_engine);
+
+        cmd.CommandText =
+            $"""
             CREATE TABLE IF NOT EXISTS stored_pdfs (
                 kind TEXT NOT NULL,
-                doc_key TEXT NOT NULL COLLATE NOCASE,
+                doc_key {_engine.NoCaseText},
                 file_name TEXT NOT NULL,
-                content BLOB NOT NULL,
+                content {_engine.BlobType} NOT NULL,
                 stored_at TEXT NOT NULL,
                 PRIMARY KEY (kind, doc_key)
             );
             """;
-        cmd.ExecuteNonQuery();
+        cmd.Exec(_engine);
 
         cmd.CommandText =
-            """
+            $"""
             CREATE TABLE IF NOT EXISTS app_accounts (
-                username TEXT PRIMARY KEY NOT NULL COLLATE NOCASE,
+                username {_engine.NoCaseText} PRIMARY KEY,
                 display_name TEXT NOT NULL DEFAULT '',
                 password_hash TEXT NOT NULL,
                 password_salt TEXT NOT NULL,
@@ -102,7 +142,7 @@ internal sealed partial class InventoryStore
                 created_at TEXT NOT NULL
             );
             """;
-        cmd.ExecuteNonQuery();
+        cmd.Exec(_engine);
         EnsureColumn("app_accounts", "is_it", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn("app_accounts", "is_admin", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn("app_accounts", "must_change_password", "INTEGER NOT NULL DEFAULT 0");
@@ -114,22 +154,37 @@ internal sealed partial class InventoryStore
         EnsureColumn("app_accounts", "security_a3", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn("app_accounts", "stay_signed_in", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn("app_accounts", "table_access", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn("app_accounts", "access_group", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn("app_accounts", "recover_fails", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn("app_accounts", "recover_lock_until", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn("app_accounts", "login_fails", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn("app_accounts", "login_lock_until", "TEXT NOT NULL DEFAULT ''");
 
         cmd.CommandText =
-            """
+            $"""
+            CREATE TABLE IF NOT EXISTS access_groups (
+                name {_engine.NoCaseText} PRIMARY KEY,
+                table_access TEXT NOT NULL DEFAULT ''
+            );
+            """;
+        cmd.Exec(_engine);
+        SeedAccessGroups(cmd);
+
+        cmd.CommandText =
+            $"""
             CREATE TABLE IF NOT EXISTS app_sessions (
                 token_hash TEXT PRIMARY KEY NOT NULL,
-                username TEXT NOT NULL COLLATE NOCASE,
+                username {_engine.NoCaseText},
                 expires_at TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
             """;
-        cmd.ExecuteNonQuery();
+        cmd.Exec(_engine);
 
         cmd.CommandText =
-            """
+            $"""
             CREATE TABLE IF NOT EXISTS bank_accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                {_engine.IdColumn},
                 name TEXT NOT NULL,
                 bank TEXT NOT NULL DEFAULT '',
                 last4 TEXT NOT NULL DEFAULT '',
@@ -137,11 +192,36 @@ internal sealed partial class InventoryStore
                 created_at TEXT NOT NULL
             );
             """;
-        cmd.ExecuteNonQuery();
+        cmd.Exec(_engine);
         EnsureColumn("bank_accounts", "plaid_access_token", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn("bank_accounts", "plaid_item_id", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn("bank_accounts", "plaid_account_id", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn("bank_accounts", "plaid_cursor", "TEXT NOT NULL DEFAULT ''");
+        UpgradeSecrets();
+    }
+
+    private void SeedAccessGroups(DbCommand cmd)
+    {
+        cmd.Parameters.Clear();
+        cmd.CommandText =
+            """
+            INSERT INTO access_groups (name, table_access)
+            VALUES ($name, $json)
+            ON CONFLICT(name) DO UPDATE SET table_access = excluded.table_access;
+            """;
+        cmd.AddParam("$name", Schema.AdminGroup);
+        cmd.AddParam("$json", Schema.AdminGroupAccessJson);
+        cmd.Exec(_engine);
+
+        cmd.Parameters.Clear();
+        cmd.CommandText =
+            """
+            INSERT INTO access_groups (name, table_access)
+            VALUES ($name, '')
+            ON CONFLICT(name) DO NOTHING;
+            """;
+        cmd.AddParam("$name", Schema.ItGroup);
+        cmd.Exec(_engine);
     }
 
     public bool HasItUser()
@@ -153,27 +233,74 @@ internal sealed partial class InventoryStore
             using var db = Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = "SELECT COUNT(*) FROM app_accounts WHERE COALESCE(is_it, 0) <> 0;";
-            return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+            return Convert.ToInt32(cmd.Scalar(_engine)) > 0;
         }
     }
 
-    public Dictionary<string, string> ReadSettings()
+    public Dictionary<string, string> ReadSettings(bool revealSecrets = false)
     {
         lock (_gate)
         {
-            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var map = ReadSettingsUnlocked();
+            return revealSecrets
+                ? SecretProtect.RevealSettings(map)
+                : SecretProtect.WithoutSecrets(map);
+        }
+    }
+
+    public Dictionary<string, string> ReadPublicSettings() => ReadSettings(revealSecrets: false);
+
+    public void WriteSettings(Dictionary<string, string> values)
+    {
+        lock (_gate)
+        {
+            using var db = Open();
+            using var tx = db.BeginTransaction();
+            foreach (var pair in values)
+            {
+                if (SecretProtect.IsSecretSetting(pair.Key) && string.IsNullOrEmpty(pair.Value))
+                    continue;
+                using var cmd = db.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText =
+                    """
+                    INSERT INTO app_settings (key, value)
+                    VALUES ($key, $value)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+                    """;
+                cmd.AddParam("$key", pair.Key);
+                cmd.AddParam("$value", SecretProtect.StoreSetting(pair.Key, pair.Value));
+                cmd.Exec(_engine);
+            }
+
+            tx.Commit();
+        }
+    }
+
+    public Dictionary<string, string> ReadPrefs(string username)
+    {
+        username = (username ?? "").Trim();
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (username.Length == 0)
+            return map;
+        lock (_gate)
+        {
             using var db = Open();
             using var cmd = db.CreateCommand();
-            cmd.CommandText = "SELECT key, value FROM app_settings;";
-            using var reader = cmd.ExecuteReader();
+            cmd.CommandText = "SELECT key, value FROM app_prefs WHERE username = $user;";
+            cmd.AddParam("$user", username);
+            using var reader = cmd.Query(_engine);
             while (reader.Read())
                 map[reader.GetString(0)] = reader.IsDBNull(1) ? "" : reader.GetString(1);
             return map;
         }
     }
 
-    public void WriteSettings(Dictionary<string, string> values)
+    public void WritePrefs(string username, Dictionary<string, string> values)
     {
+        username = (username ?? "").Trim();
+        if (username.Length == 0 || values.Count == 0)
+            return;
         lock (_gate)
         {
             using var db = Open();
@@ -184,13 +311,14 @@ internal sealed partial class InventoryStore
                 cmd.Transaction = tx;
                 cmd.CommandText =
                     """
-                    INSERT INTO app_settings (key, value)
-                    VALUES ($key, $value)
-                    ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+                    INSERT INTO app_prefs (username, key, value)
+                    VALUES ($user, $key, $value)
+                    ON CONFLICT(username, key) DO UPDATE SET value = excluded.value;
                     """;
-                cmd.Parameters.AddWithValue("$key", pair.Key);
-                cmd.Parameters.AddWithValue("$value", pair.Value ?? "");
-                cmd.ExecuteNonQuery();
+                cmd.AddParam("$user", username);
+                cmd.AddParam("$key", pair.Key);
+                cmd.AddParam("$value", pair.Value ?? "");
+                cmd.Exec(_engine);
             }
 
             tx.Commit();
@@ -207,8 +335,8 @@ internal sealed partial class InventoryStore
             using var db = Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = "SELECT email FROM app_users WHERE windows_user = $user;";
-            cmd.Parameters.AddWithValue("$user", windowsUser);
-            return cmd.ExecuteScalar()?.ToString();
+            cmd.AddParam("$user", windowsUser);
+            return cmd.Scalar(_engine)?.ToString();
         }
     }
 
@@ -229,10 +357,10 @@ internal sealed partial class InventoryStore
                     email = excluded.email,
                     updated_at = excluded.updated_at;
                 """;
-            cmd.Parameters.AddWithValue("$user", windowsUser);
-            cmd.Parameters.AddWithValue("$email", email ?? "");
-            cmd.Parameters.AddWithValue("$at", NowStamp());
-            cmd.ExecuteNonQuery();
+            cmd.AddParam("$user", windowsUser);
+            cmd.AddParam("$email", email ?? "");
+            cmd.AddParam("$at", NowStamp());
+            cmd.Exec(_engine);
         }
     }
 
@@ -270,21 +398,91 @@ internal sealed partial class InventoryStore
         return true;
     }
 
-    private SqliteConnection Open(bool archive = false)
+    private Dictionary<string, string> ReadSettingsUnlocked()
     {
-        string path = archive ? ArchivePath : LivePath;
-        var db = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = path,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            DefaultTimeout = 8
-        }.ToString());
-        db.Open();
-        using var pragma = db.CreateCommand();
-        pragma.CommandText = "PRAGMA busy_timeout=8000;";
-        pragma.ExecuteNonQuery();
-        return db;
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT key, value FROM app_settings;";
+        using var reader = cmd.Query(_engine);
+        while (reader.Read())
+            map[reader.GetString(0)] = reader.IsDBNull(1) ? "" : reader.GetString(1);
+        return map;
     }
+
+    private void UpgradeSecrets()
+    {
+        UpgradeSetting("smtp_password");
+        UpgradeSetting("plaid_secret");
+        UpgradeSmtpPassword();
+        UpgradeColumn("bank_accounts", "plaid_access_token", archive: false);
+        UpgradeColumn(Schema.Customers, "Routing Number", archive: false);
+        UpgradeColumn(Schema.Customers, "Account Number", archive: false);
+        UpgradeColumn(Schema.Vendors, "Routing Number", archive: false);
+        UpgradeColumn(Schema.Vendors, "Account Number", archive: false);
+    }
+
+    private void UpgradeSetting(string key)
+    {
+        using var db = Open();
+        using var read = db.CreateCommand();
+        read.CommandText = "SELECT value FROM app_settings WHERE key = $key;";
+        read.AddParam("$key", key);
+        string? value = read.Scalar(_engine)?.ToString();
+        if (string.IsNullOrEmpty(value) || SecretProtect.IsSealed(value))
+            return;
+        using var write = db.CreateCommand();
+        write.CommandText = "UPDATE app_settings SET value = $value WHERE key = $key;";
+        write.AddParam("$value", SecretProtect.Seal(value));
+        write.AddParam("$key", key);
+        write.Exec(_engine);
+    }
+
+    private void UpgradeSmtpPassword()
+    {
+        using var db = Open();
+        using var read = db.CreateCommand();
+        read.CommandText = "SELECT password FROM admin_smtp WHERE id = 1;";
+        string? value = read.Scalar(_engine)?.ToString();
+        if (string.IsNullOrEmpty(value) || SecretProtect.IsSealed(value))
+            return;
+        using var write = db.CreateCommand();
+        write.CommandText = "UPDATE admin_smtp SET password = $value WHERE id = 1;";
+        write.AddParam("$value", SecretProtect.Seal(value));
+        write.Exec(_engine);
+    }
+
+    private void UpgradeColumn(string table, string column, bool archive)
+    {
+        var columns = new HashSet<string>(TableColumnsFrom(table, archive), StringComparer.OrdinalIgnoreCase);
+        if (!columns.Contains(column))
+            return;
+        using var db = Open(archive);
+        using var read = db.CreateCommand();
+        read.CommandText = $"SELECT id, {Quote(column)} FROM {Quote(table)};";
+        var updates = new List<(object Id, string Value)>();
+        using (var reader = read.Query(_engine))
+        {
+            while (reader.Read())
+            {
+                string value = reader.IsDBNull(1) ? "" : reader.GetValue(1)?.ToString() ?? "";
+                if (value.Length == 0 || SecretProtect.IsSealed(value))
+                    continue;
+                updates.Add((reader.GetValue(0)!, SecretProtect.Seal(value)));
+            }
+        }
+
+        foreach (var row in updates)
+        {
+            using var write = db.CreateCommand();
+            write.CommandText = $"UPDATE {Quote(table)} SET {Quote(column)} = $value WHERE id = $id;";
+            write.AddParam("$value", row.Value);
+            write.AddParam("$id", row.Id);
+            write.Exec(_engine);
+        }
+    }
+
+    private DbConnection Open(bool archive = false) => _engine.Open(archive);
 
     private void EnsureTextColumn(string table, string column, bool archive)
     {
@@ -295,7 +493,36 @@ internal sealed partial class InventoryStore
         using var db = Open(archive);
         using var cmd = db.CreateCommand();
         cmd.CommandText = $"ALTER TABLE {Quote(table)} ADD COLUMN {Quote(column)} TEXT;";
-        cmd.ExecuteNonQuery();
+        cmd.Exec(_engine);
+        if (column.Equals(Schema.RecordStatus, StringComparison.OrdinalIgnoreCase))
+            BackfillLiveStatus(table, archive);
+    }
+
+    private void BackfillLiveStatus(string table, bool archive)
+    {
+        var existing = new HashSet<string>(TableColumnsFrom(table, archive), StringComparer.OrdinalIgnoreCase);
+        if (!existing.Contains(Schema.RecordStatus))
+            return;
+
+        using var db = Open(archive);
+        using var cmd = db.CreateCommand();
+        cmd.CommandText =
+            $"UPDATE {Quote(table)} SET {Quote(Schema.RecordStatus)} = $live " +
+            $"WHERE {Quote(Schema.RecordStatus)} IS NULL OR TRIM({Quote(Schema.RecordStatus)}) = '';";
+        cmd.AddParam("$live", Schema.RecordLive);
+        cmd.Exec(_engine);
+    }
+
+    private void DropTextColumn(string table, string column, bool archive)
+    {
+        var existing = new HashSet<string>(TableColumnsFrom(table, archive), StringComparer.OrdinalIgnoreCase);
+        if (!existing.Contains(column))
+            return;
+
+        using var db = Open(archive);
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = $"ALTER TABLE {Quote(table)} DROP COLUMN {Quote(column)};";
+        cmd.Exec(_engine);
     }
 
     private void EnsureColumn(string table, string column, string definition)
@@ -307,7 +534,7 @@ internal sealed partial class InventoryStore
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = $"ALTER TABLE {Quote(table)} ADD COLUMN {Quote(column)} {definition};";
-        cmd.ExecuteNonQuery();
+        cmd.Exec(_engine);
     }
 
     private List<string> TableColumns(string table, bool viewOld)
@@ -331,17 +558,11 @@ internal sealed partial class InventoryStore
 
     private List<string> TableColumnsFrom(string table, bool archive)
     {
-        var list = new List<string>();
         using var db = Open(archive);
-        using var cmd = db.CreateCommand();
-        cmd.CommandText = $"PRAGMA table_info({Quote(table)});";
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            list.Add(reader.GetString(1));
-        return list;
+        return _engine.ListColumns(db, table).ToList();
     }
 
-    private static string Quote(string name) => "\"" + name.Replace("\"", "\"\"") + "\"";
+    private static string Quote(string name) => StoreEngine.Quote(name);
 
     private static string NowStamp() => DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
