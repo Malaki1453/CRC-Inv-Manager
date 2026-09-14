@@ -338,6 +338,37 @@ namespace CastRightCatchInvManagement
         public static List<Dictionary<string, string>> Read(string table) =>
             DataAccess.RestrictRows(table, ReadUnrestricted(table));
 
+        /// <summary>Walk matching rows without loading the whole table first. Safe to call off the UI thread.</summary>
+        public static void ForEachWhere(
+            string table,
+            string column,
+            string value,
+            Action<Dictionary<string, string>> each,
+            CancellationToken cancel = default)
+        {
+            column = (column ?? "").Trim();
+            value = (value ?? "").Trim();
+            if (column.Length == 0 || value.Length == 0)
+                return;
+
+            if (DataLink.IsRemote)
+            {
+                foreach (var row in Read(table))
+                {
+                    cancel.ThrowIfCancellationRequested();
+                    if (DataFiles.GetRecord(row, column).Equals(value, StringComparison.OrdinalIgnoreCase))
+                        each(row);
+                }
+
+                return;
+            }
+
+            EnsureCreated();
+            if (UsingArchive(table))
+                ForEachWhereOn(table, archive: true, column, value, each, cancel);
+            ForEachWhereOn(table, archive: false, column, value, each, cancel);
+        }
+
         /// <summary>Every row, ignoring the signed-in user's blocks. For numbering and access expansion.</summary>
         public static List<Dictionary<string, string>> ReadUnrestricted(string table)
         {
@@ -2248,6 +2279,31 @@ namespace CastRightCatchInvManagement
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
                 result.Add(ReadRow(table, reader));
+        }
+
+        private static void ForEachWhereOn(
+            string table,
+            bool archive,
+            string column,
+            string value,
+            Action<Dictionary<string, string>> each,
+            CancellationToken cancel)
+        {
+            var columns = new HashSet<string>(TableColumns(table, archive), StringComparer.OrdinalIgnoreCase);
+            if (!columns.Contains(column))
+                return;
+
+            using var db = Open(archive);
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                $"SELECT * FROM {Quote(table)} WHERE {Quote(column)} = $v COLLATE NOCASE;";
+            cmd.Parameters.AddWithValue("$v", value);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                cancel.ThrowIfCancellationRequested();
+                each(ReadRow(table, reader));
+            }
         }
 
         private static void AppendRowsWithIds(

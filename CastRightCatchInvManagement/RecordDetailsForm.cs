@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace CastRightCatchInvManagement
 {
     /// <summary>
@@ -6,6 +8,15 @@ namespace CastRightCatchInvManagement
     /// </summary>
     internal sealed class RecordDetailsForm : Form
     {
+        private DataGridView? _lotsGrid;
+        private WaitSpinner? _lotsSpinner;
+        private CancellationTokenSource? _lotsLoad;
+        private string _itemCode = "";
+        private string _itemDescription = "";
+        private readonly Dictionary<string, LotSnap> _lots = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, int> _lotRows = new(StringComparer.OrdinalIgnoreCase);
+        private int _lotsPaintedAt;
+        private bool _lotsDone;
         public static void ShowRecord(
             IWin32Window? owner,
             string title,
@@ -80,12 +91,32 @@ namespace CastRightCatchInvManagement
             Control body = purchase || sale
                 ? BuildOrderBody(purchase, first, lines, record)
                 : item
-                    ? BuildItemLotsTable()
+                    ? BuildItemLotsTable(record)
                     : BuildFieldBody(heading, record);
 
             Controls.Add(body);
             Controls.Add(footer);
             Controls.Add(header);
+
+            if (item)
+            {
+                _itemCode = DataFiles.GetRecord(record, "Code").Trim();
+                _itemDescription = DataFiles.GetRecordAny(record, "Description", "Species");
+                Shown += (_, _) => StartLotsLoad();
+            }
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            _lotsLoad?.Cancel();
+            base.OnFormClosing(e);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+                _lotsLoad?.Dispose();
+            base.Dispose(disposing);
         }
 
         private Control BuildOrderBody(
@@ -134,20 +165,15 @@ namespace CastRightCatchInvManagement
             return split;
         }
 
-        private static Control BuildItemLotsTable()
+        private Control BuildItemLotsTable(Dictionary<string, string> item)
         {
             var wrap = new Panel
             {
                 Dock = DockStyle.Fill,
                 BackColor = Theme.Cream,
-                Padding = new Padding(20, 12, 20, 8)
+                Padding = new Padding(0)
             };
-            var card = new CardPanel
-            {
-                Dock = DockStyle.Fill,
-                Padding = new Padding(1)
-            };
-            var grid = new DataGridView
+            _lotsGrid = new DataGridView
             {
                 Dock = DockStyle.Fill,
                 ReadOnly = true,
@@ -157,50 +183,285 @@ namespace CastRightCatchInvManagement
                 MultiSelect = false,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                 AutoGenerateColumns = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                Margin = new Padding(0),
+                BorderStyle = BorderStyle.None
             };
-            Theme.StyleGrid(grid);
-            grid.EnableHeadersVisualStyles = false;
-            grid.ColumnHeadersHeight = 32;
-            grid.RowTemplate.Height = 32;
-            grid.BackgroundColor = Theme.Cream;
-            grid.GridColor = Color.FromArgb(210, 214, 210);
-            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(90, 108, 122);
-            grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(200, 208, 214);
-            grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(90, 108, 122);
-            grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = Color.FromArgb(200, 208, 214);
-            grid.DefaultCellStyle.BackColor = Theme.Cream;
-            grid.DefaultCellStyle.ForeColor = Theme.Muted;
-            grid.DefaultCellStyle.SelectionBackColor = Theme.Cream;
-            grid.DefaultCellStyle.SelectionForeColor = Theme.Muted;
-            AddCol(grid, "Lot (PO #)", 110);
-            AddCol(grid, "Vendor", 180, 160);
-            AddCol(grid, "Purchased", 90);
-            AddCol(grid, "Sold", 90);
-            AddCol(grid, "Remaining", 90);
-            AddCol(grid, "Note", 160, 140);
+            Theme.StyleGrid(_lotsGrid);
+            FadeLotsGrid(true);
+            _lotsGrid.ColumnHeadersHeight = 32;
+            _lotsGrid.RowTemplate.Height = 32;
+            AddCol(_lotsGrid, "Lot (PO #)", 110);
+            AddCol(_lotsGrid, "Vendor", 180, 160);
+            AddCol(_lotsGrid, "Purchased", 90);
+            AddCol(_lotsGrid, "Sold", 90);
+            AddCol(_lotsGrid, "Remaining", 90);
+            AddCol(_lotsGrid, "Note", 160, 140);
 
             var host = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Cream };
-            var spinner = new WaitSpinner
+            _lotsSpinner = new WaitSpinner
             {
                 Size = new Size(48, 48),
                 BackColor = Theme.Cream
             };
-            host.Controls.Add(grid);
-            host.Controls.Add(spinner);
-            spinner.BringToFront();
+            host.Controls.Add(_lotsGrid);
+            host.Controls.Add(_lotsSpinner);
+            _lotsSpinner.BringToFront();
             void CenterSpinner()
             {
-                spinner.Location = new Point(
-                    Math.Max(0, (host.ClientSize.Width - spinner.Width) / 2),
-                    Math.Max(0, (host.ClientSize.Height - spinner.Height) / 2));
+                if (_lotsSpinner == null)
+                    return;
+                _lotsSpinner.Location = new Point(
+                    Math.Max(0, (host.ClientSize.Width - _lotsSpinner.Width) / 2),
+                    Math.Max(0, (host.ClientSize.Height - _lotsSpinner.Height) / 2));
             }
 
             host.Resize += (_, _) => CenterSpinner();
             CenterSpinner();
-            card.Controls.Add(host);
-            wrap.Controls.Add(card);
+
+            var fields = new List<KeyValuePair<string, string>>();
+            foreach (var key in new[] { "Code", "Description", "Species", "COO", "Pack Size", "Scientific Name" })
+            {
+                string value = DataFiles.GetRecord(item, key).Trim();
+                if (value.Length == 0)
+                    continue;
+                fields.Add(new KeyValuePair<string, string>(key, value));
+            }
+
+            wrap.Controls.Add(host);
+            if (fields.Count > 0)
+            {
+                int rows = Math.Max(1, (fields.Count + 2) / 3);
+                var itemCard = LabeledFieldsCard("ITEM", fields, "Item", 3, 28 + 16 + rows * 40);
+                itemCard.Margin = new Padding(0);
+                wrap.Controls.Add(itemCard);
+            }
+
             return wrap;
+        }
+
+        private void StartLotsLoad()
+        {
+            _lotsLoad = new CancellationTokenSource();
+            var token = _lotsLoad.Token;
+            string code = _itemCode;
+            string description = _itemDescription;
+            _ = Task.Run(() => LoadLots(code, description, token), token);
+        }
+
+        private void LoadLots(string code, string description, CancellationToken token)
+        {
+            try
+            {
+                string column = code.Length > 0 ? "Item Code" : "Description";
+                string needle = code.Length > 0 ? code : description;
+                if (needle.Length == 0)
+                    return;
+
+                if (TableAccess.Can(TableAccess.Purchases))
+                {
+                    SqliteInventory.ForEachWhere(
+                        DataFiles.PurchaseSales,
+                        column,
+                        needle,
+                        purchase =>
+                        {
+                            if (DataFiles.IsWaitingAdd(purchase))
+                                return;
+                            string lot = DataFiles.GetRecord(purchase, "PO #").Trim();
+                            decimal volume = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Volume"));
+                            string vendor = DataFiles.GetRecordAny(purchase, "Vendor", "Name");
+                            AddPurchase(lot, vendor, volume);
+                        },
+                        token);
+                }
+
+                if (TableAccess.Can(TableAccess.Sales))
+                {
+                    SqliteInventory.ForEachWhere(
+                        DataFiles.Sales,
+                        column,
+                        needle,
+                        sale =>
+                        {
+                            if (DataFiles.IsWaitingAdd(sale))
+                                return;
+                            string lot = DataFiles.SaleLot(sale);
+                            if (lot.Length == 0)
+                                lot = DataFiles.GetRecord(sale, "PO #").Trim();
+                            decimal volume = DataFiles.ParseMoney(DataFiles.GetRecord(sale, "Volume"));
+                            AddSale(lot, volume);
+                        },
+                        token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            finally
+            {
+                QueueLotsPaint(immediate: true, done: true);
+            }
+        }
+
+        private void AddPurchase(string lot, string vendor, decimal volume)
+        {
+            string key = lot.Length > 0 ? DataFiles.NormalizePo(lot) : "(no lot)";
+            bool isNew;
+            lock (_lots)
+            {
+                isNew = !_lots.ContainsKey(key);
+                if (!_lots.TryGetValue(key, out var snap))
+                {
+                    snap = new LotSnap
+                    {
+                        Key = key,
+                        Lot = lot.Length > 0 ? lot : "(no lot)"
+                    };
+                    _lots[key] = snap;
+                }
+
+                snap.Purchased += volume;
+                if (snap.Vendor.Length == 0)
+                    snap.Vendor = vendor;
+            }
+
+            QueueLotsPaint(immediate: isNew, done: false);
+        }
+
+        private void AddSale(string lot, decimal volume)
+        {
+            string key = lot.Length > 0 ? DataFiles.NormalizePo(lot) : "(no lot)";
+            bool isNew;
+            lock (_lots)
+            {
+                isNew = !_lots.ContainsKey(key);
+                if (!_lots.TryGetValue(key, out var snap))
+                {
+                    snap = new LotSnap
+                    {
+                        Key = key,
+                        Lot = lot.Length > 0 ? lot : "(no lot)"
+                    };
+                    _lots[key] = snap;
+                }
+
+                snap.Sold += volume;
+            }
+
+            QueueLotsPaint(immediate: isNew, done: false);
+        }
+
+        private void QueueLotsPaint(bool immediate, bool done)
+        {
+            if (done)
+                _lotsDone = true;
+            int now = Environment.TickCount;
+            if (!immediate && !done && now - _lotsPaintedAt < 50)
+                return;
+            _lotsPaintedAt = now;
+
+            LotSnap[] copy;
+            lock (_lots)
+                copy = _lots.Values.ToArray();
+
+            void Paint()
+            {
+                if (IsDisposed || _lotsGrid == null || _lotsGrid.IsDisposed)
+                    return;
+                foreach (var snap in copy)
+                    PaintLot(snap);
+                if (_lotsDone)
+                    FinishLotsLoad();
+            }
+
+            if (IsDisposed)
+                return;
+            if (InvokeRequired)
+                BeginInvoke(Paint);
+            else
+                Paint();
+        }
+
+        private void PaintLot(LotSnap snap)
+        {
+            if (_lotsGrid == null)
+                return;
+            string key = snap.Key.Length > 0 ? snap.Key : "(no lot)";
+            decimal remain = snap.Purchased - snap.Sold;
+            string note = remain > 0
+                ? Lbs(remain) + " lb remaining"
+                : remain < 0
+                    ? Lbs(-remain) + " lb over sold"
+                    : "Sold out";
+            object[] cells =
+            {
+                snap.Lot,
+                snap.Vendor.Length > 0 ? snap.Vendor : "—",
+                Lbs(snap.Purchased),
+                Lbs(snap.Sold),
+                Lbs(remain),
+                note
+            };
+            if (_lotRows.TryGetValue(key, out int index) && index < _lotsGrid.Rows.Count)
+            {
+                var row = _lotsGrid.Rows[index];
+                for (int i = 0; i < cells.Length; i++)
+                    row.Cells[i].Value = cells[i];
+            }
+            else
+            {
+                int added = _lotsGrid.Rows.Add(cells);
+                _lotRows[key] = added;
+            }
+        }
+
+        private void FinishLotsLoad()
+        {
+            if (_lotsSpinner != null)
+                _lotsSpinner.Visible = false;
+            if (_lotsGrid != null)
+                FadeLotsGrid(false);
+        }
+
+        private void FadeLotsGrid(bool fade)
+        {
+            if (_lotsGrid == null)
+                return;
+            _lotsGrid.EnableHeadersVisualStyles = false;
+            if (fade)
+            {
+                _lotsGrid.BackgroundColor = Theme.Cream;
+                _lotsGrid.GridColor = Color.FromArgb(210, 214, 210);
+                _lotsGrid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(90, 108, 122);
+                _lotsGrid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(200, 208, 214);
+                _lotsGrid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(90, 108, 122);
+                _lotsGrid.ColumnHeadersDefaultCellStyle.SelectionForeColor = Color.FromArgb(200, 208, 214);
+                _lotsGrid.DefaultCellStyle.BackColor = Theme.Cream;
+                _lotsGrid.DefaultCellStyle.ForeColor = Theme.Muted;
+                _lotsGrid.DefaultCellStyle.SelectionBackColor = Theme.Cream;
+                _lotsGrid.DefaultCellStyle.SelectionForeColor = Theme.Muted;
+                _lotsGrid.AlternatingRowsDefaultCellStyle.BackColor = Theme.Cream;
+                _lotsGrid.AlternatingRowsDefaultCellStyle.ForeColor = Theme.Muted;
+            }
+            else
+            {
+                Theme.StyleGrid(_lotsGrid);
+                _lotsGrid.EnableHeadersVisualStyles = false;
+            }
+        }
+
+        private static string Lbs(decimal value) =>
+            value.ToString("0.###", CultureInfo.InvariantCulture);
+
+        private sealed class LotSnap
+        {
+            public string Key { get; set; } = "";
+            public string Lot { get; set; } = "";
+            public string Vendor { get; set; } = "";
+            public decimal Purchased { get; set; }
+            public decimal Sold { get; set; }
         }
 
         private static CardPanel LabeledFieldsCard(
@@ -360,9 +621,9 @@ namespace CastRightCatchInvManagement
             {
                 Name = name,
                 HeaderText = name,
-                Width = width,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
                 FillWeight = fill > 0 ? fill : width,
-                MinimumWidth = Math.Min(width, 48),
+                MinimumWidth = 48,
                 SortMode = DataGridViewColumnSortMode.NotSortable
             });
         }
