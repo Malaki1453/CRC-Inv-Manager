@@ -15,8 +15,6 @@ public static class ServerOps
     public const string AuthLogin = "auth.login";
     public const string AuthResume = "auth.resume";
     public const string AuthLogout = "auth.logout";
-    public const string AuthRecoverQuestions = "auth.recoverQuestions";
-    public const string AuthRecover = "auth.recover";
     public const string AuthChangePassword = "auth.changePassword";
 
     public const string TableEnsure = "table.ensure";
@@ -56,9 +54,6 @@ public static class ServerOps
     public const string AccountsAccessGet = "accounts.accessGet";
     public const string AccountsAccessSet = "accounts.accessSet";
 
-    public const string SecurityQuestions = "security.questions";
-    public const string SecuritySet = "security.set";
-
     public const string BankList = "bank.list";
     public const string BankInsert = "bank.insert";
     public const string BankUpdate = "bank.update";
@@ -70,6 +65,7 @@ public static class ServerOps
     public const string PdfSave = "pdf.save";
     public const string PdfHas = "pdf.has";
     public const string PdfGet = "pdf.get";
+    public const string PdfDelete = "pdf.delete";
 
     public const string RolesRead = "roles.read";
     public const string RolesWrite = "roles.write";

@@ -2,8 +2,8 @@ namespace CastRightCatchInvManagement
 {
     /// <summary>
     /// Vendor lookup (name, company, phone, balance). Always reads the live database.
-    /// Toolbar Add Vendor opens a blank record. Double-click a row for View Details.
-    /// Right-click for View History or Edit Vendor.
+    /// Toolbar Add Vendor opens a blank record. Double-click a row for View Details
+    /// (identity and history). Right-click for Edit Vendor.
     /// </summary>
     public partial class Vendors : Form, INavigationPage
     {
@@ -22,8 +22,7 @@ namespace CastRightCatchInvManagement
                 dataGridView1,
                 PartyEditForm.OpenVendorEdit,
                 "Vendor",
-                "Edit Vendor",
-                ("View History", record => CustomerHistoryForm.ShowVendor(this, record)));
+                "Edit Vendor");
             DataFiles.DataChanged += LoadTable;
             LoadTable();
         }

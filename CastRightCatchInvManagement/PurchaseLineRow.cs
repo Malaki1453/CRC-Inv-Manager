@@ -3,30 +3,33 @@ using System.Globalization;
 
 namespace CastRightCatchInvManagement
 {
-    /// <summary>One product line on Create Sales Order. Item code fills description and COO.</summary>
-    internal sealed class SalesOrderLineRow : Panel
+    /// <summary>One product line on New Purchase. Item code fills description, COO, and pack size.</summary>
+    internal sealed class PurchaseLineRow : Panel
     {
         public const int RowHeight = 42;
 
-        private string _po = "";
         private readonly TextBox _item;
-        private readonly TextBox _lot;
         private readonly TextBox _description;
         private readonly TextBox _coo;
-        private readonly TextBox _unitSize;
-        private readonly TextBox _cases;
+        private readonly TextBox _packSize;
+        private readonly TextBox _cs;
         private readonly TextBox _volume;
         private readonly TextBox _price;
-        private readonly Label _amount;
+        private readonly Label _totalPerLb;
+        private readonly Label _total;
         private readonly Button _remove;
         private bool _filling;
+        private decimal _overhead;
+        private decimal _freight;
+        private decimal _forwarder;
+        private decimal _other;
         private LookupSuggest? _itemSuggest;
         private LookupSuggest? _descSuggest;
 
         public event EventHandler? Changed;
         public event EventHandler? RemoveRequested;
 
-        public SalesOrderLineRow()
+        public PurchaseLineRow()
         {
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint |
@@ -40,14 +43,14 @@ namespace CastRightCatchInvManagement
             Theme.EnableDoubleBuffer(this);
 
             _item = MakeBox();
-            _lot = MakeBox();
             _description = MakeBox();
             _coo = MakeBox();
-            _unitSize = MakeBox();
-            _cases = MakeBox();
+            _packSize = MakeBox();
+            _cs = MakeBox();
             _volume = MakeBox();
             _price = MakeBox();
-            _amount = MakeTotal();
+            _totalPerLb = MakeTotal();
+            _total = MakeTotal();
 
             _remove = new Button
             {
@@ -61,18 +64,18 @@ namespace CastRightCatchInvManagement
             _remove.Click += (_, _) => RemoveRequested?.Invoke(this, EventArgs.Empty);
 
             Controls.Add(_item);
-            Controls.Add(_lot);
             Controls.Add(_description);
             Controls.Add(_coo);
-            Controls.Add(_unitSize);
-            Controls.Add(_cases);
+            Controls.Add(_packSize);
+            Controls.Add(_cs);
             Controls.Add(_volume);
             Controls.Add(_price);
-            Controls.Add(_amount);
+            Controls.Add(_totalPerLb);
+            Controls.Add(_total);
             Controls.Add(_remove);
 
-            _unitSize.TextChanged += (_, _) => RecalcVolume();
-            _cases.TextChanged += (_, _) => RecalcVolume();
+            _packSize.TextChanged += (_, _) => RecalcVolume();
+            _cs.TextChanged += (_, _) => RecalcVolume();
             foreach (var box in Fields())
                 box.TextChanged += (_, _) => OnFieldChanged();
 
@@ -81,8 +84,12 @@ namespace CastRightCatchInvManagement
         }
 
         public string ItemCode => _item.Text.Trim();
+        public string Description => _description.Text.Trim();
 
-        public void FocusItem() => _item.Focus();
+        public void FocusItem()
+        {
+            _item.Focus();
+        }
 
         public void AttachLookups(Func<IReadOnlyList<LookupSuggest.Hit>> items)
         {
@@ -92,7 +99,14 @@ namespace CastRightCatchInvManagement
             _descSuggest = new LookupSuggest(_description, items, codeFirst: false, ApplyHit);
         }
 
-        public void SetPo(string po) => _po = (po ?? "").Trim();
+        public void SetSharedCosts(decimal overhead, decimal freight, decimal forwarder, decimal other)
+        {
+            _overhead = overhead;
+            _freight = freight;
+            _forwarder = forwarder;
+            _other = other;
+            RecalcCost();
+        }
 
         private void ApplyHit(LookupSuggest.Hit hit)
         {
@@ -117,30 +131,23 @@ namespace CastRightCatchInvManagement
 
         public void FillFromRecord(Dictionary<string, string> record)
         {
-            string po = DataFiles.SalePo(record);
-            if (po.Length > 0)
-                _po = po;
             Fill(
                 DataFiles.GetRecord(record, "Item Code"),
-                DataFiles.SaleLot(record),
                 DataFiles.GetRecord(record, "Description"),
                 DataFiles.GetRecord(record, "COO"),
                 DataFiles.GetRecord(record, "Pack Size"),
                 DataFiles.GetRecord(record, "CS"),
                 DataFiles.GetRecord(record, "Volume"),
-                DataFiles.GetRecord(record, "Sell Price / LB"));
+                DataFiles.GetRecord(record, "Price Paid / LB"));
         }
 
-        public void FillFromLine(SalesOrderLine line)
+        public void FillFromLine(PurchaseLine line)
         {
-            if (line.PoNumber.Length > 0)
-                _po = line.PoNumber;
             Fill(
                 line.ItemCode,
-                line.LotNumber,
                 line.Description,
                 line.Coo,
-                line.UnitSize,
+                line.PackSize,
                 line.Cases,
                 line.Volume,
                 line.Price);
@@ -148,7 +155,6 @@ namespace CastRightCatchInvManagement
 
         private void Fill(
             string item,
-            string lot,
             string description,
             string coo,
             string pack,
@@ -160,11 +166,10 @@ namespace CastRightCatchInvManagement
             try
             {
                 _item.Text = item;
-                _lot.Text = lot;
                 _description.Text = description;
                 _coo.Text = coo;
-                _unitSize.Text = pack;
-                _cases.Text = cases;
+                _packSize.Text = pack;
+                _cs.Text = cases;
                 _volume.Text = volume;
                 _price.Text = price;
             }
@@ -173,25 +178,24 @@ namespace CastRightCatchInvManagement
                 _filling = false;
             }
 
-            RecalcAmount();
+            RecalcCost();
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
-        public SalesOrderLine GetLine()
+        public PurchaseLine GetLine()
         {
-            RecalcAmount();
-            return new SalesOrderLine
+            RecalcCost();
+            return new PurchaseLine
             {
-                PoNumber = _po,
                 ItemCode = _item.Text.Trim(),
-                LotNumber = _lot.Text.Trim(),
                 Description = _description.Text.Trim(),
                 Coo = _coo.Text.Trim(),
-                UnitSize = _unitSize.Text.Trim(),
-                Cases = _cases.Text.Trim(),
+                PackSize = _packSize.Text.Trim(),
+                Cases = _cs.Text.Trim(),
                 Volume = _volume.Text.Trim(),
                 Price = _price.Text.Trim(),
-                Amount = _amount.Text.Trim()
+                TotalPerLb = _totalPerLb.Text.Trim(),
+                TotalCost = _total.Text.Trim()
             };
         }
 
@@ -224,7 +228,7 @@ namespace CastRightCatchInvManagement
         {
             if (_filling)
                 return;
-            RecalcAmount();
+            RecalcCost();
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
@@ -233,51 +237,51 @@ namespace CastRightCatchInvManagement
             if (_filling)
                 return;
 
-            decimal pack = ParseNumber(_unitSize.Text);
-            decimal cs = ParseNumber(_cases.Text);
+            decimal pack = ParseNumber(_packSize.Text);
+            decimal cs = ParseNumber(_cs.Text);
             if (pack <= 0 || cs <= 0)
             {
-                RecalcAmount();
+                RecalcCost();
                 return;
             }
 
             _filling = true;
-            if (string.IsNullOrWhiteSpace(_volume.Text))
-                _volume.Text = (pack * cs).ToString("0.##", CultureInfo.InvariantCulture);
+            _volume.Text = (pack * cs).ToString("0.##", CultureInfo.InvariantCulture);
             _filling = false;
-            RecalcAmount();
+            RecalcCost();
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
-        private void RecalcAmount()
+        private void RecalcCost()
         {
-            decimal amount = ParseNumber(_volume.Text) * ParseNumber(_price.Text);
-            _amount.Text = amount.ToString("0.00", CultureInfo.InvariantCulture);
+            decimal perLb = ParseNumber(_price.Text) + _overhead + _freight + _forwarder + _other;
+            decimal lbs = ParseNumber(_volume.Text);
+            _totalPerLb.Text = perLb.ToString("0.####", CultureInfo.InvariantCulture);
+            _total.Text = (perLb * lbs).ToString("0.00", CultureInfo.InvariantCulture);
         }
 
         private void LayoutFields()
         {
-            var slots = SalesOrderLineLayout.Slots(Width);
+            var slots = PurchaseLineLayout.Slots(Width);
             _item.Bounds = slots.Item;
-            _lot.Bounds = slots.Lot;
             _description.Bounds = slots.Description;
             _coo.Bounds = slots.Coo;
-            _unitSize.Bounds = slots.UnitSize;
-            _cases.Bounds = slots.Cases;
+            _packSize.Bounds = slots.Pack;
+            _cs.Bounds = slots.Cases;
             _volume.Bounds = slots.Volume;
             _price.Bounds = slots.Price;
-            _amount.Bounds = slots.Amount;
+            _totalPerLb.Bounds = slots.TotalPerLb;
+            _total.Bounds = slots.Total;
             _remove.Bounds = slots.Remove;
         }
 
         private IEnumerable<TextBox> Fields()
         {
             yield return _item;
-            yield return _lot;
             yield return _description;
             yield return _coo;
-            yield return _unitSize;
-            yield return _cases;
+            yield return _packSize;
+            yield return _cs;
             yield return _volume;
             yield return _price;
         }
@@ -303,12 +307,27 @@ namespace CastRightCatchInvManagement
             };
         }
 
-        public static decimal ParseNumber(string? text) => PurchaseLineRow.ParseNumber(text);
+        public static decimal ParseNumber(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return 0;
+
+            string cleaned = text.Replace("$", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("LB", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("lbs", "", StringComparison.OrdinalIgnoreCase)
+                .Trim();
+
+            if (decimal.TryParse(cleaned, NumberStyles.Any, CultureInfo.CurrentCulture, out var value))
+                return value;
+            if (decimal.TryParse(cleaned, NumberStyles.Any, CultureInfo.InvariantCulture, out value))
+                return value;
+            return 0;
+        }
     }
 
-    internal static class SalesOrderLineLayout
+    internal static class PurchaseLineLayout
     {
-        public static SalesOrderLineSlots Slots(int width)
+        public static PurchaseLineSlots Slots(int width)
         {
             int pad = 10;
             int y = 8;
@@ -316,81 +335,54 @@ namespace CastRightCatchInvManagement
             int gap = 6;
             int remove = 28;
             int inner = Math.Max(520, width - pad * 2 - remove - gap);
-            int item = 88;
-            int lot = 88;
-            int coo = 48;
-            int pack = 52;
+            int item = 96;
+            int coo = 52;
+            int pack = 56;
             int cs = 44;
-            int vol = 64;
-            int price = 68;
-            int amount = 72;
-            int used = item + lot + coo + pack + cs + vol + price + amount + gap * 8;
+            int vol = 72;
+            int price = 72;
+            int totLb = 72;
+            int total = 78;
+            int used = item + coo + pack + cs + vol + price + totLb + total + gap * 8;
             int desc = Math.Max(80, inner - used);
 
             int x = pad;
             var itemR = new Rectangle(x, y, item, h); x += item + gap;
-            var lotR = new Rectangle(x, y, lot, h); x += lot + gap;
             var descR = new Rectangle(x, y, desc, h); x += desc + gap;
             var cooR = new Rectangle(x, y, coo, h); x += coo + gap;
-            var unitR = new Rectangle(x, y, pack, h); x += pack + gap;
-            var casesR = new Rectangle(x, y, cs, h); x += cs + gap;
-            var volumeR = new Rectangle(x, y, vol, h); x += vol + gap;
+            var packR = new Rectangle(x, y, pack, h); x += pack + gap;
+            var csR = new Rectangle(x, y, cs, h); x += cs + gap;
+            var volR = new Rectangle(x, y, vol, h); x += vol + gap;
             var priceR = new Rectangle(x, y, price, h); x += price + gap;
-            var amountR = new Rectangle(x, y, amount, h); x += amount + gap;
+            var totLbR = new Rectangle(x, y, totLb, h); x += totLb + gap;
+            var totalR = new Rectangle(x, y, total, h); x += total + gap;
             var removeR = new Rectangle(x, y, remove, h);
-            return new SalesOrderLineSlots(itemR, lotR, descR, cooR, unitR, casesR, volumeR, priceR, amountR, removeR);
+            return new PurchaseLineSlots(itemR, descR, cooR, packR, csR, volR, priceR, totLbR, totalR, removeR);
         }
     }
 
-    internal readonly record struct SalesOrderLineSlots(
+    internal readonly record struct PurchaseLineSlots(
         Rectangle Item,
-        Rectangle Lot,
         Rectangle Description,
         Rectangle Coo,
-        Rectangle UnitSize,
+        Rectangle Pack,
         Rectangle Cases,
         Rectangle Volume,
         Rectangle Price,
-        Rectangle Amount,
+        Rectangle TotalPerLb,
+        Rectangle Total,
         Rectangle Remove);
 
-    internal sealed class SalesOrderLine
+    internal sealed class PurchaseLine
     {
         public string ItemCode { get; set; } = "";
-        public string LotNumber { get; set; } = "";
         public string Description { get; set; } = "";
         public string Coo { get; set; } = "";
-        public string UnitSize { get; set; } = "";
+        public string PackSize { get; set; } = "";
         public string Cases { get; set; } = "";
         public string Volume { get; set; } = "";
         public string Price { get; set; } = "";
-        public string Amount { get; set; } = "";
-        public string PoNumber { get; set; } = "";
-    }
-
-    internal sealed class SalesOrderDraft
-    {
-        public string SoNumber { get; set; } = "";
-        public DateTime OrderDate { get; set; } = DateTime.Today;
-        public DateTime ReleaseDate { get; set; } = DateTime.Today;
-        public DateTime DueDate { get; set; } = DateTime.Today;
-        public string CustomerCode { get; set; } = "";
-        public string CustomerName { get; set; } = "";
-        public string Address { get; set; } = "";
-        public string CustomerPhone { get; set; } = "";
-        public string Contact { get; set; } = "";
-        public string Email { get; set; } = "";
-        public string ContactPhone { get; set; } = "";
-        public string Warehouse { get; set; } = "";
-        public string CustomerPo { get; set; } = "";
-        public string Terms { get; set; } = "";
-        public string Status { get; set; } = "";
-        public string FreightCompany { get; set; } = "";
-        public string FreightTerms { get; set; } = "";
-        public List<SalesOrderLine> Lines { get; set; } = new();
-
-        public decimal TotalCases => Lines.Sum(line => InvoiceLineRow.ParseNumber(line.Cases));
-        public decimal TotalVolume => Lines.Sum(line => InvoiceLineRow.ParseNumber(line.Volume));
-        public decimal TotalAmount => Lines.Sum(line => InvoiceLineRow.ParseNumber(line.Amount));
+        public string TotalPerLb { get; set; } = "";
+        public string TotalCost { get; set; } = "";
     }
 }

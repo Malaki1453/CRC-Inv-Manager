@@ -61,14 +61,6 @@ internal static class Passwords
     public static string NewSessionToken() =>
         Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
-    public static string NormalizeAnswer(string? answer)
-    {
-        answer = (answer ?? "").Trim().ToLowerInvariant();
-        while (answer.Contains("  ", StringComparison.Ordinal))
-            answer = answer.Replace("  ", " ", StringComparison.Ordinal);
-        return answer;
-    }
-
     private static bool VerifyArgon2(string password, string encoded)
     {
         string[] parts = encoded.Split('$');

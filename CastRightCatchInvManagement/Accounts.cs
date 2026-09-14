@@ -81,18 +81,6 @@ namespace CastRightCatchInvManagement
 
         public static bool IsIt(string? username) => Contains(ReadIt(), username);
 
-        public static readonly string[] SecurityQuestionBank =
-        {
-            "What city were you born in?",
-            "What was the name of your first pet?",
-            "What is your mother's maiden name?",
-            "What was the name of your first school?",
-            "What street did you grow up on?",
-            "What was the make of your first car?",
-            "What is your oldest sibling's middle name?",
-            "What was your childhood nickname?"
-        };
-
         public static string GenerateTemporaryPassword()
         {
             const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -587,8 +575,6 @@ namespace CastRightCatchInvManagement
             ClearLocalSession();
             if (!AppState.StaySignedInEnabled || !account.StaySignedIn || account.MustChangePassword)
                 return;
-            if (!HasSecurityQuestions(account.Username))
-                return;
 
             if (DataLink.IsRemote)
             {
@@ -835,177 +821,6 @@ namespace CastRightCatchInvManagement
             public string? Username { get; set; }
             public string? Token { get; set; }
             public string? Expires { get; set; }
-        }
-
-        public static bool HasSecurityQuestions(string username)
-        {
-            return SqliteInventory.TryGetSecurityQuestions(username, out _, out _, out _);
-        }
-
-        public static bool TryGetSecurityQuestions(string username, out string q1, out string q2, out string q3)
-        {
-            return SqliteInventory.TryGetSecurityQuestions(username, out q1, out q2, out q3);
-        }
-
-        /// <summary>Forgot-password flow: lockout first, then the three questions.</summary>
-        public static bool TryLoadRecoveryQuestions(
-            string username,
-            out string q1,
-            out string q2,
-            out string q3,
-            out string error)
-        {
-            q1 = q2 = q3 = "";
-            error = "";
-            username = (username ?? "").Trim();
-            if (username.Length == 0)
-            {
-                error = "Enter your username.";
-                return false;
-            }
-
-            if (DataLink.IsRemote)
-            {
-                try
-                {
-                    var questions = DataLink.Call<RecoverQuestionsResponse>(
-                        ServerOps.AuthRecoverQuestions,
-                        new RecoverQuestionsRequest { Username = username });
-                    if (!string.IsNullOrWhiteSpace(questions.Error))
-                    {
-                        error = questions.Error;
-                        return false;
-                    }
-
-                    q1 = questions.Q1;
-                    q2 = questions.Q2;
-                    q3 = questions.Q3;
-                    if (!questions.Found)
-                    {
-                        error = "No security questions are set for that user. Ask IT to reset the password.";
-                        return false;
-                    }
-
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    error = ex.Message;
-                    return false;
-                }
-            }
-
-            if (!SqliteInventory.AllowRecovery(username, out error))
-                return false;
-            if (!SqliteInventory.TryGetSecurityQuestions(username, out q1, out q2, out q3))
-            {
-                error = "No security questions are set for that user. Ask IT to reset the password.";
-                return false;
-            }
-
-            return true;
-        }
-
-        public static bool SetSecurityQuestions(
-            string username,
-            string q1, string a1,
-            string q2, string a2,
-            string q3, string a3,
-            out string error)
-        {
-            error = "";
-            q1 = (q1 ?? "").Trim();
-            q2 = (q2 ?? "").Trim();
-            q3 = (q3 ?? "").Trim();
-            a1 = NormalizeAnswer(a1);
-            a2 = NormalizeAnswer(a2);
-            a3 = NormalizeAnswer(a3);
-            if (q1.Length == 0 || q2.Length == 0 || q3.Length == 0 ||
-                a1.Length == 0 || a2.Length == 0 || a3.Length == 0)
-            {
-                error = "Choose three questions and answers.";
-                return false;
-            }
-
-            if (q1.Equals(q2, StringComparison.OrdinalIgnoreCase) ||
-                q1.Equals(q3, StringComparison.OrdinalIgnoreCase) ||
-                q2.Equals(q3, StringComparison.OrdinalIgnoreCase))
-            {
-                error = "Pick three different questions.";
-                return false;
-            }
-
-            if (DataLink.IsRemote)
-            {
-                SqliteInventory.SetSecurityQuestions(username, q1, a1, q2, a2, q3, a3);
-                return true;
-            }
-
-            HashPassword(a1, out string h1, out _);
-            HashPassword(a2, out string h2, out _);
-            HashPassword(a3, out string h3, out _);
-            SqliteInventory.SetSecurityQuestions(username, q1, h1, q2, h2, q3, h3);
-            return true;
-        }
-
-        public static bool RecoverPassword(
-            string username,
-            string a1, string a2, string a3,
-            string newPassword,
-            out string error)
-        {
-            error = "";
-            if (DataLink.IsRemote)
-            {
-                try
-                {
-                    DataLink.Call<bool>(ServerOps.AuthRecover, new RecoverRequest
-                    {
-                        Username = username,
-                        A1 = a1,
-                        A2 = a2,
-                        A3 = a3,
-                        NewPassword = newPassword
-                    });
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    error = ex.Message;
-                    return false;
-                }
-            }
-
-            if (!SqliteInventory.AllowRecovery(username, out error))
-                return false;
-
-            if (!VerifySecurityAnswers(username, a1, a2, a3))
-            {
-                error = SqliteInventory.NoteRecoveryFailure(username);
-                return false;
-            }
-
-            return SetPassword(username, newPassword, out error, mustChange: false);
-        }
-
-        public static bool VerifySecurityAnswers(string username, string a1, string a2, string a3)
-        {
-            if (!SqliteInventory.TryGetSecurityAnswerHashes(username, out string h1, out string h2, out string h3))
-                return false;
-            if (h1.Length == 0 || h2.Length == 0 || h3.Length == 0)
-                return false;
-
-            return VerifyPassword(NormalizeAnswer(a1), h1, "argon2id") &&
-                   VerifyPassword(NormalizeAnswer(a2), h2, "argon2id") &&
-                   VerifyPassword(NormalizeAnswer(a3), h3, "argon2id");
-        }
-
-        private static string NormalizeAnswer(string? answer)
-        {
-            answer = (answer ?? "").Trim().ToLowerInvariant();
-            while (answer.Contains("  ", StringComparison.Ordinal))
-                answer = answer.Replace("  ", " ", StringComparison.Ordinal);
-            return answer;
         }
 
         private static AdminsFile ReadFile()

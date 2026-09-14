@@ -260,7 +260,6 @@ namespace CastRightCatchInvManagement
             string pack = DataFiles.GetRecord(record, "Pack Size");
             string coo = DataFiles.GetRecord(record, "COO");
             string cs = DataFiles.GetRecord(record, "CS");
-            string received = DataFiles.GetRecord(record, "Volume Received");
             string volume = DataFiles.GetRecord(record, "Volume");
             string po = DataFiles.SalePo(record);
             if (po.Length == 0)
@@ -289,9 +288,8 @@ namespace CastRightCatchInvManagement
             if (parts.Count > 0)
                 _description.Text = string.Join("  ·  ", parts);
 
-            string weight = received.Length > 0 ? received : volume;
-            if (weight.Length > 0)
-                _weight.Text = weight;
+            if (volume.Length > 0)
+                _weight.Text = volume;
 
             string sell = DataFiles.GetRecordAny(
                 record,
@@ -482,6 +480,7 @@ namespace CastRightCatchInvManagement
         public string ShipTo { get; set; } = "";
         public decimal Discount { get; set; }
         public decimal Freight { get; set; }
+        public string FreightCompany { get; set; } = "";
         public decimal TaxRate { get; set; }
         public bool TaxIsPercent { get; set; }
         public List<InvoiceLine> Lines { get; set; } = new();

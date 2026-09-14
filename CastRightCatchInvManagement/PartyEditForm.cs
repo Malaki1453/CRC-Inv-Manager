@@ -16,6 +16,7 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _email;
         private readonly TextBox _terms;
         private readonly TextBox _extra;
+        private readonly ComboBox _type;
         private readonly TextBox _established;
         private readonly TextBox _routing;
         private readonly TextBox _account;
@@ -153,13 +154,14 @@ namespace CastRightCatchInvManagement
                 _phone = PutField(grid, 3, 0, "PHONE");
                 _balance = PutField(grid, 4, 0, "CURRENT BALANCE");
                 _terms = PutField(grid, 0, 1, "TERMS");
-                _extra = PutField(grid, 1, 1, "TYPE");
+                _type = PutCombo(grid, 1, 1, "TYPE");
                 _contact = PutField(grid, 2, 1, "CONTACT NAME");
                 _established = PutField(grid, 3, 1, "AMOUNT");
+                _extra = new TextBox { Visible = false };
                 SetRowHeights(grid, 56, 56, 56, 56, 56);
                 _contact.PlaceholderText = "Who we talk to";
                 _established.PlaceholderText = "0.00";
-                _extra.PlaceholderText = "Processor";
+                FillVendorTypes(_type, record == null ? "" : DataFiles.GetRecord(record, "Type"));
             }
             else
             {
@@ -172,6 +174,7 @@ namespace CastRightCatchInvManagement
                 _email = PutField(grid, 1, 1, "EMAIL");
                 _terms = PutField(grid, 2, 1, "TERMS");
                 _extra = PutField(grid, 3, 1, "CREDIT LIMIT");
+                _type = new ComboBox { Visible = false };
                 _balance = PutField(grid, 0, 2, "CURRENT BALANCE");
                 _established = PutField(grid, 1, 2, "ESTABLISHED");
                 _address = PutField(grid, 0, 3, "ADDRESS", colSpan: 4, multiline: true);
@@ -227,7 +230,6 @@ namespace CastRightCatchInvManagement
                 _notes.Text = First(record, "Description", "Notes");
                 if (vendor)
                 {
-                    _extra.Text = DataFiles.GetRecord(record, "Type");
                     _contact.Text = DataFiles.GetRecord(record, "Contact Name");
                     _established.Text = DataFiles.GetRecord(record, "Amount");
                 }
@@ -334,7 +336,14 @@ namespace CastRightCatchInvManagement
 
             if (_vendor)
             {
-                fields["Type"] = _extra.Text.Trim();
+                string type = (_type.SelectedItem as string ?? _type.Text).Trim();
+                if (type.Length == 0)
+                {
+                    MessageBox.Show("Choose a type.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return false;
+                }
+
+                fields["Type"] = type;
                 fields["Contact Name"] = _contact.Text.Trim();
                 fields["Amount"] = _established.Text.Trim();
             }
@@ -639,6 +648,66 @@ namespace CastRightCatchInvManagement
             if (colSpan > 1)
                 grid.SetColumnSpan(cell, colSpan);
             return box;
+        }
+
+        private static ComboBox PutCombo(TableLayoutPanel grid, int col, int row, string caption)
+        {
+            while (grid.RowCount <= row)
+            {
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+                grid.RowCount++;
+            }
+
+            var box = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Height = 28
+            };
+            Theme.StyleCombo(box);
+            var cell = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(8, 4, 8, 8)
+            };
+            var label = new Label
+            {
+                Text = caption,
+                Dock = DockStyle.Top,
+                Height = 18
+            };
+            Theme.StyleFieldLabel(label);
+            box.Dock = DockStyle.Top;
+            cell.Controls.Add(box);
+            cell.Controls.Add(label);
+            grid.Controls.Add(cell, col, row);
+            return box;
+        }
+
+        private static void FillVendorTypes(ComboBox box, string selected)
+        {
+            box.Items.Clear();
+            foreach (var name in VendorTypes.Load())
+                box.Items.Add(name);
+
+            selected = (selected ?? "").Trim();
+            if (selected.Length == 0)
+            {
+                box.SelectedIndex = -1;
+                return;
+            }
+
+            for (int i = 0; i < box.Items.Count; i++)
+            {
+                if (box.Items[i] is string item &&
+                    item.Equals(selected, StringComparison.OrdinalIgnoreCase))
+                {
+                    box.SelectedIndex = i;
+                    return;
+                }
+            }
+
+            box.Items.Add(selected);
+            box.SelectedItem = selected;
         }
     }
 }

@@ -102,7 +102,12 @@ namespace CastRightCatchInvManagement
                     EnsureTextColumn(table, column, archive);
                 BackfillLiveStatus(table, archive);
                 if (table == DataFiles.PurchaseSales)
+                {
                     DropTextColumn(table, "Vendor Invoice #", archive);
+                    DropTextColumn(table, "Volume Received", archive);
+                }
+                if (table == DataFiles.Invoices)
+                    DropTextColumn(table, "PDF Created", archive);
             }
 
             if (archive)
@@ -310,7 +315,9 @@ namespace CastRightCatchInvManagement
                 .Where(h => h.Length > 0)
                 .ToList();
             var actual = TableColumns(table)
-                .Where(c => c != "id" && c != "term_start")
+                .Where(c => c != "id" && c != "term_start" &&
+                            !c.Equals("PDF Created", StringComparison.OrdinalIgnoreCase) &&
+                            !c.Equals("Volume Received", StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1180,135 +1187,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
-        public static bool TryGetSecurityQuestions(
-            string username,
-            out string q1,
-            out string q2,
-            out string q3)
-        {
-            q1 = q2 = q3 = "";
-            username = (username ?? "").Trim();
-            if (username.Length == 0)
-                return false;
-            if (DataLink.Try(ServerOps.AuthRecoverQuestions, new RecoverQuestionsRequest { Username = username },
-                    out RecoverQuestionsResponse? questions) &&
-                questions != null)
-            {
-                q1 = questions.Q1;
-                q2 = questions.Q2;
-                q3 = questions.Q3;
-                return questions.Found;
-            }
-
-            EnsureCreated();
-            using var db = Open();
-            using var cmd = db.CreateCommand();
-            cmd.CommandText =
-                "SELECT security_q1, security_q2, security_q3 FROM app_accounts WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$user", username);
-            using var reader = cmd.ExecuteReader();
-            if (!reader.Read())
-                return false;
-
-            q1 = reader.IsDBNull(0) ? "" : reader.GetString(0);
-            q2 = reader.IsDBNull(1) ? "" : reader.GetString(1);
-            q3 = reader.IsDBNull(2) ? "" : reader.GetString(2);
-            return q1.Length > 0 && q2.Length > 0 && q3.Length > 0;
-        }
-
-        public static bool TryGetSecurityAnswerHashes(
-            string username,
-            out string a1,
-            out string a2,
-            out string a3)
-        {
-            a1 = a2 = a3 = "";
-            username = (username ?? "").Trim();
-            if (username.Length == 0)
-                return false;
-            if (DataLink.IsRemote)
-                return false;
-
-            EnsureCreated();
-            using var db = Open();
-            using var cmd = db.CreateCommand();
-            cmd.CommandText =
-                "SELECT security_a1, security_a2, security_a3 FROM app_accounts WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$user", username);
-            using var reader = cmd.ExecuteReader();
-            if (!reader.Read())
-                return false;
-
-            a1 = reader.IsDBNull(0) ? "" : reader.GetString(0);
-            a2 = reader.IsDBNull(1) ? "" : reader.GetString(1);
-            a3 = reader.IsDBNull(2) ? "" : reader.GetString(2);
-            return true;
-        }
-
-        public static bool AllowRecovery(string username, out string error)
-        {
-            error = "";
-            username = (username ?? "").Trim();
-            if (username.Length == 0)
-            {
-                error = "Enter your username.";
-                return false;
-            }
-
-            EnsureCreated();
-            using var db = Open();
-            using var cmd = db.CreateCommand();
-            cmd.CommandText =
-                "SELECT COALESCE(recover_lock_until, '') FROM app_accounts WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$user", username);
-            string untilText = cmd.ExecuteScalar()?.ToString() ?? "";
-            if (DateTime.TryParse(untilText, out var until) && until > DateTime.Now)
-            {
-                error = RecoveryGuard.LockedMessage(until);
-                return false;
-            }
-
-            if (untilText.Length > 0)
-                ClearRecoveryFails(username);
-            return true;
-        }
-
-        public static string NoteRecoveryFailure(string username)
-        {
-            username = (username ?? "").Trim();
-            if (username.Length == 0)
-                return RecoveryGuard.WrongMessage(RecoveryGuard.MaxTries - 1);
-
-            EnsureCreated();
-            using var db = Open();
-            using var read = db.CreateCommand();
-            read.CommandText =
-                "SELECT COALESCE(recover_fails, 0) FROM app_accounts WHERE username = $user;";
-            read.Parameters.AddWithValue("$user", username);
-            int fails = Convert.ToInt32(read.ExecuteScalar() ?? 0) + 1;
-            int left = Math.Max(0, RecoveryGuard.MaxTries - fails);
-            string until = left == 0
-                ? DateTime.Now.AddMinutes(RecoveryGuard.LockMinutes).ToString("o")
-                : "";
-
-            using var write = db.CreateCommand();
-            write.CommandText =
-                """
-                UPDATE app_accounts
-                SET recover_fails = $fails, recover_lock_until = $until
-                WHERE username = $user;
-                """;
-            write.Parameters.AddWithValue("$fails", fails);
-            write.Parameters.AddWithValue("$until", until);
-            write.Parameters.AddWithValue("$user", username);
-            write.ExecuteNonQuery();
-
-            return left == 0 && DateTime.TryParse(until, out var lockUntil)
-                ? RecoveryGuard.LockedMessage(lockUntil)
-                : RecoveryGuard.WrongMessage(left);
-        }
-
-        public static void ClearRecoveryFails(string username)
+        private static void ClearRecoveryFails(string username)
         {
             username = (username ?? "").Trim();
             if (username.Length == 0)
@@ -1410,48 +1289,6 @@ namespace CastRightCatchInvManagement
             using var cmd = db.CreateCommand();
             cmd.CommandText =
                 "UPDATE app_accounts SET login_fails = 0, login_lock_until = '' WHERE username = $user;";
-            cmd.Parameters.AddWithValue("$user", username);
-            cmd.ExecuteNonQuery();
-        }
-
-        public static void SetSecurityQuestions(
-            string username,
-            string q1, string a1,
-            string q2, string a2,
-            string q3, string a3)
-        {
-            username = (username ?? "").Trim();
-            if (username.Length == 0)
-                return;
-            if (DataLink.IsRemote)
-            {
-                DataLink.Send(ServerOps.SecuritySet, new AccountWriteRequest
-                {
-                    Username = username,
-                    Q1 = q1, A1 = a1,
-                    Q2 = q2, A2 = a2,
-                    Q3 = q3, A3 = a3
-                });
-                return;
-            }
-
-            EnsureCreated();
-            using var db = Open();
-            using var cmd = db.CreateCommand();
-            cmd.CommandText =
-                """
-                UPDATE app_accounts SET
-                    security_q1 = $q1, security_a1 = $a1,
-                    security_q2 = $q2, security_a2 = $a2,
-                    security_q3 = $q3, security_a3 = $a3
-                WHERE username = $user;
-                """;
-            cmd.Parameters.AddWithValue("$q1", q1 ?? "");
-            cmd.Parameters.AddWithValue("$a1", a1 ?? "");
-            cmd.Parameters.AddWithValue("$q2", q2 ?? "");
-            cmd.Parameters.AddWithValue("$a2", a2 ?? "");
-            cmd.Parameters.AddWithValue("$q3", q3 ?? "");
-            cmd.Parameters.AddWithValue("$a3", a3 ?? "");
             cmd.Parameters.AddWithValue("$user", username);
             cmd.ExecuteNonQuery();
         }
@@ -2183,8 +2020,6 @@ namespace CastRightCatchInvManagement
             fileName = (fileName ?? "").Trim();
             if (kind.Length == 0 || key.Length == 0 || fileName.Length == 0 || content.Length == 0)
                 return;
-            if (kind.Equals(DataFiles.PdfKindInvoice, StringComparison.OrdinalIgnoreCase))
-                return;
             if (DataLink.IsRemote)
             {
                 DataLink.Send(ServerOps.PdfSave, new PdfRequest
@@ -2215,6 +2050,27 @@ namespace CastRightCatchInvManagement
             blob.Value = content;
             cmd.Parameters.Add(blob);
             cmd.Parameters.AddWithValue("$at", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            cmd.ExecuteNonQuery();
+        }
+
+        public static void DeletePdf(string kind, string key)
+        {
+            kind = (kind ?? "").Trim();
+            key = (key ?? "").Trim();
+            if (kind.Length == 0 || key.Length == 0)
+                return;
+            if (DataLink.IsRemote)
+            {
+                DataLink.Send(ServerOps.PdfDelete, new PdfRequest { Kind = kind, Key = key });
+                return;
+            }
+
+            EnsureCreated();
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "DELETE FROM stored_pdfs WHERE kind = $kind AND doc_key = $key;";
+            cmd.Parameters.AddWithValue("$kind", kind);
+            cmd.Parameters.AddWithValue("$key", key);
             cmd.ExecuteNonQuery();
         }
 
@@ -2288,6 +2144,7 @@ namespace CastRightCatchInvManagement
                 return;
 
             EnsureCreated();
+            ImportPdfFolder(DataFiles.GetStoredInvoicesFolder(), DataFiles.PdfKindInvoice, "Invoice ");
             ImportPdfFolder(DataFiles.GetStoredSalesOrdersFolder(), DataFiles.PdfKindSalesOrder, "Sales Order ");
         }
 
@@ -2634,7 +2491,7 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>
-        /// Purchases: shipped, arrived, or volume received.
+        /// Purchases: shipped, arrived, or closed.
         /// Sales: invoiced, paid, or closed.
         /// Invoices: paid/closed, payment date, or paid covers the amount.
         /// Banking: has a date or amount.
@@ -2646,8 +2503,7 @@ namespace CastRightCatchInvManagement
             {
                 return IsClosedStatus(Lookup(values, "Status")) ||
                        HasText(values, "Ship Date") ||
-                       HasText(values, "Arrival Date") ||
-                       HasPositiveNumber(values, "Volume Received");
+                       HasText(values, "Arrival Date");
             }
 
             if (table.Equals(DataFiles.Sales, StringComparison.OrdinalIgnoreCase))

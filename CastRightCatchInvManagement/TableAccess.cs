@@ -112,7 +112,7 @@ namespace CastRightCatchInvManagement
             return page switch
             {
                 AppPage.PurchaseSales or AppPage.AddPurchase => Can(Purchases),
-                AppPage.Sales or AppPage.AddSale or AppPage.SalesOrder => Can(Sales),
+                AppPage.Sales or AppPage.SalesOrder => Can(Sales),
                 AppPage.Invoicing or AppPage.InvoicePdf => Can(Invoices),
                 AppPage.Customers => Can(Customers),
                 AppPage.Vendors => Can(Vendors),

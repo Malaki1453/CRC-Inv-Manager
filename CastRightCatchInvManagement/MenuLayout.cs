@@ -17,7 +17,9 @@ namespace CastRightCatchInvManagement
 
         [JsonIgnore]
         public string Title =>
-            IsFolder ? (string.IsNullOrWhiteSpace(Name) ? "Folder" : Name) : MenuLayout.Label(Key);
+            !string.IsNullOrWhiteSpace(Name)
+                ? Name.Trim()
+                : IsFolder ? "Folder" : MenuLayout.CatalogLabel(Key);
 
         public static MenuNode Folder(string name, bool on = true) =>
             new() { Kind = "folder", Name = (name ?? "").Trim(), On = on, Children = new() };
@@ -57,6 +59,8 @@ namespace CastRightCatchInvManagement
 
         public static int Revision { get; private set; }
 
+        private static readonly Dictionary<string, string> CustomLabels = new(StringComparer.OrdinalIgnoreCase);
+
         public List<MenuNode> Root { get; set; } = new();
         public List<MenuGroup> Groups { get; set; } = new();
         public Dictionary<string, bool> Standalone { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -66,8 +70,7 @@ namespace CastRightCatchInvManagement
             ("PurchaseSales", "Purchases", AppPage.PurchaseSales),
             ("AddPurchase", "New Purchase", AppPage.AddPurchase),
             ("Sales", "Sales", AppPage.Sales),
-            ("AddSale", "Sales Form", AppPage.AddSale),
-            ("SalesOrder", "Create Sales Order", AppPage.SalesOrder),
+            ("SalesOrder", "New Sale", AppPage.SalesOrder),
             ("Customers", "Customers", AppPage.Customers),
             ("Vendors", "Vendors", AppPage.Vendors),
             ("ItemCodes", "Inventory", AppPage.ItemCodes),
@@ -83,15 +86,28 @@ namespace CastRightCatchInvManagement
         public static Action? OpenAction(AppPage page) => page switch
         {
             AppPage.AddPurchase => AddPurchase.OpenNew,
-            AppPage.AddSale => AddSale.OpenNew,
+            AppPage.SalesOrder => SalesOrder.OpenNew,
             _ => null
         };
 
-        public static string Label(string key) =>
+        public static string CatalogLabel(string key) =>
             Catalog.FirstOrDefault(item => item.Key.Equals(key, StringComparison.OrdinalIgnoreCase)).Label
             is { Length: > 0 } label
                 ? label
                 : key;
+
+        public static string Label(string key)
+        {
+            if (CustomLabels.TryGetValue(key, out var custom) && custom.Length > 0)
+                return custom;
+            return CatalogLabel(key);
+        }
+
+        public static string LabelFor(AppPage page)
+        {
+            var hit = Catalog.FirstOrDefault(item => item.Page == page);
+            return string.IsNullOrEmpty(hit.Key) ? "" : Label(hit.Key);
+        }
 
         public static bool TryPage(string key, out AppPage page)
         {
@@ -138,7 +154,7 @@ namespace CastRightCatchInvManagement
                 Root =
                 {
                     FolderWith("Purchases", "PurchaseSales", "AddPurchase"),
-                    FolderWith("Sales", "Sales", "AddSale", "SalesOrder"),
+                    FolderWith("Sales", "Sales", "SalesOrder"),
                     FolderWith("Invoices", "Invoicing", "InvoicePdf")
                 }
             };
@@ -299,12 +315,20 @@ namespace CastRightCatchInvManagement
             {
                 node.Children ??= new List<MenuNode>();
                 node.Kind = node.IsFolder || node.Children.Count > 0 ? "folder" : "page";
-                if (node.IsFolder)
-                    node.Name = (node.Name ?? "").Trim();
+                node.Name = (node.Name ?? "").Trim();
             });
 
+            IndexLabels();
+
+            Walk(Root, node =>
+            {
+                if (!node.IsFolder && node.Key.Equals("AddSale", StringComparison.OrdinalIgnoreCase))
+                    node.Key = "SalesOrder";
+            });
+            DedupePages(Root);
+
             EnsureCompanions("Purchases", "PurchaseSales", "AddPurchase");
-            EnsureCompanions("Sales", "Sales", "AddSale", "SalesOrder");
+            EnsureCompanions("Sales", "Sales", "SalesOrder");
             EnsureCompanions("Invoices", "Invoicing", "InvoicePdf");
 
             var used = AssignedKeys();
@@ -361,6 +385,17 @@ namespace CastRightCatchInvManagement
             return folder;
         }
 
+        private void IndexLabels()
+        {
+            CustomLabels.Clear();
+            Walk(Root, node =>
+            {
+                if (node.IsFolder || node.Key.Length == 0 || node.Name.Length == 0)
+                    return;
+                CustomLabels[node.Key] = node.Name;
+            });
+        }
+
         private void EnsureCompanions(string folderName, params string[] keys)
         {
             MenuNode? folder = null;
@@ -383,6 +418,24 @@ namespace CastRightCatchInvManagement
                 });
                 if (!present)
                     folder.Children.Add(MenuNode.Page(key, folder.On));
+            }
+        }
+
+        private static void DedupePages(List<MenuNode> nodes)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = nodes.Count - 1; i >= 0; i--)
+            {
+                var node = nodes[i];
+                if (node.IsFolder)
+                {
+                    DedupePages(node.Children);
+                    continue;
+                }
+
+                if (node.Key.Length == 0 || seen.Add(node.Key))
+                    continue;
+                nodes.RemoveAt(i);
             }
         }
     }

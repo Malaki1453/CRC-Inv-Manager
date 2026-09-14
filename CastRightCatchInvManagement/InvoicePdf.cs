@@ -2,11 +2,15 @@ using System.Globalization;
 
 namespace CastRightCatchInvManagement
 {
-    /// <summary>Create Invoice form. Builds a PDF into Stored Invoices and marks PDF Created on the invoice row.</summary>
+    /// <summary>Create Invoice form. Stores the PDF in the database and writes the invoice row.</summary>
     public partial class InvoicePdf : Form, INavigationPage
     {
         private readonly List<InvoiceLineRow> _lines = new();
         private AutoCompleteStringCollection _poSource = new();
+        private List<LookupSuggest.Hit> _orderHits = new();
+        private LookupSuggest? _soSuggest;
+        private string _filledKey = "";
+        private bool _filledPurchase;
 
         private TextBox _invoiceNo = null!;
         private DateTimePicker _invoiceDate = null!;
@@ -24,6 +28,7 @@ namespace CastRightCatchInvManagement
         private Label _subTotal = null!;
         private TextBox _discount = null!;
         private TextBox _freight = null!;
+        private ComboBox _freightCo = null!;
         private TextBox _tax = null!;
         private Button _taxMode = null!;
         private Label _heading = null!;
@@ -37,6 +42,13 @@ namespace CastRightCatchInvManagement
         private bool _loadingCustomer;
         private bool _busyAdding;
         private bool _received;
+        private bool _editing;
+        private string _editInvoice = "";
+        private Button _save = null!;
+        private byte[]? _importPdf;
+        private string _importName = "";
+
+        internal static PurchaseInvoiceDraft? PendingImport { get; set; }
 
         public InvoicePdf()
         {
@@ -49,9 +61,51 @@ namespace CastRightCatchInvManagement
         public void HighlightCurrentPage()
         {
             RefreshLookups();
+            if (PendingImport != null)
+            {
+                var draft = PendingImport;
+                PendingImport = null;
+                ApplyImport(draft);
+                return;
+            }
+
             if (_lines.Count == 0)
                 AddLine(lockPrevious: false);
             RefreshLines();
+        }
+
+        /// <summary>Pick an invoice PDF, detect incoming vs outgoing, and fill this form.</summary>
+        public static void OpenImport()
+        {
+            if (!DataAccess.CanMutate(DataFiles.Invoices))
+            {
+                MessageBox.Show(
+                    "This account can only view invoices.",
+                    "Import Invoice PDF",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            if (!PurchaseInvoiceImport.TryPick(Form.ActiveForm, out string fileName, out byte[] bytes))
+                return;
+
+            PurchaseInvoiceDraft draft;
+            try
+            {
+                draft = PurchaseInvoiceImport.Read(bytes, fileName);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Import Invoice PDF", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!ConfirmImport(draft))
+                return;
+
+            PendingImport = draft;
+            Navigator.GoTo(AppPage.InvoicePdf);
         }
 
         /// <summary>
@@ -223,9 +277,27 @@ namespace CastRightCatchInvManagement
             };
             card.Controls.Add(_heading);
 
+            var import = new Button
+            {
+                Text = "Import Invoice PDF",
+                Size = new Size(160, 28),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            Theme.StyleNavyButton(import);
+            import.Click += (_, _) => ImportPdf();
+            card.Controls.Add(import);
+            import.Location = new Point(420, 6);
+
             _invoiceNo = AddField(card, "INVOICE NO.", 20, 36, 110);
             _invoiceDate = AddDate(card, "INVOICE DATE", 144, 36, 120);
-            _soNo = AddField(card, "SO #", 278, 36, 110);
+            _soNo = AddField(card, "SO / PO #", 278, 36, 150);
+            _soSuggest = new LookupSuggest(
+                _soNo,
+                () => _orderHits,
+                codeFirst: true,
+                ApplyOrderHit,
+                minListWidth: 360);
+            _soNo.Leave += (_, _) => TryFillTypedOrder();
 
             _customer = AddCustomer(card, "CUSTOMER", 20, 86, 250);
             _customerCode = AddField(card, "CUST ID", 284, 86, 90);
@@ -235,7 +307,7 @@ namespace CastRightCatchInvManagement
             _shipVia = AddField(card, "SHIP VIA", 154, 136, 180);
             _salesRep = AddField(card, "SALES REP", 348, 136, 200);
 
-            _soCaption = CaptionAt(card, "SO #");
+            _soCaption = CaptionAt(card, "SO / PO #");
             _partyCaption = CaptionAt(card, "CUSTOMER");
             _partyCodeCaption = CaptionAt(card, "CUST ID");
             _salesRepCaption = CaptionAt(card, "SALES REP");
@@ -246,6 +318,7 @@ namespace CastRightCatchInvManagement
 
             card.Resize += (_, _) =>
             {
+                import.Location = new Point(Math.Max(220, card.Width - 180), 6);
                 int right = Math.Max(180, card.Width - 260);
                 _soldTo.Left = right;
                 _shipTo.Left = right;
@@ -328,16 +401,16 @@ namespace CastRightCatchInvManagement
 
         private CardPanel BuildFooter()
         {
-            var card = new CardPanel { Height = 118, Padding = new Padding(16, 10, 16, 10) };
+            var card = new CardPanel { Height = 128, Padding = new Padding(16, 10, 16, 10) };
 
-            var create = new Button
+            _save = new Button
             {
                 Text = "Create Invoice",
                 Size = new Size(150, 34),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
-            Theme.StyleGoldButton(create);
-            create.Click += (_, _) => CreateInvoice();
+            Theme.StyleGoldButton(_save);
+            _save.Click += (_, _) => CreateInvoice();
 
             var clear = new Button
             {
@@ -354,6 +427,7 @@ namespace CastRightCatchInvManagement
             _freight = AddField(card, "FREIGHT", 404, 16, 90);
             _tax = AddTaxField(card, 508, 16, 90);
             _invoiceTotal = TotalLabel(card, "INVOICE TOTAL", 20, 64);
+            _freightCo = AddCombo(card, "FREIGHT CO", 300, 64, 200);
             _invoiceTotal.Font = Theme.SectionTitle;
             _invoiceTotal.ForeColor = Theme.Navy;
 
@@ -361,13 +435,13 @@ namespace CastRightCatchInvManagement
             _freight.TextChanged += (_, _) => UpdateTotals();
             _tax.TextChanged += (_, _) => UpdateTotals();
 
-            card.Controls.Add(create);
+            card.Controls.Add(_save);
             card.Controls.Add(clear);
-            create.Location = new Point(620, 64);
+            _save.Location = new Point(620, 64);
             clear.Location = new Point(522, 64);
             card.Resize += (_, _) =>
             {
-                create.Location = new Point(Math.Max(360, card.Width - 174), 64);
+                _save.Location = new Point(Math.Max(360, card.Width - 174), 64);
                 clear.Location = new Point(Math.Max(260, card.Width - 272), 64);
             };
 
@@ -511,6 +585,10 @@ namespace CastRightCatchInvManagement
             if (!_received && string.IsNullOrWhiteSpace(_salesRep.Text))
                 _salesRep.Text = OurContact();
 
+            if (_freightCo != null)
+                VendorChoice.Fill(_freightCo);
+            _orderHits = DataFiles.SalesOrderSuggestHits();
+            _orderHits.AddRange(DataFiles.PurchaseOrderSuggestHits());
             RefreshPoSuggestions();
         }
 
@@ -656,6 +734,7 @@ namespace CastRightCatchInvManagement
                 _shipTo.Text = draft.ShipTo;
             _discount.Text = MoneyField(draft.Discount);
             _freight.Text = MoneyField(draft.Freight);
+            VendorChoice.Select(_freightCo, draft.FreightCompany);
             _tax.Text = MoneyField(draft.TaxRate);
             _taxPercent = draft.TaxIsPercent;
             if (_taxMode != null)
@@ -705,6 +784,9 @@ namespace CastRightCatchInvManagement
             string freight = DataFiles.GetRecord(invoice, "Freight");
             if (freight.Length > 0)
                 _freight.Text = freight;
+            string freightCo = DataFiles.GetRecordAny(invoice, DataFiles.FreightCompanyColumn, "Forwarder", "Logistics");
+            if (freightCo.Length > 0)
+                VendorChoice.Select(_freightCo, freightCo);
             string tax = DataFiles.GetRecord(invoice, "Tax");
             if (tax.Length > 0)
                 _tax.Text = tax;
@@ -767,7 +849,142 @@ namespace CastRightCatchInvManagement
         /// Look up sale rows for this PO/SO and append each unused line onto the invoice,
         /// filling sold-to / ship-to from the first match.
         /// </summary>
-        private void StartAddItems(string? key, string customerCode, string customerName, Action<string?> done)
+        private void ApplyOrderHit(LookupSuggest.Hit hit)
+        {
+            _soNo.Text = hit.Code;
+            if (hit.Extra.Equals("PO", StringComparison.OrdinalIgnoreCase))
+                FillFromPurchaseOrder(hit.Code);
+            else
+                FillFromSalesOrder(hit.Code);
+        }
+
+        private void TryFillTypedOrder()
+        {
+            if (_busyAdding)
+                return;
+
+            string key = _soNo.Text.Trim();
+            if (key.Length == 0)
+                return;
+            if (AlreadyFilled(key, purchase: null))
+                return;
+
+            bool so = KnownOrder(key, purchase: false);
+            bool po = KnownOrder(key, purchase: true);
+            if (so && po)
+                return;
+            if (po)
+                FillFromPurchaseOrder(key);
+            else if (so)
+                FillFromSalesOrder(key);
+        }
+
+        private bool KnownOrder(string key, bool purchase)
+        {
+            string needle = DataFiles.NormalizePo(key);
+            string kind = purchase ? "PO" : "SO";
+            foreach (var hit in _orderHits)
+            {
+                if (!hit.Extra.Equals(kind, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (DataFiles.NormalizePo(hit.Code).Equals(needle, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool AlreadyFilled(string key, bool? purchase)
+        {
+            if (!key.Equals(_filledKey, StringComparison.OrdinalIgnoreCase))
+                return false;
+            return purchase == null || purchase == _filledPurchase;
+        }
+
+        /// <summary>Replace the draft with every sale line on that sales order, plus customer and ship-to.</summary>
+        private void FillFromSalesOrder(string so)
+        {
+            if (string.IsNullOrWhiteSpace(so))
+                return;
+            if (AlreadyFilled(so, purchase: false))
+                return;
+
+            var existing = DataFiles.FindInvoiceByOrder(so, received: false);
+            if (existing != null)
+            {
+                ResetDraft();
+                BeginEdit(existing);
+            }
+            else if (InvoiceHasSale() || _received)
+            {
+                ResetDraft();
+            }
+
+            _soNo.Text = so;
+            _filledKey = so;
+            _filledPurchase = false;
+            SetReceivedMode(false);
+            StartAddItems(
+                so,
+                "",
+                "",
+                error =>
+                {
+                    if (error != null)
+                        ToastAlert.Error(this, error);
+                    else
+                        ToastAlert.Success(this, _editing
+                            ? "Editing invoice " + _invoiceNo.Text.Trim() + "."
+                            : "The sales order was added.");
+                },
+                salesOrderOnly: true);
+        }
+
+        /// <summary>Switch to a received invoice and fill every purchase line on that PO.</summary>
+        private void FillFromPurchaseOrder(string po)
+        {
+            if (string.IsNullOrWhiteSpace(po))
+                return;
+            if (AlreadyFilled(po, purchase: true))
+                return;
+
+            var existing = DataFiles.FindInvoiceByOrder(po, received: true);
+            if (existing != null)
+            {
+                ResetDraft(received: true);
+                BeginEdit(existing);
+            }
+            else if (InvoiceHasSale() || !_received)
+            {
+                ResetDraft(received: true);
+            }
+
+            _soNo.Text = po;
+            _filledKey = po;
+            _filledPurchase = true;
+            SetReceivedMode(true);
+            StartAddPurchases(
+                po,
+                "",
+                "",
+                error =>
+                {
+                    if (error != null)
+                        ToastAlert.Error(this, error);
+                    else
+                        ToastAlert.Success(this, _editing
+                            ? "Editing invoice " + _invoiceNo.Text.Trim() + "."
+                            : "The purchase was added.");
+                },
+                allowShort: true);
+        }
+
+        private void StartAddItems(
+            string? key,
+            string customerCode,
+            string customerName,
+            Action<string?> done,
+            bool salesOrderOnly = false)
         {
             if (string.IsNullOrWhiteSpace(key))
             {
@@ -787,7 +1004,8 @@ namespace CastRightCatchInvManagement
             {
                 try
                 {
-                    var sources = DataFiles.FindInvoiceSourcesForKey(key, customerCode, customerName);
+                    var sources = DataFiles.FindInvoiceSourcesForKey(
+                        key, customerCode, customerName, salesOrderOnly);
                     if (string.IsNullOrWhiteSpace(customerCode) &&
                         string.IsNullOrWhiteSpace(customerName) &&
                         sources.Count > 0)
@@ -813,14 +1031,18 @@ namespace CastRightCatchInvManagement
                         if (sources.Count == 0)
                         {
                             _busyAdding = false;
-                            done("No sales were found for that PO.");
+                            done(salesOrderOnly
+                                ? "No sales were found for that sales order."
+                                : "No sales were found for that PO.");
                             return;
                         }
 
                         if (remaining.Count == 0)
                         {
                             _busyAdding = false;
-                            done("This PO is already on the invoice.");
+                            done(salesOrderOnly
+                                ? "This sales order is already on the invoice."
+                                : "This PO is already on the invoice.");
                             return;
                         }
 
@@ -841,7 +1063,12 @@ namespace CastRightCatchInvManagement
         /// <summary>
         /// Look up purchase rows for this PO and append each unused line onto the received invoice.
         /// </summary>
-        private void StartAddPurchases(string? key, string vendorCode, string vendorName, Action<string?> done)
+        private void StartAddPurchases(
+            string? key,
+            string vendorCode,
+            string vendorName,
+            Action<string?> done,
+            bool allowShort = false)
         {
             if (string.IsNullOrWhiteSpace(key))
             {
@@ -860,7 +1087,8 @@ namespace CastRightCatchInvManagement
             {
                 try
                 {
-                    var sources = DataFiles.FindPurchaseSourcesForKey(key, vendorCode, vendorName);
+                    var sources = DataFiles.FindPurchaseSourcesForKey(
+                        key, vendorCode, vendorName, allowShort);
                     if (string.IsNullOrWhiteSpace(vendorCode) &&
                         string.IsNullOrWhiteSpace(vendorName) &&
                         sources.Count > 0)
@@ -930,6 +1158,7 @@ namespace CastRightCatchInvManagement
                             ApplyVendorFromPurchase(sources[i]);
                         else
                             ApplyCustomerFromPurchase(sources[i]);
+                        SuggestFreightCompany(sources[i]);
                     }
                     row.Lock();
                 }
@@ -979,12 +1208,17 @@ namespace CastRightCatchInvManagement
             }
 
             _lines.Clear();
+            _importPdf = null;
+            _importName = "";
+            _filledKey = "";
+            _filledPurchase = false;
+            SetEditMode(false);
             SetReceivedMode(received);
             _customer.SelectedIndex = -1;
             _customerCode.Text = "";
             RefreshLookups();
             _invoiceNo.Text = DataFiles.NextNumber(DataFiles.Invoices, "Invoice #", 1001);
-            _soNo.Text = received ? "" : DataFiles.NextNumber(DataFiles.Invoices, "SO #", 10001);
+            _soNo.Text = "";
             _invoiceDate.Value = DateTime.Today;
             _shipDate.Value = DateTime.Today;
             _terms.Text = received ? "" : AppState.PaymentTerms;
@@ -1002,6 +1236,7 @@ namespace CastRightCatchInvManagement
             }
             _discount.Text = "";
             _freight.Text = "";
+            VendorChoice.Select(_freightCo, "");
             _tax.Text = "";
             _taxPercent = false;
             if (_taxMode != null)
@@ -1010,13 +1245,39 @@ namespace CastRightCatchInvManagement
             UpdateTotals();
         }
 
+        private void BeginEdit(Dictionary<string, string> invoice)
+        {
+            SetEditMode(true);
+            _editInvoice = DataFiles.GetRecord(invoice, "Invoice #").Trim();
+            ApplyInvoiceHeader(invoice);
+        }
+
+        private void SetEditMode(bool editing)
+        {
+            _editing = editing;
+            if (!editing)
+                _editInvoice = "";
+            if (_save != null)
+                _save.Text = editing ? "Save Invoice" : "Create Invoice";
+            RefreshHeading();
+        }
+
+        private void RefreshHeading()
+        {
+            if (_heading == null)
+                return;
+            if (_editing)
+                _heading.Text = _received ? "Edit received invoice" : "Edit Invoice";
+            else
+                _heading.Text = _received ? "Received invoice" : "Invoice";
+        }
+
         private void SetReceivedMode(bool received)
         {
             _received = received;
-            if (_heading != null)
-                _heading.Text = received ? "Received invoice" : "Invoice";
+            RefreshHeading();
             if (_soCaption != null)
-                _soCaption.Text = received ? "PO #" : "SO #";
+                _soCaption.Text = received ? "PO #" : "SO / PO #";
             if (_partyCaption != null)
                 _partyCaption.Text = received ? "VENDOR" : "CUSTOMER";
             if (_partyCodeCaption != null)
@@ -1026,8 +1287,8 @@ namespace CastRightCatchInvManagement
             if (_linesHint != null)
             {
                 _linesHint.Text = received
-                    ? "Lines come from the vendor purchase PO. We are the receiving company; the vendor is the issuer."
-                    : "Enter the customer PO from Sales to fill the line. After that, only that customer’s POs are suggested.";
+                    ? "Lines come from the vendor purchase PO. We are the receiving company; the vendor is the issuer. Type a different SO # to switch back to a customer invoice."
+                    : "Type a sales order or purchase PO. Suggestions show the number, party, and item count. Picking a purchase PO switches this to a received invoice.";
             }
         }
 
@@ -1206,6 +1467,7 @@ namespace CastRightCatchInvManagement
                 ShipTo = _shipTo.Text.Trim(),
                 Discount = InvoiceLineRow.ParseNumber(_discount.Text),
                 Freight = InvoiceLineRow.ParseNumber(_freight.Text),
+                FreightCompany = VendorChoice.TextOf(_freightCo),
                 TaxRate = InvoiceLineRow.ParseNumber(_tax.Text),
                 TaxIsPercent = _taxPercent,
                 Lines = _lines.Select(line => line.GetLine()).Where(line =>
@@ -1224,8 +1486,7 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>
-        /// Draw the invoice PDF into Stored Invoices, write an invoices row if needed
-        /// (PDF Created = true), and open the viewer.
+        /// Draw the invoice PDF into the database, write an invoices row if needed, and open the viewer.
         /// </summary>
         private void CreateInvoice()
         {
@@ -1277,7 +1538,9 @@ namespace CastRightCatchInvManagement
             try
             {
                 SaveInvoicePdf(draft);
-                ToastAlert.Success(this, $"Invoice {draft.InvoiceNumber} was saved.");
+                ToastAlert.Success(this, _editing
+                    ? $"Invoice {draft.InvoiceNumber} was updated."
+                    : $"Invoice {draft.InvoiceNumber} was saved.");
                 ResetDraft();
             }
             catch (Exception ex)
@@ -1289,9 +1552,240 @@ namespace CastRightCatchInvManagement
         private void SaveInvoicePdf(InvoiceDraft draft)
         {
             DateTime due = DueDate(draft.ShipDate, draft.Terms);
+            if (draft.Received &&
+                draft.Lines.Any(line => line.ProductId.Length > 0 || line.Description.Length > 0))
+                SaveIncomingPurchase(draft);
+
+            if (_editing &&
+                _editInvoice.Length > 0 &&
+                !_editInvoice.Equals(draft.InvoiceNumber, StringComparison.OrdinalIgnoreCase))
+                DataFiles.DeleteStoredPdf(DataFiles.PdfKindInvoice, _editInvoice);
+            DataFiles.DeleteStoredPdf(DataFiles.PdfKindInvoice, draft.InvoiceNumber);
             string pdfPath = InvoiceDocument.Save(draft);
             DataFiles.UpsertInvoiceFromDraft(draft, due);
-            DataFiles.OpenPdf(pdfPath);
+            if (_importPdf is { Length: > 0 })
+            {
+                DataFiles.SaveStoredPdf(
+                    DataFiles.PdfKindInvoiceSource,
+                    draft.InvoiceNumber,
+                    string.IsNullOrWhiteSpace(_importName) ? "invoice.pdf" : _importName,
+                    _importPdf);
+            }
+
+            DataFiles.OpenPdf(pdfPath, DataFiles.PdfKindInvoice, draft.InvoiceNumber);
+        }
+
+        /// <summary>
+        /// Incoming vendor invoices also write a CRC purchase order PDF (and the source PDF)
+        /// keyed by PO #, the same way a sales order PDF is stored.
+        /// </summary>
+        private void SaveIncomingPurchase(InvoiceDraft draft)
+        {
+            if (!DataAccess.CanMutate(DataFiles.PurchaseSales))
+                return;
+
+            string po = (draft.PoNumber ?? "").Trim();
+            if (po.Length == 0)
+                po = draft.Lines.Select(line => line.PoNumber.Trim()).FirstOrDefault(v => v.Length > 0) ?? "";
+            if (po.Length == 0)
+                po = DataFiles.NextPurchasePo();
+
+            if (DataFiles.FindPurchasesByPo(po).Count == 0)
+            {
+                foreach (var line in draft.Lines)
+                {
+                    string item = line.ProductId.Trim();
+                    if (item.Length == 0 && line.Description.Trim().Length == 0)
+                        continue;
+                    decimal lbs = InvoiceLineRow.ParseNumber(line.Weight);
+                    decimal price = InvoiceLineRow.ParseNumber(line.Price);
+                    decimal total = line.Amount != 0 ? line.Amount : lbs * price;
+                    var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["PO #"] = po,
+                        ["Vendor Code"] = draft.VendorCode,
+                        ["Vendor"] = draft.VendorName,
+                        ["Item Code"] = item,
+                        ["Description"] = line.Description,
+                        ["CS"] = line.Ordered,
+                        ["Volume"] = line.Weight,
+                        ["Price Paid / LB"] = line.Price,
+                        ["Total Cost"] = total == 0 ? "" : total.ToString("0.00", CultureInfo.InvariantCulture),
+                        ["Agreement Date"] = CsvIO.Date(draft.InvoiceDate),
+                        ["Vendor Terms"] = draft.Terms,
+                        ["Ship Date"] = CsvIO.Date(draft.ShipDate),
+                        ["Status"] = "Pending"
+                    };
+                    var inserted = DataFiles.MutateInsert(DataFiles.PurchaseSales, values);
+                    if (!inserted.Ok)
+                        throw new InvalidOperationException(inserted.Message);
+                }
+            }
+
+            try
+            {
+                PurchaseDocument.SaveFromPo(po);
+            }
+            catch
+            {
+                // keep the invoice even if the purchase PDF cannot be written
+            }
+
+            if (_importPdf is { Length: > 0 })
+            {
+                try
+                {
+                    PurchaseInvoiceImport.AttachToPo(po, _importName, _importPdf);
+                }
+                catch
+                {
+                    // source PDF is already stored on the invoice
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(draft.PoNumber))
+                draft.PoNumber = po;
+        }
+
+        private void ImportPdf()
+        {
+            if (!PurchaseInvoiceImport.TryPick(this, out string fileName, out byte[] bytes))
+                return;
+
+            PurchaseInvoiceDraft draft;
+            try
+            {
+                draft = PurchaseInvoiceImport.Read(bytes, fileName);
+            }
+            catch (Exception ex)
+            {
+                ToastAlert.Error(this, ex.Message);
+                return;
+            }
+
+            if (!ConfirmImport(draft))
+                return;
+
+            ApplyImport(draft);
+        }
+
+        private void ApplyImport(PurchaseInvoiceDraft draft)
+        {
+            bool incoming;
+            if (draft.Incoming is bool known)
+            {
+                incoming = known;
+            }
+            else
+            {
+                var ask = MessageBox.Show(
+                    "Could not tell if this is a vendor invoice we received, or an invoice we issued.\n\nYes = incoming (we received it).\nNo = outgoing (we issued it).",
+                    "Import Invoice PDF",
+                    MessageBoxButtons.YesNoCancel,
+                    MessageBoxIcon.Question);
+                if (ask == DialogResult.Cancel)
+                    return;
+                incoming = ask == DialogResult.Yes;
+            }
+
+            ResetDraft(received: incoming);
+            _importPdf = draft.Pdf;
+            _importName = draft.FileName;
+
+            if (draft.InvoiceNumber.Length > 0)
+                _invoiceNo.Text = draft.InvoiceNumber;
+            if (draft.InvoiceDate != null)
+                _invoiceDate.Value = draft.InvoiceDate.Value.Date;
+            if (draft.ShipDate != null)
+                _shipDate.Value = draft.ShipDate.Value.Date;
+            else if (draft.InvoiceDate != null)
+                _shipDate.Value = draft.InvoiceDate.Value.Date;
+            if (draft.Terms.Length > 0)
+                _terms.Text = draft.Terms;
+
+            if (incoming)
+            {
+                FillVendor(draft.VendorCode, draft.VendorName, draft.Terms, draft.ShipDate);
+                if (draft.Po.Length > 0)
+                    _soNo.Text = draft.Po;
+                if (draft.VendorName.Length > 0 && string.IsNullOrWhiteSpace(_customer.Text))
+                    _customer.Text = draft.VendorName;
+            }
+            else
+            {
+                FillCustomer(draft.CustomerCode, draft.CustomerName, draft.Terms, "", draft.ShipTo);
+                if (draft.CustomerName.Length > 0)
+                    _customer.Text = draft.CustomerName;
+                if (draft.SoNumber.Length > 0)
+                    _soNo.Text = draft.SoNumber;
+                if (draft.SoldTo.Length > 0)
+                    _soldTo.Text = draft.SoldTo;
+                if (draft.ShipTo.Length > 0)
+                    _shipTo.Text = draft.ShipTo;
+            }
+
+            foreach (var row in _lines.ToList())
+            {
+                _lineHost.Controls.Remove(row);
+                row.Dispose();
+            }
+
+            _lines.Clear();
+            string po = incoming ? draft.Po : (draft.Po.Length > 0 ? draft.Po : "");
+            foreach (var line in draft.Lines)
+            {
+                decimal lbs = InvoiceLineRow.ParseNumber(line.Volume);
+                decimal price = InvoiceLineRow.ParseNumber(line.Price);
+                AddLine(lockPrevious: false);
+                _lines[^1].FillFromLine(new InvoiceLine
+                {
+                    PoNumber = po,
+                    ProductId = line.ItemCode,
+                    Description = line.Description,
+                    Ordered = line.Cases,
+                    Shipped = line.Cases,
+                    Weight = line.Volume,
+                    Price = line.Price,
+                    Amount = lbs * price
+                });
+            }
+
+            if (_lines.Count == 0)
+                AddLine(lockPrevious: false);
+            UpdateTotals();
+
+            if (!draft.HasText)
+            {
+                ToastAlert.Success(this, "No text could be read. Fill the invoice, then Create Invoice to keep the PDF.");
+                return;
+            }
+
+            ToastAlert.Success(
+                this,
+                incoming
+                    ? "Incoming vendor invoice loaded. Review, then Create Invoice. A purchase PDF will be stored with it."
+                    : "Outgoing invoice loaded. Review, then Create Invoice.");
+        }
+
+        private static bool ConfirmImport(PurchaseInvoiceDraft draft)
+        {
+            if (draft.Error is { Length: > 0 })
+            {
+                return MessageBox.Show(
+                    "Could not read that PDF (" + draft.Error + ").\n\nAttach it and fill Create Invoice by hand?",
+                    "Import Invoice PDF",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) == DialogResult.Yes;
+            }
+
+            if (draft.HasText)
+                return true;
+
+            return MessageBox.Show(
+                "This PDF has no readable text (it may be a scan).\n\nAttach it and fill Create Invoice by hand?",
+                "Import Invoice PDF",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) == DialogResult.Yes;
         }
 
         private static DateTime DueDate(DateTime ship, string terms)
@@ -1300,6 +1794,36 @@ namespace CastRightCatchInvManagement
             if (match.Success && int.TryParse(match.Value, out int days))
                 return ship.AddDays(days);
             return ship.AddDays(15);
+        }
+
+        private void SuggestFreightCompany(Dictionary<string, string> record)
+        {
+            if (VendorChoice.TextOf(_freightCo).Length > 0)
+                return;
+            string company = DataFiles.GetRecordAny(
+                record,
+                DataFiles.FreightCompanyColumn,
+                "Forwarder",
+                "Logistics");
+            if (company.Length > 0)
+                VendorChoice.Select(_freightCo, company);
+        }
+
+        private ComboBox AddCombo(Control parent, string caption, int x, int y, int width)
+        {
+            var label = new Label { Text = caption };
+            Theme.StyleFieldLabel(label);
+            label.Location = new Point(x, y);
+            var box = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDown,
+                Location = new Point(x, y + 16),
+                Size = new Size(width, 26)
+            };
+            Theme.StyleCombo(box);
+            parent.Controls.Add(label);
+            parent.Controls.Add(box);
+            return box;
         }
 
         private TextBox AddField(Control parent, string caption, int x, int y, int width)

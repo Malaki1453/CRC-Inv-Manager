@@ -69,7 +69,12 @@ internal sealed partial class InventoryStore
                 EnsureTextColumn(table, column, archive);
             BackfillLiveStatus(table, archive);
             if (table.Equals(Schema.PurchaseSales, StringComparison.OrdinalIgnoreCase))
+            {
                 DropTextColumn(table, "Vendor Invoice #", archive);
+                DropTextColumn(table, "Volume Received", archive);
+            }
+            if (table.Equals(Schema.Invoices, StringComparison.OrdinalIgnoreCase))
+                DropTextColumn(table, "PDF Created", archive);
         }
 
         if (archive)

@@ -47,7 +47,7 @@ namespace CastRightCatchInvManagement
             lblPageTitle.ForeColor = Theme.Navy;
             lblPageTitle.Text = "Command Center";
             lblPageTitle.TextAlign = ContentAlignment.BottomLeft;
-            lblPageTitle.Padding = new Padding(28, 0, 28, 0);
+            lblPageTitle.Padding = new Padding(12, 0, 28, 0);
             lblPageTitle.Name = "lblPageTitle";
 
             lblPageSubtitle.AutoSize = false;
@@ -56,11 +56,17 @@ namespace CastRightCatchInvManagement
             lblPageSubtitle.ForeColor = Theme.Muted;
             lblPageSubtitle.Text = "";
             lblPageSubtitle.TextAlign = ContentAlignment.TopLeft;
-            lblPageSubtitle.Padding = new Padding(30, 4, 28, 0);
+            lblPageSubtitle.Padding = new Padding(12, 4, 28, 0);
             lblPageSubtitle.Name = "lblPageSubtitle";
 
-            panelHeader.Controls.Add(lblPageSubtitle);
-            panelHeader.Controls.Add(lblPageTitle);
+            panelHeaderTitles = new Panel();
+            panelHeaderTitles.Dock = DockStyle.Fill;
+            panelHeaderTitles.BackColor = Theme.Paper;
+            panelHeaderTitles.Name = "panelHeaderTitles";
+            panelHeaderTitles.Controls.Add(lblPageSubtitle);
+            panelHeaderTitles.Controls.Add(lblPageTitle);
+
+            panelHeader.Controls.Add(panelHeaderTitles);
             panelHeader.Controls.Add(headerGold);
 
             panelFooter.Dock = DockStyle.Bottom;
@@ -103,6 +109,7 @@ namespace CastRightCatchInvManagement
 
         public Panel panelHost;
         private Panel panelHeader;
+        private Panel panelHeaderTitles;
         private Label lblPageTitle;
         private Label lblPageSubtitle;
         private Panel panelFooter;

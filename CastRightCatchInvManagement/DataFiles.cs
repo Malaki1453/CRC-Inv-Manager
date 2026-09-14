@@ -27,8 +27,11 @@ namespace CastRightCatchInvManagement
         public const string StoredInvoicesFolderName = "Stored Invoices";
         public const string StoredSalesOrdersFolderName = "Stored Sales Orders";
         public const string PdfKindInvoice = "invoice";
+        public const string PdfKindInvoiceSource = "invoice_source";
         public const string PdfKindSalesOrder = "sales_order";
-        public const string InvoicePdfCreatedColumn = "PDF Created";
+        public const string PdfKindPurchase = "purchase";
+        public const string PdfKindPurchaseInvoice = "purchase_invoice";
+        public const string PdfKindSale = "sale";
         public const string RoutingNumber = "Routing Number";
         public const string AccountNumber = "Account Number";
         public const string InvoiceLinesColumn = "Lines Json";
@@ -37,6 +40,7 @@ namespace CastRightCatchInvManagement
         public const string InvoiceTypeColumn = "Type";
         public const string InvoiceTypeIssued = "Issued";
         public const string InvoiceTypeReceived = "Received";
+        public const string FreightCompanyColumn = "Freight Company";
 
         public static readonly string[] All =
         {
@@ -153,7 +157,6 @@ namespace CastRightCatchInvManagement
                 AppPage.PurchaseSales => PurchaseSales,
                 AppPage.AddPurchase => PurchaseSales,
                 AppPage.Sales => Sales,
-                AppPage.AddSale => Sales,
                 AppPage.SalesOrder => Sales,
                 AppPage.Customers => Customers,
                 AppPage.Vendors => Vendors,
@@ -237,7 +240,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            OpenPdf(path);
+            OpenPdf(path, PdfKindInvoice, key);
         }
 
         public static string? FindStoredSalesOrder(string? soNumber)
@@ -247,27 +250,83 @@ namespace CastRightCatchInvManagement
 
         public static string SaveStoredPdf(string kind, string key, string fileName, byte[] content)
         {
-            if (kind != PdfKindInvoice)
-                SqliteInventory.SavePdf(kind, key, fileName, content);
+            SqliteInventory.SavePdf(kind, key, fileName, content);
+            return WritePdfViewFile(kind, fileName, content);
+        }
 
-            if (DataLink.IsRemote && kind != PdfKindInvoice)
-                return WritePdfCopy(kind, fileName, content);
+        public static void DeleteStoredPdf(string kind, string? key)
+        {
+            key = (key ?? "").Trim();
+            if (key.Length == 0)
+                return;
 
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
-                throw new InvalidOperationException("Select a data folder first.");
+            string? disk = FindPdfOnDisk(kind, key);
+            SqliteInventory.DeletePdf(kind, key);
+            if (disk != null)
+            {
+                try
+                {
+                    if (File.Exists(disk))
+                        File.Delete(disk);
+                }
+                catch
+                {
+                    // the database row is already gone
+                }
+            }
 
-            string? folder = kind == PdfKindInvoice
-                ? GetStoredInvoicesFolder()
-                : GetStoredSalesOrdersFolder();
-            if (folder == null)
-                throw new InvalidOperationException("Select a data folder first.");
+            try
+            {
+                string folder = PdfViewFolder();
+                if (!Directory.Exists(folder))
+                    return;
+                string prefix = (kind ?? "").Trim() + "-";
+                foreach (var path in Directory.GetFiles(folder, "*.pdf"))
+                {
+                    string name = Path.GetFileName(path);
+                    if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (!name.Contains(key, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    File.Delete(path);
+                }
+            }
+            catch
+            {
+                // viewer files are temp copies
+            }
+        }
 
-            Directory.CreateDirectory(folder);
-            string path = Path.Combine(folder, fileName);
-            File.WriteAllBytes(path, content);
-            if (kind == PdfKindInvoice)
-                MarkInvoicePdfCreated(key);
-            return path;
+        public static bool HasStoredPdf(string kind, string? key) =>
+            SqliteInventory.HasPdf(kind, (key ?? "").Trim());
+
+        public static string? FindPurchaseViewPdf(string? po)
+        {
+            return FindStoredPdf(PdfKindPurchaseInvoice, po) ??
+                   FindStoredPdf(PdfKindPurchase, po);
+        }
+
+        public static void ShowPurchasePdf(string po, Action? create)
+        {
+            po = (po ?? "").Trim();
+            if (po.Length == 0)
+            {
+                MessageBox.Show(
+                    "This row has no number to open a PDF.",
+                    "PDF",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            string? attached = FindStoredPdf(PdfKindPurchaseInvoice, po);
+            if (attached != null)
+            {
+                OpenPdf(attached, PdfKindPurchaseInvoice, po);
+                return;
+            }
+
+            ShowPdf(PdfKindPurchase, po, "purchase " + po, create);
         }
 
         public static string? FindStoredPdf(string kind, string? key)
@@ -278,140 +337,57 @@ namespace CastRightCatchInvManagement
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) && !DataLink.IsRemote)
                 return null;
 
-            if (kind != PdfKindInvoice)
-            {
-                var stored = SqliteInventory.TryGetPdf(kind, key);
-                if (stored != null)
-                    return WritePdfCopy(kind, stored.Value.FileName, stored.Value.Content);
-            }
+            var stored = SqliteInventory.TryGetPdf(kind, key);
+            if (stored != null)
+                return WritePdfViewFile(kind, stored.Value.FileName, stored.Value.Content);
 
             string? disk = FindPdfOnDisk(kind, key);
             if (disk == null)
                 return null;
 
-            if (kind != PdfKindInvoice)
+            byte[] bytes;
+            try
             {
-                try
-                {
-                    SqliteInventory.SavePdf(kind, key, Path.GetFileName(disk), File.ReadAllBytes(disk));
-                }
-                catch
-                {
-                    // still open the file even if the database write fails
-                }
+                bytes = File.ReadAllBytes(disk);
+                SqliteInventory.SavePdf(kind, key, Path.GetFileName(disk), bytes);
+            }
+            catch
+            {
+                return disk;
             }
 
-            return disk;
+            return WritePdfViewFile(kind, Path.GetFileName(disk), bytes);
         }
 
-        public static bool InvoicePdfWasCreated(Dictionary<string, string> invoice)
+        public static void ShowPdf(string kind, string key, string label, Action? create)
         {
-            return IsTrueFlag(GetRecord(invoice, InvoicePdfCreatedColumn));
-        }
-
-        public static void MarkInvoicePdfCreated(string? invoiceNumber)
-        {
-            invoiceNumber = (invoiceNumber ?? "").Trim();
-            if (invoiceNumber.Length == 0)
-                return;
-
-            SqliteInventory.EnsureColumns(Invoices, InvoicePdfCreatedColumn);
-            foreach (var (id, fields) in SqliteInventory.ReadWithIds(Invoices))
+            key = (key ?? "").Trim();
+            if (key.Length == 0)
             {
-                if (!GetRecord(fields, "Invoice #").Trim()
-                        .Equals(invoiceNumber, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                if (IsTrueFlag(GetRecord(fields, InvoicePdfCreatedColumn)))
-                    return;
-
-                fields[InvoicePdfCreatedColumn] = "true";
-                SqliteInventory.UpdateById(Invoices, id, fields);
-                NotifyDataChanged();
+                MessageBox.Show(
+                    "This row has no number to open a PDF.",
+                    "PDF",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
                 return;
             }
-        }
 
-        public static void MigrateInvoicePdfsOutOfDatabase()
-        {
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            string? path = FindStoredPdf(kind, key);
+            if (path != null)
+            {
+                OpenPdf(path, kind, key);
+                return;
+            }
+
+            var ask = MessageBox.Show(
+                "No PDF was found for " + label + ".\n\nCreate a new one?",
+                "PDF",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (ask != DialogResult.Yes)
                 return;
 
-            SqliteInventory.EnsureCreated();
-            SqliteInventory.EnsureColumns(Invoices, InvoicePdfCreatedColumn);
-            EnsureStoredInvoicesFolder();
-
-            var created = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            string? folder = GetStoredInvoicesFolder();
-            if (folder != null)
-                Directory.CreateDirectory(folder);
-
-            foreach (var (key, fileName, content) in SqliteInventory.ListPdfs(PdfKindInvoice))
-            {
-                if (key.Length > 0)
-                    created.Add(key);
-                if (folder == null || content.Length == 0)
-                    continue;
-
-                string name = string.IsNullOrWhiteSpace(fileName) ? ("Invoice " + key + ".pdf") : fileName;
-                string path = Path.Combine(folder, name);
-                if (!File.Exists(path))
-                {
-                    try
-                    {
-                        File.WriteAllBytes(path, content);
-                    }
-                    catch
-                    {
-                        // keep going so the database blob can still be removed
-                    }
-                }
-            }
-
-            SqliteInventory.DeletePdfs(PdfKindInvoice);
-
-            if (folder != null && Directory.Exists(folder))
-            {
-                foreach (var path in Directory.GetFiles(folder, "*.pdf"))
-                {
-                    string stem = Path.GetFileNameWithoutExtension(path);
-                    string key = stem;
-                    if (stem.StartsWith("Invoice ", StringComparison.OrdinalIgnoreCase))
-                    {
-                        key = stem["Invoice ".Length..].Trim();
-                        int dash = key.IndexOf(" - ", StringComparison.Ordinal);
-                        if (dash >= 0)
-                            key = key[..dash].Trim();
-                    }
-
-                    if (key.Length > 0)
-                        created.Add(key);
-                }
-            }
-
-            foreach (var (id, fields) in SqliteInventory.ReadWithIds(Invoices))
-            {
-                string current = GetRecord(fields, InvoicePdfCreatedColumn);
-                if (IsTrueFlag(current))
-                    continue;
-
-                string number = GetRecord(fields, "Invoice #").Trim();
-                string next = number.Length > 0 && created.Contains(number) ? "true" : "false";
-                if (current.Equals(next, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                fields[InvoicePdfCreatedColumn] = next;
-                SqliteInventory.UpdateById(Invoices, id, fields);
-            }
-        }
-
-        private static bool IsTrueFlag(string? text)
-        {
-            string value = (text ?? "").Trim();
-            return value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
-                   value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
-                   value.Equals("y", StringComparison.OrdinalIgnoreCase) ||
-                   value.Equals("1", StringComparison.OrdinalIgnoreCase);
+            create?.Invoke();
         }
 
         private static string? FindPdfOnDisk(string kind, string key)
@@ -440,24 +416,25 @@ namespace CastRightCatchInvManagement
             });
         }
 
-        private static string WritePdfCopy(string kind, string fileName, byte[] content)
-        {
-            string? folder = kind == PdfKindInvoice
-                ? GetStoredInvoicesFolder()
-                : GetStoredSalesOrdersFolder();
-            if (folder != null)
-            {
-                Directory.CreateDirectory(folder);
-                string path = Path.Combine(folder, fileName);
-                File.WriteAllBytes(path, content);
-                return path;
-            }
+        private static string PdfViewFolder() =>
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "CastRightCatchInvManagement",
+                "PdfView");
 
-            string temp = Path.Combine(Path.GetTempPath(), "CRC-Inv-Manager");
-            Directory.CreateDirectory(temp);
-            string tempPath = Path.Combine(temp, fileName);
-            File.WriteAllBytes(tempPath, content);
-            return tempPath;
+        /// <summary>Temp file for the in-app viewer only. The database stays the stored copy.</summary>
+        private static string WritePdfViewFile(string kind, string fileName, byte[] content)
+        {
+            Directory.CreateDirectory(PdfViewFolder());
+            string safe = string.Join("_", (fileName ?? "document.pdf").Split(Path.GetInvalidFileNameChars()));
+            if (safe.Length == 0)
+                safe = "document.pdf";
+            if (!safe.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                safe += ".pdf";
+            string prefix = string.IsNullOrWhiteSpace(kind) ? "pdf" : kind.Trim();
+            string path = Path.Combine(PdfViewFolder(), prefix + "-" + safe);
+            File.WriteAllBytes(path, content);
+            return path;
         }
 
         public static string? FindExistingSalesOrderNumber(
@@ -488,10 +465,14 @@ namespace CastRightCatchInvManagement
             return null;
         }
 
-        public static void OpenPdf(string path)
+        public static void OpenPdf(string path, string? kind = null, string? key = null)
         {
-            DescribePdf(path, out string title, out string? kind, out string? key);
-            PdfViewForm.ShowDocument(path, title, kind, key);
+            DescribePdf(path, out string title, out string? inferredKind, out string? inferredKey);
+            PdfViewForm.ShowDocument(
+                path,
+                title,
+                kind ?? inferredKind,
+                key ?? inferredKey);
         }
 
         public static void DescribePdf(string path, out string title, out string? kind, out string? key)
@@ -559,7 +540,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            OpenPdf(path);
+            OpenPdf(path, PdfKindSalesOrder, soNumber);
         }
 
         public static string? GetStoredSalesOrdersFolder()
@@ -590,8 +571,6 @@ namespace CastRightCatchInvManagement
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 return;
 
-            EnsureStoredInvoicesFolder();
-            EnsureStoredSalesOrdersFolder();
             Accounts.EnsureFile();
             if (AppState.TermStartDate == null)
             {
@@ -602,7 +581,6 @@ namespace CastRightCatchInvManagement
             SqliteInventory.EnsureCreated();
             SqliteInventory.ImportCsvsIfEmpty();
             SqliteInventory.ImportPdfsFromFolders();
-            MigrateInvoicePdfsOutOfDatabase();
             SyncTermStartFromFiles();
         }
 
@@ -658,10 +636,10 @@ namespace CastRightCatchInvManagement
             return baseName switch
             {
                 PurchaseSales =>
-                    "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Volume Received,Price Paid / LB,Overhead / LB,Freight / LB,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Record Status",
+                    "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Price Paid / LB,Overhead / LB,Freight / LB,Freight Company,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Record Status",
 
                 Sales =>
-                    "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Record Status",
+                    "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Record Status",
 
                 Customers =>
                     "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes,Description,Routing Number,Account Number,Record Status",
@@ -673,7 +651,7 @@ namespace CastRightCatchInvManagement
                     "Code,Description,COO,Farmed / Wild,Fresh / Frozen,Proc Country,Species,Scientific Name,Record Status",
 
                 Invoices =>
-                    "Invoice #,Type,SO #,PO #,Customer Code,Customer,Vendor Code,Vendor,Ship Date,Due Date,Amount,Paid,Outstanding,Status,Payment Date,Payment Method,PDF Created,Invoice Date,Terms,Ship Via,Sales Rep,Sold To,Ship To,Discount,Freight,Tax,Tax Mode,Lines Json,Record Status",
+                    "Invoice #,Type,SO #,PO #,Customer Code,Customer,Vendor Code,Vendor,Ship Date,Due Date,Amount,Paid,Outstanding,Status,Payment Date,Payment Method,Invoice Date,Terms,Ship Via,Sales Rep,Sold To,Ship To,Discount,Freight,Freight Company,Tax,Tax Mode,Lines Json,Record Status",
 
                 BankTransactions =>
                     "Date,Amount,Method,Reference,Invoice #,SO #,Customer Code,Notes,Record Status",
@@ -954,6 +932,39 @@ namespace CastRightCatchInvManagement
             return FindByNormalized(PurchaseSales, "PO #", poNumber);
         }
 
+        public static List<Dictionary<string, string>> FindPurchasesByPo(string? poNumber)
+        {
+            var result = new List<Dictionary<string, string>>();
+            string needle = NormalizePo(poNumber);
+            if (needle.Length == 0)
+                return result;
+
+            foreach (var purchase in ReadRecords(PurchaseSales))
+            {
+                if (NormalizePo(GetRecord(purchase, "PO #"))
+                    .Equals(needle, StringComparison.OrdinalIgnoreCase))
+                    result.Add(purchase);
+            }
+
+            return result;
+        }
+
+        public static List<Dictionary<string, string>> FindSalesByPo(string? poNumber)
+        {
+            var result = new List<Dictionary<string, string>>();
+            string needle = NormalizePo(poNumber);
+            if (needle.Length == 0)
+                return result;
+
+            foreach (var sale in ReadRecords(Sales))
+            {
+                if (NormalizePo(SalePo(sale)).Equals(needle, StringComparison.OrdinalIgnoreCase))
+                    result.Add(sale);
+            }
+
+            return result;
+        }
+
         public static string SalePo(Dictionary<string, string> record)
         {
             if (record.ContainsKey("Lot #"))
@@ -1043,6 +1054,38 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        internal static Dictionary<string, string>? FindInvoiceByOrder(string number, bool received)
+        {
+            string needle = NormalizePo(number);
+            if (needle.Length == 0)
+                return null;
+
+            foreach (var record in ReadRecords(Invoices))
+            {
+                if (IsReceivedInvoice(record) != received)
+                    continue;
+
+                string order = received
+                    ? FirstNonEmpty(GetRecord(record, "PO #"), GetRecord(record, "SO #"))
+                    : GetRecord(record, "SO #");
+                if (NormalizePo(order).Equals(needle, StringComparison.OrdinalIgnoreCase))
+                    return record;
+            }
+
+            return null;
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                    return value.Trim();
+            }
+
+            return "";
+        }
+
         internal static void UpsertInvoiceFromDraft(InvoiceDraft draft, DateTime due)
         {
             string number = (draft.InvoiceNumber ?? "").Trim();
@@ -1081,7 +1124,6 @@ namespace CastRightCatchInvManagement
             values["Outstanding"] = CsvIO.Money((double)Math.Max(0m, total - paid));
             if (GetRecord(values, "Status").Length == 0)
                 values["Status"] = "Open";
-            values[InvoicePdfCreatedColumn] = "true";
             values[InvoiceDateColumn] = CsvIO.Date(draft.InvoiceDate);
             values["Terms"] = draft.Terms ?? "";
             values["Ship Via"] = draft.ShipVia ?? "";
@@ -1090,6 +1132,7 @@ namespace CastRightCatchInvManagement
             values["Ship To"] = draft.ShipTo ?? "";
             values["Discount"] = draft.Discount.ToString("0.##", CultureInfo.InvariantCulture);
             values["Freight"] = draft.Freight.ToString("0.##", CultureInfo.InvariantCulture);
+            values[FreightCompanyColumn] = draft.FreightCompany ?? "";
             values["Tax"] = draft.TaxRate.ToString("0.##", CultureInfo.InvariantCulture);
             values[InvoiceTaxModeColumn] = draft.TaxIsPercent ? "%" : "#";
             values[InvoiceLinesColumn] = draft.ToJson();
@@ -1147,14 +1190,97 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        internal static List<LookupSuggest.Hit> SalesOrderSuggestHits() =>
+            OrderSuggestHits(
+                Sales,
+                "SO #",
+                "SO",
+                new[] { "Customer", "Customer Name" },
+                new[] { "Customer Code", "Cust ID" },
+                purchase: false);
+
+        internal static List<LookupSuggest.Hit> PurchaseOrderSuggestHits() =>
+            OrderSuggestHits(
+                PurchaseSales,
+                "PO #",
+                "PO",
+                new[] { "Vendor", "Name", "Company" },
+                new[] { "Vendor Code", "Code" },
+                purchase: true);
+
+        private static List<LookupSuggest.Hit> OrderSuggestHits(
+            string table,
+            string numberColumn,
+            string kind,
+            string[] partyNameColumns,
+            string[] partyCodeColumns,
+            bool purchase)
+        {
+            var groups = new Dictionary<string, OrderSuggest>(StringComparer.OrdinalIgnoreCase);
+            foreach (var record in ReadRecords(table))
+            {
+                string number = GetRecord(record, numberColumn).Trim();
+                if (number.Length == 0)
+                    continue;
+
+                string key = NormalizePo(number);
+                if (!groups.TryGetValue(key, out var group))
+                {
+                    group = new OrderSuggest
+                    {
+                        Number = number,
+                        Party = GetRecordAny(record, partyNameColumns),
+                        Code = GetRecordAny(record, partyCodeColumns)
+                    };
+                    groups[key] = group;
+                }
+
+                group.Items++;
+                if (group.Party.Length == 0)
+                    group.Party = GetRecordAny(record, partyNameColumns);
+                if (group.Code.Length == 0)
+                    group.Code = GetRecordAny(record, partyCodeColumns);
+            }
+
+            var hits = new List<LookupSuggest.Hit>();
+            foreach (var group in groups.Values)
+            {
+                string items = group.Items == 1 ? "1 item" : group.Items + " items";
+                string body = group.Party.Length > 0
+                    ? group.Party + " - " + items
+                    : items;
+                if (purchase)
+                    body += " · purchase";
+                hits.Add(new LookupSuggest.Hit(
+                    group.Number,
+                    body,
+                    kind,
+                    group.Party + " " + group.Code + " " + kind));
+            }
+
+            hits.Sort((a, b) => string.Compare(a.Code, b.Code, StringComparison.OrdinalIgnoreCase));
+            return hits;
+        }
+
+        private sealed class OrderSuggest
+        {
+            public string Number { get; set; } = "";
+            public string Party { get; set; } = "";
+            public string Code { get; set; } = "";
+            public int Items { get; set; }
+        }
+
         public static List<Dictionary<string, string>> FindInvoiceSourcesForKey(
             string? key,
             string? customerCode = null,
-            string? customerName = null)
+            string? customerName = null,
+            bool salesOrderOnly = false)
         {
             var result = new List<Dictionary<string, string>>();
             string needle = NormalizePo(key);
-            if (needle.Length < 3)
+            if (needle.Length == 0)
+                return result;
+            if (!salesOrderOnly && needle.Length < 3)
                 return result;
 
             var seenItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1166,8 +1292,13 @@ namespace CastRightCatchInvManagement
 
                 string salePo = NormalizePo(SalePo(sale));
                 string so = NormalizePo(GetRecord(sale, "SO #"));
-                if (!salePo.Equals(needle, StringComparison.OrdinalIgnoreCase) &&
-                    !so.Equals(needle, StringComparison.OrdinalIgnoreCase))
+                bool matchSo = so.Equals(needle, StringComparison.OrdinalIgnoreCase);
+                if (salesOrderOnly)
+                {
+                    if (!matchSo)
+                        continue;
+                }
+                else if (!salePo.Equals(needle, StringComparison.OrdinalIgnoreCase) && !matchSo)
                     continue;
 
                 var purchase = FindPurchaseByPo(SaleLot(sale));
@@ -1188,11 +1319,14 @@ namespace CastRightCatchInvManagement
         public static List<Dictionary<string, string>> FindPurchaseSourcesForKey(
             string? key,
             string? vendorCode = null,
-            string? vendorName = null)
+            string? vendorName = null,
+            bool allowShort = false)
         {
             var result = new List<Dictionary<string, string>>();
             string needle = NormalizePo(key);
-            if (needle.Length < 3)
+            if (needle.Length == 0)
+                return result;
+            if (!allowShort && needle.Length < 3)
                 return result;
 
             var seenItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1267,7 +1401,8 @@ namespace CastRightCatchInvManagement
             IEnumerable<string> purchaseOrders,
             string? customerCode,
             string? customerName,
-            string soNumber)
+            string soNumber,
+            string? freightCompany = null)
         {
             soNumber = (soNumber ?? "").Trim();
             if (soNumber.Length == 0)
@@ -1281,6 +1416,7 @@ namespace CastRightCatchInvManagement
             if (pos.Count == 0)
                 return 0;
 
+            string company = (freightCompany ?? "").Trim();
             return UpdateRecords(Sales, record =>
             {
                 if (!MatchesCustomer(record, customerCode, customerName))
@@ -1291,7 +1427,12 @@ namespace CastRightCatchInvManagement
                 string existing = GetRecord(record, "SO #").Trim();
                 return existing.Length == 0 ||
                        existing.Equals(soNumber, StringComparison.OrdinalIgnoreCase);
-            }, record => record["SO #"] = soNumber);
+            }, record =>
+            {
+                record["SO #"] = soNumber;
+                if (company.Length > 0)
+                    record[FreightCompanyColumn] = company;
+            });
         }
 
         public static int UpdateRecords(
@@ -2176,8 +2317,7 @@ namespace CastRightCatchInvManagement
                     "Ship Date",
                     "Due Date",
                     "Status",
-                    "Paid",
-                    "PDF Created"
+                    "Paid"
                 },
                 BankTransactions => new[]
                 {
@@ -2246,25 +2386,50 @@ namespace CastRightCatchInvManagement
         public static void ResetGridColumns(DataGridView grid)
         {
             string? baseName = grid.Tag is ColumnSearch search ? search.FileBaseName : null;
-            foreach (DataGridViewColumn col in grid.Columns)
+            if (!GridLayout.ApplyDefault(grid))
             {
-                if (Theme.IsAddColumn(col))
+                GridLayout.BeginUpdate();
+                try
                 {
-                    col.Visible = true;
-                    continue;
+                    foreach (DataGridViewColumn col in grid.Columns)
+                    {
+                        if (Theme.IsAddColumn(col))
+                        {
+                            col.Visible = true;
+                            continue;
+                        }
+
+                        col.Visible = IsSummaryColumn(baseName ?? "", col.HeaderText);
+                        if (IsRecordStatusColumn(col) &&
+                            (string.IsNullOrWhiteSpace(baseName) ||
+                             !DataAccess.IsColumnHidden(baseName, RecordStatus)))
+                            col.Visible = true;
+                    }
+                }
+                finally
+                {
+                    GridLayout.EndUpdate();
                 }
 
-                col.Visible = IsSummaryColumn(baseName ?? "", col.HeaderText);
-                if (IsRecordStatusColumn(col) &&
-                    (string.IsNullOrWhiteSpace(baseName) ||
-                     !DataAccess.IsColumnHidden(baseName, RecordStatus)))
-                    col.Visible = true;
+                GridLayout.Save(grid);
+            }
+
+            if (!string.IsNullOrWhiteSpace(baseName))
+            {
+                foreach (DataGridViewColumn col in grid.Columns)
+                {
+                    if (Theme.IsAddColumn(col))
+                        continue;
+                    string key = col.Tag as string ?? col.Name;
+                    if (DataAccess.IsColumnHidden(baseName, key) ||
+                        DataAccess.IsColumnHidden(baseName, col.HeaderText))
+                        col.Visible = false;
+                }
             }
 
             Theme.FitAllColumns(grid);
             if (grid.Tag is ColumnSearch layout)
                 layout.NotifyColumnsChanged();
-            GridLayout.Save(grid);
         }
 
         private static bool IsSummaryColumn(string baseName, string displayHeader)
@@ -2275,7 +2440,7 @@ namespace CastRightCatchInvManagement
                 Sales => new[] { "SO #", "Record Status", "Status", "Ship Date", "PO #" },
                 Customers => new[] { "Record Status", "Name", "Company", "Phone", "Current Balance" },
                 Vendors => new[] { "Record Status", "Name", "Company", "Phone", "Current Balance" },
-                Invoices => new[] { "SO #", "PO #", "Record Status", "Type", "Customer", "Vendor", "Ship Date", "Due Date", "Status", "Paid", "PDF Created" },
+                Invoices => new[] { "SO #", "PO #", "Record Status", "Type", "Customer", "Vendor", "Ship Date", "Due Date", "Status", "Paid" },
                 BankTransactions => new[] { "Date", "Record Status", "Amount", "Account", "Description", "Invoice #" },
                 _ => null
             };

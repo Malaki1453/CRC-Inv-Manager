@@ -47,6 +47,12 @@ namespace CastRightCatchInvManagement
         private bool _smtpPasswordFresh;
         private bool _loadingMail;
         private bool _smtpDirty;
+        private ListBox _vendorTypes = null!;
+        private ListBox _vendorFilters = null!;
+        private CheckedListBox _vendorFilterTypes = null!;
+        private ComboBox _slotForwarder = null!;
+        private ComboBox _slotLogistics = null!;
+        private bool _loadingVendorLookup;
 
         public AdminSettings()
         {
@@ -72,6 +78,7 @@ namespace CastRightCatchInvManagement
             {
                 LoadBankFeed();
                 LoadSession();
+                LoadVendorTypes();
                 if (_smtpDirty)
                     SaveMail();
                 LoadMail();
@@ -337,7 +344,7 @@ namespace CastRightCatchInvManagement
                 Height = 56,
                 Font = Theme.Body,
                 ForeColor = Theme.Muted,
-                Text = "This tree is the sidebar. A tab icon is a dropdown; everything else is a page. Drag to move. A gold line shows where it will land; a gold box means it will nest under that row."
+                Text = "This tree is the sidebar. A tab icon is a dropdown; everything else is a page. Drag to move. Rename a folder or a page to change the sidebar tab. A gold line shows where it will land; a gold box means it will nest under that row."
             };
 
             var card = new CardPanel { Dock = DockStyle.Fill, Padding = new Padding(12) };
@@ -354,7 +361,7 @@ namespace CastRightCatchInvManagement
             Theme.StyleOutlineButton(rename);
             Theme.StyleOutlineButton(delete);
             add.Click += (_, _) => AddMenuFolder();
-            rename.Click += (_, _) => RenameMenuFolder();
+            rename.Click += (_, _) => RenameMenuNode();
             delete.Click += (_, _) => DeleteMenuNode();
             bar.Controls.Add(add);
             bar.Controls.Add(rename);
@@ -431,6 +438,7 @@ namespace CastRightCatchInvManagement
         {
             _menu.Save();
             AppLock.NotifyChanged();
+            Navigator.RefreshOpenPages();
         }
 
         private void AddMenuFolder()
@@ -455,16 +463,16 @@ namespace CastRightCatchInvManagement
             FillMenuTree();
         }
 
-        private void RenameMenuFolder()
+        private void RenameMenuNode()
         {
             var node = NodeOf(_menuTree.SelectedNode);
-            if (node is not { IsFolder: true })
+            if (node == null)
             {
                 MessageBox.Show("Select a tab to rename.", "Pages", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            string? name = PromptText("Rename tab", "TAB NAME");
+            string? name = PromptText("Rename tab", "TAB NAME", node.Title, "Save");
             if (string.IsNullOrWhiteSpace(name))
                 return;
             node.Name = name.Trim();
@@ -832,8 +840,7 @@ namespace CastRightCatchInvManagement
                 return;
             var node = NodeOf(hit);
             var menu = new ContextMenuStrip();
-            if (node is { IsFolder: true })
-                menu.Items.Add("Rename", null, (_, _) => RenameMenuFolder());
+            menu.Items.Add("Rename", null, (_, _) => RenameMenuNode());
             menu.Items.Add("Delete", null, (_, _) => DeleteMenuNode());
             menu.Show(_menuTree, e.Location);
         }
@@ -852,20 +859,25 @@ namespace CastRightCatchInvManagement
                 Height = 40,
                 Font = Theme.Body,
                 ForeColor = Theme.Muted,
-                Text = "Stay signed in, login email (SMTP), and the live bank feed are administrator-only. They apply to everyone."
+                Text = "Stay signed in, login email (SMTP), vendor types, and the live bank feed are administrator-only. They apply to everyone."
             };
             var session = new CardPanel { Dock = DockStyle.Top, Height = 168 };
             LayoutSessionCard(session);
+            var types = new CardPanel { Dock = DockStyle.Top, Height = 368 };
+            LayoutVendorTypesCard(types);
             var mail = new CardPanel { Dock = DockStyle.Top, Height = 280 };
             LayoutMailCard(mail);
             _bankCard = new CardPanel { Dock = DockStyle.Top, Height = 210 };
             LayoutBankCard(_bankCard);
             var spacer = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
+            var spacerTypes = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
             var spacerMail = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
             host.Controls.Add(_bankCard);
             host.Controls.Add(spacer);
             host.Controls.Add(mail);
             host.Controls.Add(spacerMail);
+            host.Controls.Add(types);
+            host.Controls.Add(spacerTypes);
             host.Controls.Add(session);
             host.Controls.Add(intro);
             return host;
@@ -891,6 +903,377 @@ namespace CastRightCatchInvManagement
                 using var gold = new SolidBrush(Theme.Gold);
                 e.Graphics.FillRectangle(gold, e.Bounds.X, e.Bounds.Bottom - 3, e.Bounds.Width, 3);
             }
+        }
+
+        private void LayoutVendorTypesCard(CardPanel card)
+        {
+            var heading = new Label
+            {
+                Text = "Vendor types && filters",
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 14),
+                AutoSize = true
+            };
+            var hint = new Label
+            {
+                Text = "Types are the Edit Vendor dropdown. Filters group types for search fields — Logistics can include Trucking. The same filter can be used in more than one place.",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 42),
+                Size = new Size(700, 32)
+            };
+
+            var lblTypes = new Label { Text = "TYPES", Location = new Point(24, 76) };
+            var lblFilters = new Label { Text = "FILTERS", Location = new Point(248, 76) };
+            var lblInFilter = new Label { Text = "TYPES IN THIS FILTER", Location = new Point(472, 76) };
+            Theme.StyleFieldLabel(lblTypes);
+            Theme.StyleFieldLabel(lblFilters);
+            Theme.StyleFieldLabel(lblInFilter);
+
+            _vendorTypes = new ListBox
+            {
+                Location = new Point(24, 94),
+                Size = new Size(210, 130),
+                Font = Theme.Body,
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            _vendorFilters = new ListBox
+            {
+                Location = new Point(248, 94),
+                Size = new Size(210, 130),
+                Font = Theme.Body,
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            _vendorFilterTypes = new CheckedListBox
+            {
+                Location = new Point(472, 94),
+                Size = new Size(230, 130),
+                Font = Theme.Body,
+                BorderStyle = BorderStyle.FixedSingle,
+                CheckOnClick = true
+            };
+            _vendorFilters.SelectedIndexChanged += (_, _) => FillFilterTypes();
+            _vendorFilterTypes.ItemCheck += (_, _) =>
+            {
+                if (_loadingVendorLookup)
+                    return;
+                BeginInvoke(SaveFilterTypes);
+            };
+
+            var typeButtons = ActionRow(24, 232, 210, AddVendorType, RenameVendorType, DeleteVendorType);
+            var filterButtons = ActionRow(248, 232, 210, AddVendorFilter, RenameVendorFilter, DeleteVendorFilter);
+
+            var lblForwarder = new Label { Text = "NEW PURCHASE FORWARDER", Location = new Point(248, 276) };
+            var lblLogistics = new Label { Text = "NEW PURCHASE LOGISTICS", Location = new Point(472, 276) };
+            Theme.StyleFieldLabel(lblForwarder);
+            Theme.StyleFieldLabel(lblLogistics);
+            _slotForwarder = SlotCombo(248, 294);
+            _slotLogistics = SlotCombo(472, 294);
+            _slotForwarder.SelectedIndexChanged += (_, _) => SaveSlots();
+            _slotLogistics.SelectedIndexChanged += (_, _) => SaveSlots();
+
+            card.Controls.Add(heading);
+            card.Controls.Add(hint);
+            card.Controls.Add(lblTypes);
+            card.Controls.Add(lblFilters);
+            card.Controls.Add(lblInFilter);
+            card.Controls.Add(_vendorTypes);
+            card.Controls.Add(_vendorFilters);
+            card.Controls.Add(_vendorFilterTypes);
+            foreach (var button in typeButtons.Concat(filterButtons))
+                card.Controls.Add(button);
+            card.Controls.Add(lblForwarder);
+            card.Controls.Add(lblLogistics);
+            card.Controls.Add(_slotForwarder);
+            card.Controls.Add(_slotLogistics);
+            LoadVendorTypes();
+        }
+
+        private static Button[] ActionRow(
+            int x,
+            int y,
+            int width,
+            Action add,
+            Action rename,
+            Action delete)
+        {
+            int gap = 6;
+            int w = (width - gap * 2) / 3;
+            var addBtn = new Button { Text = "Add", Size = new Size(w, 28), Location = new Point(x, y) };
+            var renameBtn = new Button { Text = "Rename", Size = new Size(w, 28), Location = new Point(x + w + gap, y) };
+            var deleteBtn = new Button { Text = "Delete", Size = new Size(w, 28), Location = new Point(x + (w + gap) * 2, y) };
+            Theme.StyleGoldButton(addBtn);
+            Theme.StyleOutlineButton(renameBtn);
+            Theme.StyleOutlineButton(deleteBtn);
+            addBtn.Font = Theme.Small;
+            renameBtn.Font = Theme.Small;
+            deleteBtn.Font = Theme.Small;
+            addBtn.Click += (_, _) => add();
+            renameBtn.Click += (_, _) => rename();
+            deleteBtn.Click += (_, _) => delete();
+            return new[] { addBtn, renameBtn, deleteBtn };
+        }
+
+        private static ComboBox SlotCombo(int x, int y)
+        {
+            var box = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new Point(x, y),
+                Size = new Size(210, 26)
+            };
+            Theme.StyleCombo(box);
+            return box;
+        }
+
+        private void LoadVendorTypes()
+        {
+            if (_vendorTypes == null)
+                return;
+            _loadingVendorLookup = true;
+            string? keepType = _vendorTypes.SelectedItem as string;
+            string? keepFilter = SelectedFilter()?.Id;
+            var catalog = VendorTypes.Catalog();
+
+            _vendorTypes.Items.Clear();
+            foreach (var name in catalog.Types)
+                _vendorTypes.Items.Add(name);
+            if (keepType != null)
+            {
+                for (int i = 0; i < _vendorTypes.Items.Count; i++)
+                {
+                    if (_vendorTypes.Items[i] is string item &&
+                        item.Equals(keepType, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _vendorTypes.SelectedIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            _vendorFilters.Items.Clear();
+            foreach (var filter in catalog.Filters)
+                _vendorFilters.Items.Add(filter);
+            if (keepFilter != null)
+            {
+                for (int i = 0; i < _vendorFilters.Items.Count; i++)
+                {
+                    if (_vendorFilters.Items[i] is VendorTypeFilter filter &&
+                        filter.Id.Equals(keepFilter, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _vendorFilters.SelectedIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            if (_vendorFilters.SelectedIndex < 0 && _vendorFilters.Items.Count > 0)
+                _vendorFilters.SelectedIndex = 0;
+
+            FillFilterTypes();
+            FillSlotCombo(_slotForwarder, VendorTypes.SlotPurchaseForwarder);
+            FillSlotCombo(_slotLogistics, VendorTypes.SlotPurchaseLogistics);
+            _loadingVendorLookup = false;
+        }
+
+        private VendorTypeFilter? SelectedFilter() =>
+            _vendorFilters?.SelectedItem as VendorTypeFilter;
+
+        private void FillFilterTypes()
+        {
+            if (_vendorFilterTypes == null)
+                return;
+            bool restore = _loadingVendorLookup;
+            _loadingVendorLookup = true;
+            var filter = SelectedFilter();
+            _vendorFilterTypes.Items.Clear();
+            foreach (var type in VendorTypes.Catalog().Types)
+            {
+                bool on = filter != null &&
+                          filter.Types.Any(item => item.Equals(type, StringComparison.OrdinalIgnoreCase));
+                _vendorFilterTypes.Items.Add(type, on);
+            }
+
+            _loadingVendorLookup = restore;
+        }
+
+        private void FillSlotCombo(ComboBox box, string slot)
+        {
+            if (box == null)
+                return;
+            var catalog = VendorTypes.Catalog();
+            catalog.Slots.TryGetValue(slot, out var current);
+            box.Items.Clear();
+            foreach (var filter in catalog.Filters)
+                box.Items.Add(filter);
+            for (int i = 0; i < box.Items.Count; i++)
+            {
+                if (box.Items[i] is VendorTypeFilter filter &&
+                    filter.Id.Equals(current, StringComparison.OrdinalIgnoreCase))
+                {
+                    box.SelectedIndex = i;
+                    return;
+                }
+            }
+
+            if (box.Items.Count > 0)
+                box.SelectedIndex = 0;
+        }
+
+        private void SaveFilterTypes()
+        {
+            if (_loadingVendorLookup)
+                return;
+            var filter = SelectedFilter();
+            if (filter == null)
+                return;
+            var catalog = VendorTypes.Catalog();
+            var target = catalog.Filters.FirstOrDefault(item =>
+                item.Id.Equals(filter.Id, StringComparison.OrdinalIgnoreCase));
+            if (target == null)
+                return;
+            target.Types = _vendorFilterTypes.CheckedItems.Cast<string>().ToList();
+            VendorTypes.SaveCatalog(catalog);
+            filter.Types = target.Types.ToList();
+        }
+
+        private void SaveSlots()
+        {
+            if (_loadingVendorLookup)
+                return;
+            var catalog = VendorTypes.Catalog();
+            if (_slotForwarder.SelectedItem is VendorTypeFilter forwarder)
+                catalog.Slots[VendorTypes.SlotPurchaseForwarder] = forwarder.Id;
+            if (_slotLogistics.SelectedItem is VendorTypeFilter logistics)
+                catalog.Slots[VendorTypes.SlotPurchaseLogistics] = logistics.Id;
+            VendorTypes.SaveCatalog(catalog);
+        }
+
+        private void AddVendorType()
+        {
+            string? name = PromptText("New vendor type", "TYPE NAME");
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+            var catalog = VendorTypes.Catalog();
+            if (catalog.Types.Any(item => item.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            {
+                MessageBox.Show("That type already exists.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            catalog.Types.Add(name.Trim());
+            VendorTypes.SaveCatalog(catalog);
+            LoadVendorTypes();
+        }
+
+        private void RenameVendorType()
+        {
+            if (_vendorTypes.SelectedItem is not string current || current.Length == 0)
+            {
+                MessageBox.Show("Select a type to rename.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            string? name = PromptText("Rename vendor type", "TYPE NAME", current, "Save");
+            if (string.IsNullOrWhiteSpace(name) || name.Equals(current, StringComparison.OrdinalIgnoreCase))
+                return;
+            var catalog = VendorTypes.Catalog();
+            if (catalog.Types.Any(item => item.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            {
+                MessageBox.Show("That type already exists.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            VendorTypes.RenameType(current, name.Trim());
+            LoadVendorTypes();
+        }
+
+        private void DeleteVendorType()
+        {
+            if (_vendorTypes.SelectedItem is not string current || current.Length == 0)
+            {
+                MessageBox.Show("Select a type to delete.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var catalog = VendorTypes.Catalog();
+            catalog.Types = catalog.Types.Where(item => !item.Equals(current, StringComparison.OrdinalIgnoreCase)).ToList();
+            VendorTypes.SaveCatalog(catalog);
+            LoadVendorTypes();
+        }
+
+        private void AddVendorFilter()
+        {
+            string? name = PromptText("New lookup filter", "FILTER NAME");
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+            var catalog = VendorTypes.Catalog();
+            catalog.Filters.Add(new VendorTypeFilter
+            {
+                Id = VendorTypes.NewFilterId(),
+                Name = name.Trim()
+            });
+            VendorTypes.SaveCatalog(catalog);
+            LoadVendorTypes();
+            _vendorFilters.SelectedIndex = _vendorFilters.Items.Count - 1;
+        }
+
+        private void RenameVendorFilter()
+        {
+            var filter = SelectedFilter();
+            if (filter == null)
+            {
+                MessageBox.Show("Select a filter to rename.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            string? name = PromptText("Rename lookup filter", "FILTER NAME", filter.Name, "Save");
+            if (string.IsNullOrWhiteSpace(name) || name.Equals(filter.Name, StringComparison.OrdinalIgnoreCase))
+                return;
+            var catalog = VendorTypes.Catalog();
+            var target = catalog.Filters.FirstOrDefault(item =>
+                item.Id.Equals(filter.Id, StringComparison.OrdinalIgnoreCase));
+            if (target == null)
+                return;
+            target.Name = name.Trim();
+            VendorTypes.SaveCatalog(catalog);
+            LoadVendorTypes();
+        }
+
+        private void DeleteVendorFilter()
+        {
+            var filter = SelectedFilter();
+            if (filter == null)
+            {
+                MessageBox.Show("Select a filter to delete.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var catalog = VendorTypes.Catalog();
+            bool used = catalog.Slots.Values.Any(id =>
+                id.Equals(filter.Id, StringComparison.OrdinalIgnoreCase));
+            if (used)
+            {
+                MessageBox.Show(
+                    "That filter is assigned to a field. Pick a different filter there first.",
+                    "Vendor types",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            if (catalog.Filters.Count <= 1)
+            {
+                MessageBox.Show("Keep at least one filter.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            catalog.Filters = catalog.Filters
+                .Where(item => !item.Id.Equals(filter.Id, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            VendorTypes.SaveCatalog(catalog);
+            LoadVendorTypes();
         }
 
         private void LayoutSessionCard(CardPanel card)
@@ -1590,7 +1973,7 @@ namespace CastRightCatchInvManagement
             LoadUsers();
         }
 
-        private string? PromptText(string title, string caption)
+        private string? PromptText(string title, string caption, string? value = null, string okText = "Create")
         {
             using var form = new Form
             {
@@ -1605,11 +1988,16 @@ namespace CastRightCatchInvManagement
             };
             var label = new Label { Text = caption, Location = new Point(24, 16), AutoSize = true };
             Theme.StyleFieldLabel(label);
-            var box = new TextBox { Location = new Point(24, 36), Size = new Size(312, 26) };
+            var box = new TextBox
+            {
+                Location = new Point(24, 36),
+                Size = new Size(312, 26),
+                Text = value ?? ""
+            };
             Theme.StyleField(box);
             var ok = new Button
             {
-                Text = "Create",
+                Text = okText,
                 DialogResult = DialogResult.OK,
                 Size = new Size(90, 32),
                 Location = new Point(150, 84)

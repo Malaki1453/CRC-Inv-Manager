@@ -5,6 +5,7 @@ namespace CastRightCatchInvManagement
     {
         private readonly Workspace _workspace;
         private readonly NavSidebar _sidebar;
+        private readonly NavHistoryBar _history;
 
         public MainForm()
         {
@@ -17,6 +18,9 @@ namespace CastRightCatchInvManagement
             _workspace = Navigator.AttachMain(this, panelHost, _ => UpdateHeader());
             _sidebar = new NavSidebar(_workspace);
             _workspace.Sidebar = _sidebar;
+            _history = new NavHistoryBar(_workspace);
+            _history.Dock = DockStyle.Left;
+            panelHeader.Controls.Add(_history);
             Controls.Add(_sidebar);
 
             AppLock.Changed += UpdateHeader;
@@ -57,6 +61,7 @@ namespace CastRightCatchInvManagement
                     ? "Choose a page from the sidebar"
                     : UiStyle.PageSubtitle(page);
             _sidebar.RefreshState();
+            _history.Sync();
         }
     }
 }

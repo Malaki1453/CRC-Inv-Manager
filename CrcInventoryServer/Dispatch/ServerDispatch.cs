@@ -61,8 +61,6 @@ internal sealed class ServerDispatch
             ServerOps.AccountsRoles => SetRoles(payload, session),
             ServerOps.AccountsAccessGet => AccessGet(payload, session),
             ServerOps.AccountsAccessSet => AccessSet(payload, session),
-            ServerOps.SecurityQuestions => SecurityQuestions(payload, session),
-            ServerOps.SecuritySet => SecuritySet(payload, session),
             ServerOps.BankList => _store.ListBankAccounts(),
             ServerOps.BankInsert => BankInsert(payload),
             ServerOps.BankUpdate => BankUpdate(payload),
@@ -73,6 +71,7 @@ internal sealed class ServerDispatch
             ServerOps.PdfSave => PdfSave(payload),
             ServerOps.PdfHas => PdfHas(payload),
             ServerOps.PdfGet => PdfGet(payload),
+            ServerOps.PdfDelete => PdfDelete(payload),
             ServerOps.RolesRead => RequireIt(session, () => new RolesDto
             {
                 Admins = _store.Roles.Admins.ToList(),
@@ -94,17 +93,13 @@ internal sealed class ServerDispatch
         },
         ServerOps.AuthLogin => Login(payload, session),
         ServerOps.AuthResume => Resume(payload, session),
-        ServerOps.AuthRecoverQuestions => RecoverQuestions(payload),
-        ServerOps.AuthRecover => Recover(payload),
         _ => throw new InvalidOperationException("Unknown operation: " + op)
     };
 
     private static bool IsPublic(string op) =>
         op is ServerOps.SessionHello
             or ServerOps.AuthLogin
-            or ServerOps.AuthResume
-            or ServerOps.AuthRecoverQuestions
-            or ServerOps.AuthRecover;
+            or ServerOps.AuthResume;
 
     private AuthResponse Login(JsonElement payload, ClientSession session)
     {
@@ -155,30 +150,6 @@ internal sealed class ServerDispatch
     private static object Logout(ClientSession session)
     {
         session.SignOut();
-        return true;
-    }
-
-    private RecoverQuestionsResponse RecoverQuestions(JsonElement payload)
-    {
-        var request = Read<RecoverQuestionsRequest>(payload);
-        if (!_store.AllowRecovery(request.Username, out string error))
-            return new RecoverQuestionsResponse { Error = error };
-        return _store.SecurityQuestions(request.Username);
-    }
-
-    private bool Recover(JsonElement payload)
-    {
-        var request = Read<RecoverRequest>(payload);
-        if (!_store.AllowRecovery(request.Username, out string error))
-            throw new InvalidOperationException(error);
-        if (!_store.VerifySecurityAnswers(request.Username, request.A1, request.A2, request.A3))
-            throw new InvalidOperationException(_store.NoteRecoveryFailure(request.Username));
-        if (!_store.UpdateAccountPassword(request.Username, request.NewPassword))
-            throw new InvalidOperationException(
-                "Password must be at least " + Passwords.MinimumLength +
-                " characters, with a capital letter, a number, and a symbol.");
-        _store.ClearRecoveryFails(request.Username);
-        _store.SetMustChangePassword(request.Username, false);
         return true;
     }
 
@@ -457,27 +428,6 @@ internal sealed class ServerDispatch
         return true;
     }
 
-    private RecoverQuestionsResponse SecurityQuestions(JsonElement payload, ClientSession session)
-    {
-        var request = Read<AccountWriteRequest>(payload);
-        if (!SelfOrIt(session, request.Username))
-            throw new InvalidOperationException("Not allowed.");
-        return _store.SecurityQuestions(request.Username);
-    }
-
-    private bool SecuritySet(JsonElement payload, ClientSession session)
-    {
-        var request = Read<AccountWriteRequest>(payload);
-        if (!SelfOrIt(session, request.Username))
-            throw new InvalidOperationException("Not allowed.");
-        _store.SetSecurityQuestions(
-            request.Username,
-            request.Q1 ?? "", request.A1 ?? "",
-            request.Q2 ?? "", request.A2 ?? "",
-            request.Q3 ?? "", request.A3 ?? "");
-        return true;
-    }
-
     private long BankInsert(JsonElement payload)
     {
         var request = Read<BankWriteRequest>(payload);
@@ -552,6 +502,13 @@ internal sealed class ServerDispatch
     {
         var request = Read<PdfRequest>(payload);
         return _store.TryGetPdf(request.Kind, request.Key);
+    }
+
+    private bool PdfDelete(JsonElement payload)
+    {
+        var request = Read<PdfRequest>(payload);
+        _store.DeletePdf(request.Kind, request.Key);
+        return true;
     }
 
     private bool RolesWrite(JsonElement payload, ClientSession session)

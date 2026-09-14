@@ -19,13 +19,14 @@ namespace CastRightCatchInvManagement
                 lblTitle,
                 btnUpload,
                 dataGridView1,
-                "Add Product",
-                (_, _) => AddSale.OpenNew());
+                "New Sale",
+                (_, _) => SalesOrder.OpenNew());
             UiStyle.BindRowEdit(
                 dataGridView1,
-                AddSale.OpenEdit,
+                SalesOrder.OpenEdit,
                 "Sale",
                 "Edit Sale",
+                ("Show PDF", ShowSalePdf),
                 ("Add to Invoice", record => AddSaleRecordToInvoice(record, stayOnPage: Navigator.IsOpen(AppPage.InvoicePdf))));
             DataFiles.DataChanged += LoadTable;
             dataGridView1.CellMouseClick += dataGridView1_CellMouseClick;
@@ -36,8 +37,27 @@ namespace CastRightCatchInvManagement
         /// <summary>Called when this page is shown or the Current/Old view changes. Reloads the grid.</summary>
         public void HighlightCurrentPage() => LoadTable();
 
-        /// <summary>Fill the grid from the sales table (live only, or archive + live when Old is on).</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.Sales);
+
+        private void ShowSalePdf(Dictionary<string, string> record)
+        {
+            string po = DataFiles.SalePo(record);
+            DataFiles.ShowPdf(
+                DataFiles.PdfKindSale,
+                po,
+                "sale " + po,
+                () =>
+                {
+                    string? path = SaleDocument.SaveFromPo(po);
+                    if (path == null)
+                    {
+                        ToastAlert.Error(this, "Could not create a PDF for this sale.");
+                        return;
+                    }
+
+                    DataFiles.OpenPdf(path, DataFiles.PdfKindSale, po);
+                });
+        }
 
         /// <summary>
         /// Shift+left-click a sale: add that PO’s lines to Create Invoice but keep this page visible.
@@ -115,7 +135,7 @@ namespace CastRightCatchInvManagement
                 string? existing = DataFiles.FindStoredSalesOrder(so);
                 if (existing != null)
                 {
-                    DataFiles.OpenPdf(existing);
+                    DataFiles.OpenPdf(existing, DataFiles.PdfKindSalesOrder, so);
                     return;
                 }
             }

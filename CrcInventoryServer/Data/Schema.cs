@@ -54,9 +54,9 @@ internal static class Schema
         string header = table.ToLowerInvariant() switch
         {
             PurchaseSales =>
-                "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Volume Received,Price Paid / LB,Overhead / LB,Freight / LB,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Record Status",
+                "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Price Paid / LB,Overhead / LB,Freight / LB,Freight Company,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Record Status",
             Sales =>
-                "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Record Status",
+                "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Record Status",
             Customers =>
                 "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes,Description,Routing Number,Account Number,Record Status",
             Vendors =>
@@ -64,7 +64,7 @@ internal static class Schema
             ItemCodes =>
                 "Code,Description,COO,Farmed / Wild,Fresh / Frozen,Proc Country,Species,Scientific Name,Record Status",
             Invoices =>
-                "Invoice #,Type,SO #,PO #,Customer Code,Customer,Vendor Code,Vendor,Ship Date,Due Date,Amount,Paid,Outstanding,Status,Payment Date,Payment Method,PDF Created,Invoice Date,Terms,Ship Via,Sales Rep,Sold To,Ship To,Discount,Freight,Tax,Tax Mode,Lines Json,Record Status",
+                "Invoice #,Type,SO #,PO #,Customer Code,Customer,Vendor Code,Vendor,Ship Date,Due Date,Amount,Paid,Outstanding,Status,Payment Date,Payment Method,Invoice Date,Terms,Ship Via,Sales Rep,Sold To,Ship To,Discount,Freight,Freight Company,Tax,Tax Mode,Lines Json,Record Status",
             BankTransactions =>
                 "Date,Amount,Method,Reference,Invoice #,SO #,Customer Code,Notes,Record Status",
             Debits =>
@@ -88,8 +88,7 @@ internal static class Schema
         {
             return IsClosedStatus(Lookup(values, "Status")) ||
                    HasText(values, "Ship Date") ||
-                   HasText(values, "Arrival Date") ||
-                   HasPositiveNumber(values, "Volume Received");
+                   HasText(values, "Arrival Date");
         }
 
         if (table.Equals(Sales, StringComparison.OrdinalIgnoreCase))

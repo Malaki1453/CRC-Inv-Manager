@@ -1,6 +1,6 @@
 namespace CrcInventory.Protocol;
 
-/// <summary>Shared wording for password-recovery lockout (5 tries, 15 minutes).</summary>
+/// <summary>Shared wording for sign-in lockout (5 tries, 15 minutes; 30 tries, IT unlock).</summary>
 public static class RecoveryGuard
 {
     public const int MaxTries = 5;
@@ -8,13 +8,6 @@ public static class RecoveryGuard
 
     public static string LockedMessage(DateTime until) =>
         "Too many tries. Try again at " + until.ToLocalTime().ToString("h:mm tt") + ".";
-
-    public static string WrongMessage(int left)
-    {
-        if (left <= 0)
-            return LockedMessage(DateTime.Now.AddMinutes(LockMinutes));
-        return "Those answers are not right. " + left + (left == 1 ? " try" : " tries") + " left.";
-    }
 
     public const int LoginMaxTries = 30;
     public const string ItLockValue = "IT";

@@ -240,7 +240,9 @@ internal sealed partial class InventoryStore
     {
         var expected = Schema.Headers(table).ToList();
         var actual = TableColumns(table, viewOld)
-            .Where(c => c != "id" && c != "term_start")
+            .Where(c => c != "id" && c != "term_start" &&
+                        !c.Equals("PDF Created", StringComparison.OrdinalIgnoreCase) &&
+                        !c.Equals("Volume Received", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var list = new List<string>();

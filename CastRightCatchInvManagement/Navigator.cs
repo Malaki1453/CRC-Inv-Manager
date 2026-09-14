@@ -15,7 +15,6 @@ namespace CastRightCatchInvManagement
             [AppPage.PurchaseSales] = () => new PurchaseSales(),
             [AppPage.AddPurchase]   = () => new AddPurchase(),
             [AppPage.Sales]         = () => new Sales(),
-            [AppPage.AddSale]       = () => new AddSale(),
             [AppPage.SalesOrder]    = () => new SalesOrder(),
             [AppPage.Customers]     = () => new Customers(),
             [AppPage.Vendors]       = () => new Vendors(),
@@ -56,6 +55,8 @@ namespace CastRightCatchInvManagement
         private static Workspace? _main;
         private static Workspace? _active;
         private static Workspace? _lastExtra;
+        private static bool _movingHistory;
+        private static bool _historyFilterAdded;
 
         internal static Workspace AttachMain(Form window, Panel host, Action<AppPage?> updateChrome)
         {
@@ -65,7 +66,61 @@ namespace CastRightCatchInvManagement
             };
             BindWindow(_main);
             _active = _main;
+            EnsureHistoryFilter();
             return _main;
+        }
+
+        internal static Workspace? ActiveWorkspace => _active ?? _main;
+
+        public static void GoBack() => GoBack(_active ?? _main);
+
+        public static void GoForward() => GoForward(_active ?? _main);
+
+        internal static void GoBack(Workspace? workspace)
+        {
+            workspace ??= _active ?? _main;
+            if (workspace == null || !workspace.IsAlive)
+                return;
+
+            var page = workspace.TakeBack();
+            if (page == null)
+                return;
+
+            MoveHistory(workspace, page.Value);
+        }
+
+        internal static void GoForward(Workspace? workspace)
+        {
+            workspace ??= _active ?? _main;
+            if (workspace == null || !workspace.IsAlive)
+                return;
+
+            var page = workspace.TakeForward();
+            if (page == null)
+                return;
+
+            MoveHistory(workspace, page.Value);
+        }
+
+        private static void MoveHistory(Workspace workspace, AppPage page)
+        {
+            _movingHistory = true;
+            try
+            {
+                GoTo(page, workspace, reuseOpenWindow: false);
+            }
+            finally
+            {
+                _movingHistory = false;
+            }
+        }
+
+        private static void EnsureHistoryFilter()
+        {
+            if (_historyFilterAdded)
+                return;
+            Application.AddMessageFilter(new HistoryInputFilter());
+            _historyFilterAdded = true;
         }
 
         public static void Register(AppPage page, Form form)
@@ -111,12 +166,14 @@ namespace CastRightCatchInvManagement
             GoTo(page, _active ?? _main);
         }
 
-        internal static void GoTo(AppPage page, Workspace? workspace)
+        internal static void GoTo(AppPage page, Workspace? workspace, bool reuseOpenWindow = true)
         {
             workspace ??= _active ?? _main;
             if (workspace == null || !workspace.IsAlive)
                 throw new InvalidOperationException("Navigator host has not been set.");
 
+            if (page == AppPage.AddSale)
+                page = AppPage.SalesOrder;
             if (page == AppPage.ItUsers || page == AppPage.ItAccess)
                 page = AppPage.Admin;
             if (page == AppPage.Admin && !AppState.IsAdmin && !AppState.IsIt)
@@ -131,10 +188,15 @@ namespace CastRightCatchInvManagement
                 page = AppPage.Dashboard;
             }
 
+            if (reuseOpenWindow && TryFocusOther(page, workspace))
+                return;
+
             ShowIn(workspace, page);
         }
 
-        public static void OpenDetached(AppPage page)
+        public static void OpenDetached(AppPage page) => OpenDetached(page, null);
+
+        internal static void OpenDetached(AppPage page, Workspace? from)
         {
             if (_main == null || !_main.IsAlive)
                 throw new InvalidOperationException("Navigator host has not been set.");
@@ -149,16 +211,41 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            if (TryFocusOther(page, from))
+                return;
+
             var extra = CreateExtra();
             ShowIn(extra, page);
 
-            var owner = _main.Window;
+            var owner = from is { IsAlive: true } ? from.Window : _main.Window;
             extra.Window.StartPosition = FormStartPosition.Manual;
             int offset = 36 * _extras.Count;
             extra.Window.Location = new Point(owner.Left + offset, owner.Top + offset);
             extra.Window.Size = owner.Size;
             extra.Window.ShowInTaskbar = true;
             extra.Window.Show();
+            FocusWorkspace(extra);
+        }
+
+        internal static bool TryFocus(AppPage page)
+        {
+            var workspace = WorkspaceShowing(page);
+            if (workspace == null)
+                return false;
+            FocusWorkspace(workspace);
+            return true;
+        }
+
+        internal static IReadOnlyList<AppPage> ListOpenPages()
+        {
+            var pages = new List<AppPage>();
+            foreach (var workspace in AllWorkspaces())
+            {
+                if (workspace.IsAlive && workspace.CurrentPage is AppPage page)
+                    pages.Add(page);
+            }
+
+            return pages;
         }
 
         internal static void Activate(Workspace? workspace)
@@ -197,6 +284,7 @@ namespace CastRightCatchInvManagement
             };
             var sidebar = new NavSidebar(extra);
             extra.Sidebar = sidebar;
+            window.BindHistory(extra);
             window.Controls.Add(sidebar);
 
             BindWindow(extra);
@@ -301,6 +389,8 @@ namespace CastRightCatchInvManagement
             if (_active == workspace)
                 Activate(_main);
 
+            RefreshAllChrome();
+
             if (!HasAliveWindow())
                 Application.ExitThread();
         }
@@ -316,7 +406,7 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
-        private static void ShowIn(Workspace dest, AppPage page, bool activate = true)
+        private static void ShowIn(Workspace dest, AppPage page, bool activate = true, bool recordHistory = true)
         {
             if (!dest.IsAlive)
                 return;
@@ -336,6 +426,9 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            if (recordHistory && !_movingHistory && dest.CurrentPage is AppPage from && from != page)
+                dest.PushHistory(from);
+
             bool stoleCurrent = previous != null &&
                                 previous != dest &&
                                 previous.CurrentPage == page;
@@ -353,10 +446,11 @@ namespace CastRightCatchInvManagement
 
             dest.CurrentPage = page;
             Highlight(form);
-            dest.RefreshChrome();
 
             if (stoleCurrent && previous != null && previous.IsAlive)
                 Recover(previous);
+
+            RefreshAllChrome();
 
             if (activate)
             {
@@ -387,7 +481,7 @@ namespace CastRightCatchInvManagement
 
             if (workspace.IsMain)
             {
-                ShowIn(workspace, PickFallback(workspace), activate: false);
+                ShowIn(workspace, PickFallback(workspace), activate: false, recordHistory: false);
                 return;
             }
 
@@ -407,7 +501,7 @@ namespace CastRightCatchInvManagement
             return AppPage.Settings;
         }
 
-        private static bool IsShownElsewhere(AppPage page, Workspace dest)
+        internal static bool IsShownElsewhere(AppPage page, Workspace? dest)
         {
             foreach (var workspace in AllWorkspaces())
             {
@@ -416,6 +510,47 @@ namespace CastRightCatchInvManagement
             }
 
             return false;
+        }
+
+        private static Workspace? WorkspaceShowing(AppPage page)
+        {
+            foreach (var workspace in AllWorkspaces())
+            {
+                if (workspace.IsAlive && workspace.CurrentPage == page)
+                    return workspace;
+            }
+
+            return null;
+        }
+
+        private static bool TryFocusOther(AppPage page, Workspace? from)
+        {
+            var existing = WorkspaceShowing(page);
+            if (existing == null || existing == from || !existing.IsAlive)
+                return false;
+            FocusWorkspace(existing);
+            return true;
+        }
+
+        private static void FocusWorkspace(Workspace workspace)
+        {
+            if (!workspace.IsAlive)
+                return;
+            if (workspace.Window.WindowState == FormWindowState.Minimized)
+                workspace.Window.WindowState = FormWindowState.Normal;
+            workspace.Window.Show();
+            workspace.Window.BringToFront();
+            workspace.Window.Activate();
+            Activate(workspace);
+        }
+
+        private static void RefreshAllChrome()
+        {
+            foreach (var workspace in AllWorkspaces())
+            {
+                if (workspace.IsAlive)
+                    workspace.RefreshChrome();
+            }
         }
 
         private static void CloseExtra(Workspace extra)
@@ -573,9 +708,47 @@ namespace CastRightCatchInvManagement
         public NavSidebar? Sidebar { get; set; }
         public Action<AppPage?>? UpdateChrome { get; set; }
 
+        private readonly List<AppPage> _back = new();
+        private readonly List<AppPage> _forward = new();
+
+        public bool CanGoBack => _back.Count > 0;
+        public bool CanGoForward => _forward.Count > 0;
+
         public bool IsAlive =>
             Window != null && !Window.IsDisposed &&
             Host != null && !Host.IsDisposed;
+
+        public void PushHistory(AppPage page)
+        {
+            if (_back.Count > 0 && _back[^1] == page)
+                return;
+            _back.Add(page);
+            if (_back.Count > 40)
+                _back.RemoveAt(0);
+            _forward.Clear();
+        }
+
+        public AppPage? TakeBack()
+        {
+            if (_back.Count == 0)
+                return null;
+            var page = _back[^1];
+            _back.RemoveAt(_back.Count - 1);
+            if (CurrentPage is AppPage here)
+                _forward.Add(here);
+            return page;
+        }
+
+        public AppPage? TakeForward()
+        {
+            if (_forward.Count == 0)
+                return null;
+            var page = _forward[^1];
+            _forward.RemoveAt(_forward.Count - 1);
+            if (CurrentPage is AppPage here)
+                _back.Add(here);
+            return page;
+        }
 
         public void RefreshChrome()
         {
@@ -584,11 +757,101 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Mouse side buttons, Alt+Left/Right, and browser back/forward keys.</summary>
+    internal sealed class HistoryInputFilter : IMessageFilter
+    {
+        private const int WmKeyDown = 0x0100;
+        private const int WmSysKeyDown = 0x0104;
+        private const int WmXButtonDown = 0x020B;
+        private const int WmNcXButtonDown = 0x00AB;
+        private const int WmAppCommand = 0x0319;
+        private const int XButton1 = 0x0001;
+        private const int XButton2 = 0x0002;
+        private const int AppCommandBrowserBack = 1;
+        private const int AppCommandBrowserForward = 2;
+
+        public bool PreFilterMessage(ref Message m)
+        {
+            if (HasModal())
+                return false;
+
+            if (m.Msg is WmXButtonDown or WmNcXButtonDown)
+            {
+                int button = (int)((m.WParam.ToInt64() >> 16) & 0xFFFF);
+                if (button == XButton1)
+                    return TryBack();
+                if (button == XButton2)
+                    return TryForward();
+                return false;
+            }
+
+            if (m.Msg == WmAppCommand)
+            {
+                int command = (int)((m.LParam.ToInt64() >> 16) & 0x0FFF);
+                if (command == AppCommandBrowserBack)
+                    return TryBack();
+                if (command == AppCommandBrowserForward)
+                    return TryForward();
+                return false;
+            }
+
+            if (m.Msg is WmKeyDown or WmSysKeyDown)
+            {
+                var key = (Keys)(m.WParam.ToInt64() & 0xFFFF);
+                bool alt = (Control.ModifierKeys & Keys.Alt) != 0;
+                if (key == Keys.BrowserBack || (alt && key == Keys.Left))
+                    return TryBack();
+                if (key == Keys.BrowserForward || (alt && key == Keys.Right))
+                    return TryForward();
+            }
+
+            return false;
+        }
+
+        private static bool TryBack()
+        {
+            var workspace = Navigator.ActiveWorkspace;
+            if (!WorkspaceIsForeground() || workspace == null || !workspace.CanGoBack)
+                return false;
+            Navigator.GoBack(workspace);
+            return true;
+        }
+
+        private static bool TryForward()
+        {
+            var workspace = Navigator.ActiveWorkspace;
+            if (!WorkspaceIsForeground() || workspace == null || !workspace.CanGoForward)
+                return false;
+            Navigator.GoForward(workspace);
+            return true;
+        }
+
+        private static bool WorkspaceIsForeground()
+        {
+            var form = Form.ActiveForm;
+            return form is MainForm or PageWindow;
+        }
+
+        private static bool HasModal()
+        {
+            foreach (Form form in Application.OpenForms)
+            {
+                if (form.Visible && form.Modal)
+                    return true;
+            }
+
+            return false;
+        }
+    }
+
     /// <summary>Extra detached workspace window with its own sidebar.</summary>
     internal sealed class PageWindow : Form
     {
         private readonly Label _title;
         private readonly Label _subtitle;
+        private readonly FlowLayoutPanel _openBar;
+        private readonly Panel _header;
+        private NavHistoryBar? _history;
 
         public Panel Host { get; }
 
@@ -612,7 +875,18 @@ namespace CastRightCatchInvManagement
                 Name = "panelHost"
             };
 
-            var header = new Panel
+            _openBar = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 36,
+                BackColor = Theme.Paper,
+                Padding = new Padding(22, 4, 16, 4),
+                WrapContents = false,
+                AutoScroll = true,
+                Visible = false
+            };
+
+            _header = new Panel
             {
                 Dock = DockStyle.Top,
                 Height = 78,
@@ -633,7 +907,7 @@ namespace CastRightCatchInvManagement
                 ForeColor = Theme.Navy,
                 Text = "Cast Right Catch",
                 TextAlign = ContentAlignment.BottomLeft,
-                Padding = new Padding(28, 0, 28, 0)
+                Padding = new Padding(12, 0, 28, 0)
             };
             _subtitle = new Label
             {
@@ -643,11 +917,17 @@ namespace CastRightCatchInvManagement
                 ForeColor = Theme.Muted,
                 Text = "",
                 TextAlign = ContentAlignment.TopLeft,
-                Padding = new Padding(30, 4, 28, 0)
+                Padding = new Padding(12, 4, 28, 0)
             };
-            header.Controls.Add(_subtitle);
-            header.Controls.Add(_title);
-            header.Controls.Add(headerGold);
+            var titles = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Theme.Paper
+            };
+            titles.Controls.Add(_subtitle);
+            titles.Controls.Add(_title);
+            _header.Controls.Add(titles);
+            _header.Controls.Add(headerGold);
 
             var footer = new Panel
             {
@@ -673,8 +953,16 @@ namespace CastRightCatchInvManagement
             footer.Controls.Add(footerGold);
 
             Controls.Add(Host);
-            Controls.Add(header);
+            Controls.Add(_openBar);
+            Controls.Add(_header);
             Controls.Add(footer);
+        }
+
+        public void BindHistory(Workspace workspace)
+        {
+            _history = new NavHistoryBar(workspace);
+            _history.Dock = DockStyle.Left;
+            _header.Controls.Add(_history);
         }
 
         public void SetChrome(AppPage? page)
@@ -684,12 +972,58 @@ namespace CastRightCatchInvManagement
                 Text = "Cast Right Catch — Inventory";
                 _title.Text = "Cast Right Catch";
                 _subtitle.Text = "Choose a page from the sidebar";
-                return;
+            }
+            else
+            {
+                Text = UiStyle.PageTitle(page.Value) + "  ·  Cast Right Catch";
+                _title.Text = UiStyle.PageTitle(page.Value);
+                _subtitle.Text = UiStyle.PageSubtitle(page.Value);
             }
 
-            Text = UiStyle.PageTitle(page.Value) + "  ·  Cast Right Catch";
-            _title.Text = UiStyle.PageTitle(page.Value);
-            _subtitle.Text = UiStyle.PageSubtitle(page.Value);
+            RebuildOpenBar(page);
+            _history?.Sync();
+        }
+
+        private void RebuildOpenBar(AppPage? current)
+        {
+            var open = Navigator.ListOpenPages();
+            _openBar.Visible = open.Count > 1;
+            _openBar.Controls.Clear();
+            if (open.Count <= 1)
+                return;
+
+            _openBar.Controls.Add(new Label
+            {
+                Text = "OPEN WINDOWS",
+                Font = Theme.Caption,
+                ForeColor = Theme.Muted,
+                AutoSize = true,
+                Margin = new Padding(0, 8, 12, 0)
+            });
+
+            foreach (var page in open)
+            {
+                bool here = page == current;
+                var btn = new Button
+                {
+                    Text = UiStyle.PageTitle(page),
+                    AutoSize = true,
+                    Height = 24,
+                    MinimumSize = new Size(0, 24),
+                    Margin = new Padding(0, 2, 6, 2),
+                    Padding = new Padding(10, 0, 10, 0),
+                    Font = Theme.Small,
+                    TabStop = false
+                };
+                if (here)
+                    Theme.StyleGoldButton(btn);
+                else
+                    Theme.StyleOutlineButton(btn);
+                btn.Font = Theme.Small;
+                var target = page;
+                btn.Click += (_, _) => Navigator.TryFocus(target);
+                _openBar.Controls.Add(btn);
+            }
         }
     }
 }

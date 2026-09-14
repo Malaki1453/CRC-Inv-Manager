@@ -2,28 +2,20 @@ using System.Globalization;
 
 namespace CastRightCatchInvManagement
 {
-    /// <summary>Create or edit a purchase line. Saves to the live purchases table.</summary>
+    /// <summary>
+    /// New Purchase: one PO header and multiple product lines, like Create Invoice.
+    /// Vendor code/name and item code fill the rest. Saves one purchases row per line.
+    /// </summary>
     public partial class AddPurchase : Form, INavigationPage
     {
+        private readonly List<PurchaseLineRow> _lines = new();
+        private readonly HashSet<string> _loadedItems = new(StringComparer.OrdinalIgnoreCase);
+
         private TextBox _po = null!;
         private TextBox _vendor = null!;
         private TextBox _vendorName = null!;
         private TextBox _location = null!;
         private TextBox _vendorTerms = null!;
-        private TextBox _item = null!;
-        private TextBox _species = null!;
-        private TextBox _coo = null!;
-        private TextBox _packSize = null!;
-        private TextBox _cs = null!;
-        private TextBox _volume = null!;
-        private TextBox _volumeReceived = null!;
-        private TextBox _price = null!;
-        private TextBox _overhead = null!;
-        private TextBox _freight = null!;
-        private TextBox _forwarderLb = null!;
-        private TextBox _other = null!;
-        private TextBox _totalPerLb = null!;
-        private TextBox _totalCost = null!;
         private DateTimePicker _agreement = null!;
         private DateTimePicker _expectedShip = null!;
         private DateTimePicker _vendorDue = null!;
@@ -32,17 +24,27 @@ namespace CastRightCatchInvManagement
         private TextBox _forwarder = null!;
         private TextBox _logistics = null!;
         private ComboBox _status = null!;
-        private List<Dictionary<string, string>> _vendorRows = new();
-        private List<Dictionary<string, string>> _itemRows = new();
-        private bool _loading;
-        private bool _calculating;
-        private bool _editing;
-        private string _editPo = "";
-        private string _editItem = "";
+        private ComboBox _freightCo = null!;
+        private TextBox _overhead = null!;
+        private TextBox _freight = null!;
+        private TextBox _forwarderLb = null!;
+        private TextBox _other = null!;
+        private Panel _lineHost = null!;
         private Label _modeLabel = null!;
+        private Label _totalVolume = null!;
+        private Label _totalCost = null!;
         private Button _save = null!;
         private Button _another = null!;
-        private LookupSearchPanel _lookup = null!;
+        private List<LookupSuggest.Hit> _vendorHits = new();
+        private List<LookupSuggest.Hit> _forwarderHits = new();
+        private List<LookupSuggest.Hit> _logisticsHits = new();
+        private List<LookupSuggest.Hit> _itemHits = new();
+        private LookupSuggest? _vendorCodeSuggest;
+        private LookupSuggest? _vendorNameSuggest;
+        private LookupSuggest? _forwarderSuggest;
+        private LookupSuggest? _logisticsSuggest;
+        private bool _editing;
+        private string _editPo = "";
 
         internal static Dictionary<string, string>? PendingEdit { get; set; }
         internal static bool StartNew { get; set; }
@@ -68,7 +70,7 @@ namespace CastRightCatchInvManagement
             Navigator.GoTo(AppPage.AddPurchase);
         }
 
-        /// <summary>Open this page with an existing purchase row loaded for edit.</summary>
+        /// <summary>Open this page with every product on that PO loaded for edit.</summary>
         public static void OpenEdit(Dictionary<string, string> record)
         {
             if (!DataAccess.CanMutate(DataFiles.PurchaseSales))
@@ -83,9 +85,6 @@ namespace CastRightCatchInvManagement
             Navigator.GoTo(AppPage.AddPurchase);
         }
 
-        /// <summary>
-        /// Shown or refreshed: reload vendor/item lists, then apply a pending edit, a new blank, or keep the form.
-        /// </summary>
         public void HighlightCurrentPage()
         {
             LoadLookups();
@@ -94,7 +93,7 @@ namespace CastRightCatchInvManagement
                 var record = PendingEdit;
                 PendingEdit = null;
                 StartNew = false;
-                LoadRecord(record);
+                LoadOrder(record);
                 return;
             }
 
@@ -107,20 +106,190 @@ namespace CastRightCatchInvManagement
 
             if (!_editing && string.IsNullOrWhiteSpace(_po.Text))
                 _po.Text = DataFiles.NextPurchasePo();
+            if (_lines.Count == 0)
+                AddLine();
         }
 
-        /// <summary>Build the scrollable form: order, product, cost, and date cards plus save actions.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
             Padding = new Padding(28, 16, 28, 20);
+            AutoScroll = false;
 
-            var actions = new Panel
+            var footer = BuildFooter();
+            footer.Dock = DockStyle.Bottom;
+
+            var header = BuildHeader();
+            header.Dock = DockStyle.Top;
+
+            var lines = BuildLinesCard();
+            lines.Dock = DockStyle.Fill;
+
+            Controls.Add(lines);
+            Controls.Add(header);
+            Controls.Add(footer);
+
+            LoadLookups();
+            ResetForm(keepVendor: false);
+        }
+
+        private CardPanel BuildHeader()
+        {
+            var card = new CardPanel { Height = 268, Padding = new Padding(16, 10, 16, 10) };
+
+            _modeLabel = new Label
+            {
+                Text = "New Purchase",
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                AutoSize = true,
+                Location = new Point(20, 8)
+            };
+            card.Controls.Add(_modeLabel);
+
+            _po = AddField(card, "PO #", 20, 36, 130);
+            _vendor = AddField(card, "VENDOR CODE", 164, 36, 160);
+            _vendorName = AddField(card, "VENDOR", 338, 36, 250);
+            _location = AddField(card, "LOCATION", 602, 36, 170);
+
+            _vendorTerms = AddField(card, "VENDOR TERMS", 20, 86, 160);
+            _agreement = AddDate(card, "AGREEMENT DATE", 194, 86, 140);
+            _expectedShip = AddDate(card, "EXPECTED SHIP DATE", 348, 86, 150);
+            _vendorDue = AddDate(card, "VENDOR DUE DATE", 512, 86, 140);
+            _status = AddCombo(card, "STATUS", 666, 86, 130);
+            _status.DropDownStyle = ComboBoxStyle.DropDownList;
+            SelectStatus(_status, "Pending");
+
+            _ship = AddDate(card, "SHIP DATE", 20, 136, 140);
+            _arrival = AddDate(card, "ARRIVAL DATE", 174, 136, 140);
+            _forwarder = AddField(card, "FORWARDER", 328, 136, 150);
+            _logistics = AddField(card, "LOGISTICS", 492, 136, 150);
+            _freightCo = AddCombo(card, "FREIGHT CO", 656, 136, 180);
+
+            _overhead = AddField(card, "OVERHEAD / LB", 20, 186, 120);
+            _freight = AddField(card, "FREIGHT / LB", 154, 186, 120);
+            _forwarderLb = AddField(card, "FORWARDER / LB", 288, 186, 130);
+            _other = AddField(card, "OTHER / LB", 432, 186, 110);
+
+            _vendorCodeSuggest = new LookupSuggest(_vendor, () => _vendorHits, codeFirst: true, ApplyVendorHit);
+            _vendorNameSuggest = new LookupSuggest(_vendorName, () => _vendorHits, codeFirst: false, ApplyVendorHit);
+            _forwarderSuggest = new LookupSuggest(_forwarder, () => _forwarderHits, codeFirst: false, hit => ApplyNameHit(_forwarder, hit));
+            _logisticsSuggest = new LookupSuggest(_logistics, () => _logisticsHits, codeFirst: false, hit => ApplyNameHit(_logistics, hit));
+            foreach (var box in new[] { _overhead, _freight, _forwarderLb, _other })
+                box.TextChanged += (_, _) => RecalcLines();
+
+            return card;
+        }
+
+        private CardPanel BuildLinesCard()
+        {
+            var card = new CardPanel { Padding = new Padding(1) };
+
+            var addBar = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 52,
-                BackColor = Theme.Cream
+                Height = 48,
+                BackColor = Theme.Paper,
+                Padding = new Padding(12, 8, 12, 8)
             };
+            var add = new Button
+            {
+                Text = "+",
+                Width = 36,
+                Dock = DockStyle.Left
+            };
+            Theme.StyleGoldButton(add);
+            add.Click += (_, _) => AddLine();
+            var hint = new Label
+            {
+                Text = "Type a vendor code or name to fill the order. Type an item code on a line to fill that product. Add lines for more products on this PO.",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(12, 0, 0, 0)
+            };
+            addBar.Controls.Add(hint);
+            addBar.Controls.Add(add);
+
+            var labels = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 28,
+                BackColor = Theme.Navy
+            };
+            labels.Resize += (_, _) => labels.Invalidate();
+            labels.Paint += (_, e) =>
+            {
+                var slots = PurchaseLineLayout.Slots(labels.Width);
+                DrawHeader(e.Graphics, "ITEM", slots.Item);
+                DrawHeader(e.Graphics, "DESCRIPTION", slots.Description);
+                DrawHeader(e.Graphics, "COO", slots.Coo);
+                DrawHeader(e.Graphics, "PACK", slots.Pack);
+                DrawHeader(e.Graphics, "CS", slots.Cases);
+                DrawHeader(e.Graphics, "VOLUME", slots.Volume);
+                DrawHeader(e.Graphics, "PRICE / LB", slots.Price);
+                DrawHeader(e.Graphics, "TOTAL / LB", slots.TotalPerLb);
+                DrawHeader(e.Graphics, "TOTAL", slots.Total);
+            };
+
+            _lineHost = new Panel
+            {
+                Dock = DockStyle.Fill,
+                AutoScroll = true,
+                BackColor = Theme.Paper,
+                Padding = new Padding(8, 8, 8, 8)
+            };
+            _lineHost.Resize += (_, _) => LayoutLines();
+
+            card.Controls.Add(_lineHost);
+            card.Controls.Add(labels);
+            card.Controls.Add(addBar);
+            return card;
+        }
+
+        private void AddLine()
+        {
+            var row = new PurchaseLineRow();
+            row.AttachLookups(() => _itemHits);
+            row.SetSharedCosts(SharedOverhead(), SharedFreight(), SharedForwarder(), SharedOther());
+            row.Changed += (_, _) => UpdateTotals();
+            row.RemoveRequested += (_, _) => RemoveLine(row);
+            _lines.Add(row);
+            _lineHost.Controls.Add(row);
+            LayoutLines();
+            row.FocusItem();
+            UpdateTotals();
+        }
+
+        private void RemoveLine(PurchaseLineRow row)
+        {
+            _lines.Remove(row);
+            _lineHost.Controls.Remove(row);
+            row.Dispose();
+            if (_lines.Count == 0)
+                AddLine();
+            LayoutLines();
+            UpdateTotals();
+        }
+
+        private void LayoutLines()
+        {
+            int y = _lineHost.Padding.Top;
+            int width = Math.Max(640, _lineHost.ClientSize.Width - _lineHost.Padding.Horizontal - 8);
+            foreach (var row in _lines)
+            {
+                row.SetBounds(_lineHost.Padding.Left, y, width, PurchaseLineRow.RowHeight);
+                y += PurchaseLineRow.RowHeight + 6;
+            }
+
+            _lineHost.AutoScrollMinSize = new Size(0, y + 8);
+        }
+
+        private CardPanel BuildFooter()
+        {
+            var card = new CardPanel { Height = 78, Padding = new Padding(16, 10, 16, 10) };
+
             _save = new Button
             {
                 Text = "Save Purchase",
@@ -148,332 +317,106 @@ namespace CastRightCatchInvManagement
             Theme.StyleOutlineButton(clear);
             clear.Click += (_, _) => ResetForm(keepVendor: false);
 
-            actions.Controls.Add(_save);
-            actions.Controls.Add(_another);
-            actions.Controls.Add(clear);
-            actions.Resize += (_, _) =>
+            _totalVolume = TotalLabel(card, "TOTAL VOLUME", 20, 16);
+            _totalCost = TotalLabel(card, "TOTAL COST", 160, 16);
+            _totalCost.Font = Theme.SectionTitle;
+            _totalCost.ForeColor = Theme.Navy;
+
+            card.Controls.Add(_save);
+            card.Controls.Add(_another);
+            card.Controls.Add(clear);
+            card.Resize += (_, _) =>
             {
-                _save.Location = new Point(Math.Max(280, actions.Width - 168), 8);
-                _another.Location = new Point(Math.Max(100, actions.Width - 308), 8);
-                clear.Location = new Point(Math.Max(8, actions.Width - 408), 8);
+                _save.Location = new Point(Math.Max(360, card.Width - 174), 22);
+                _another.Location = new Point(Math.Max(220, card.Width - 314), 22);
+                clear.Location = new Point(Math.Max(120, card.Width - 414), 22);
             };
-
-            var scroll = new Panel
-            {
-                Dock = DockStyle.Fill,
-                AutoScroll = true,
-                BackColor = Theme.Cream,
-                Padding = new Padding(0, 0, 8, 8)
-            };
-            Theme.EnableDoubleBuffer(scroll);
-
-            _modeLabel = new Label
-            {
-                Text = "New Purchase",
-                Font = Theme.PageTitle,
-                ForeColor = Theme.Navy,
-                Dock = DockStyle.Top,
-                Height = 40
-            };
-            var intro = new Label
-            {
-                Text = "Search for a vendor or item. Matching rows appear in the table — pick one to fill the form.",
-                Font = Theme.Body,
-                ForeColor = Theme.Muted,
-                Dock = DockStyle.Top,
-                Height = 28
-            };
-
-            var order = BuildOrderCard();
-            var product = BuildProductCard();
-            var cost = BuildCostCard();
-            var dates = BuildDatesCard();
-            _lookup = BuildLookupCard();
-
-            scroll.Controls.Add(dates);
-            scroll.Controls.Add(Spacer());
-            scroll.Controls.Add(cost);
-            scroll.Controls.Add(Spacer());
-            scroll.Controls.Add(product);
-            scroll.Controls.Add(Spacer());
-            scroll.Controls.Add(order);
-
-            Controls.Add(scroll);
-            Controls.Add(actions);
-            Controls.Add(_lookup);
-            Controls.Add(intro);
-            Controls.Add(_modeLabel);
-
-            LoadLookups();
-            ResetForm(keepVendor: false);
-        }
-
-        private CardPanel BuildOrderCard()
-        {
-            var card = MakeCard("Order", 168);
-            _po = AddText(card, "PO #", 20, 48, 160);
-            _vendor = AddText(card, "VENDOR CODE", 200, 48, 180);
-            _vendorName = AddText(card, "VENDOR", 400, 48, 260);
-            _location = AddText(card, "LOCATION", 20, 100, 180);
-            _vendorTerms = AddText(card, "VENDOR TERMS", 220, 100, 200);
-            WireApply(_vendor, ApplyVendorFromCode);
-            WireApply(_vendorName, ApplyVendorFromName);
-            WireApply(_vendorTerms, ApplyVendorFromName);
-            return card;
-        }
-
-        private CardPanel BuildProductCard()
-        {
-            var card = MakeCard("Product", 168);
-            _item = AddText(card, "ITEM CODE", 20, 48, 180);
-            _species = AddText(card, "SPECIES", 220, 48, 440);
-            _coo = AddText(card, "COO", 20, 100, 120);
-            _packSize = AddText(card, "PACK SIZE", 160, 100, 120);
-            WireApply(_item, ApplyItemFromCode);
-            WireApply(_species, ApplyItemFromSpecies);
-            WireApply(_coo, ApplyItemFromSpecies);
-            _packSize.TextChanged += (_, _) => RecalcVolume();
-            return card;
-        }
-
-        private CardPanel BuildCostCard()
-        {
-            var card = MakeCard("Quantity && cost", 220);
-            _cs = AddText(card, "CS", 20, 48, 90);
-            _volume = AddText(card, "VOLUME", 130, 48, 120);
-            _volumeReceived = AddText(card, "VOLUME RECEIVED", 270, 48, 140);
-            _price = AddText(card, "PRICE PAID / LB", 430, 48, 130);
-            _overhead = AddText(card, "OVERHEAD / LB", 20, 100, 120);
-            _freight = AddText(card, "FREIGHT / LB", 160, 100, 120);
-            _forwarderLb = AddText(card, "FORWARDER / LB", 300, 100, 130);
-            _other = AddText(card, "OTHER / LB", 450, 100, 110);
-            _totalPerLb = AddText(card, "TOTAL COST / LB", 20, 152, 150);
-            _totalCost = AddText(card, "TOTAL COST", 190, 152, 160);
-            _totalPerLb.ReadOnly = true;
-            _totalCost.ReadOnly = true;
-            _totalPerLb.BackColor = Theme.GridAlt;
-            _totalCost.BackColor = Theme.GridAlt;
-
-            _cs.TextChanged += (_, _) => RecalcVolume();
-            foreach (var box in new[] { _volume, _volumeReceived, _price, _overhead, _freight, _forwarderLb, _other })
-                box.TextChanged += (_, _) => RecalcCost();
 
             return card;
         }
 
-        private CardPanel BuildDatesCard()
-        {
-            var card = MakeCard("Dates && shipping", 168);
-            _agreement = AddDate(card, "AGREEMENT DATE", 20, 48, 150);
-            _expectedShip = AddDate(card, "EXPECTED SHIP DATE", 190, 48, 160);
-            _vendorDue = AddDate(card, "VENDOR DUE DATE", 370, 48, 150);
-            _status = AddCombo(card, "STATUS", 540, 48, 150);
-            _status.DropDownStyle = ComboBoxStyle.DropDownList;
-            SelectStatus(_status, "Pending");
-            _ship = AddDate(card, "SHIP DATE", 20, 100, 150);
-            _arrival = AddDate(card, "ARRIVAL DATE", 190, 100, 160);
-            _forwarder = AddText(card, "FORWARDER", 370, 100, 150);
-            _logistics = AddText(card, "LOGISTICS", 540, 100, 150);
-            return card;
-        }
-
-        /// <summary>Reload vendor and item-code lists used by the search table.</summary>
         private void LoadLookups()
         {
-            _vendorRows = DataFiles.VisibleRecords(DataFiles.Vendors);
-            _itemRows = DataFiles.VisibleRecords(DataFiles.ItemCodes);
-            _lookup?.SetSources(
-                new LookupSource
-                {
-                    Kind = "Vendor",
-                    Rows = _vendorRows,
-                    CodeColumn = "Code",
-                    NameColumns = new[] { "Name", "Company" },
-                    ExtraColumn = "Terms"
-                },
-                new LookupSource
-                {
-                    Kind = "Item",
-                    Rows = _itemRows,
-                    CodeColumn = "Code",
-                    NameColumns = new[] { "Species", "Description" },
-                    ExtraColumn = "COO"
-                });
-        }
-
-        private LookupSearchPanel BuildLookupCard()
-        {
-            var panel = new LookupSearchPanel("Search vendors and items by code, name, species, terms, or any other field");
-            panel.Picked += pick =>
+            _vendorHits.Clear();
+            _forwarderHits.Clear();
+            _logisticsHits.Clear();
+            foreach (var record in DataFiles.VisibleRecords(DataFiles.Vendors))
             {
-                if (pick.Kind.Equals("Vendor", StringComparison.OrdinalIgnoreCase))
-                    PickVendor(pick.Code);
-                else if (pick.Kind.Equals("Item", StringComparison.OrdinalIgnoreCase))
-                    PickItem(pick.Code);
-            };
-            return panel;
-        }
-
-        /// <summary>When a vendor code is entered, fill vendor name and terms from that lookup.</summary>
-        private void ApplyVendorFromCode()
-        {
-            if (_loading)
-                return;
-
-            string code = _vendor.Text.Trim();
-            if (code.Length == 0)
-                return;
-
-            var record = FindByCode(_vendorRows, code);
-            if (record == null)
-                return;
-
-            string name = DataFiles.GetRecord(record, "Name").Trim();
-            if (name.Length == 0)
-                name = DataFiles.GetRecord(record, "Company").Trim();
-            string terms = DataFiles.GetRecord(record, "Terms");
-            _loading = true;
-            if (name.Length > 0)
-                _vendorName.Text = name;
-            if (terms.Length > 0)
-                _vendorTerms.Text = terms;
-            _loading = false;
-        }
-
-        /// <summary>When a vendor name or company is entered, fill the matching vendor code and terms.</summary>
-        private void ApplyVendorFromName()
-        {
-            if (_loading || _vendor.Text.Trim().Length > 0)
-                return;
-
-            string needle = _vendorName.Text.Trim();
-            if (needle.Length == 0)
-                return;
-
-            string? code = null;
-            foreach (var record in _vendorRows)
-            {
-                string name = DataFiles.GetRecord(record, "Name").Trim();
-                string company = DataFiles.GetRecord(record, "Company").Trim();
-                if (!name.Equals(needle, StringComparison.OrdinalIgnoreCase) &&
-                    !company.Equals(needle, StringComparison.OrdinalIgnoreCase))
+                string code = DataFiles.GetRecord(record, "Code").Trim();
+                string name = DataFiles.GetRecordAny(record, "Name", "Company").Trim();
+                if (code.Length == 0 && name.Length == 0)
                     continue;
-                string next = DataFiles.GetRecord(record, "Code").Trim();
-                if (next.Length == 0)
-                    continue;
-                if (code != null && !code.Equals(next, StringComparison.OrdinalIgnoreCase))
-                    return;
-                code = next;
+                var hit = new LookupSuggest.Hit(code, name, DataFiles.GetRecord(record, "Terms"));
+                _vendorHits.Add(hit);
+                if (VendorTypes.MatchesSlot(record, VendorTypes.SlotPurchaseForwarder))
+                    _forwarderHits.Add(hit);
+                if (VendorTypes.MatchesSlot(record, VendorTypes.SlotPurchaseLogistics))
+                    _logisticsHits.Add(hit);
             }
 
-            if (code != null)
-                PickVendor(code);
-        }
-
-        /// <summary>When an item code is entered, fill species and country of origin.</summary>
-        private void ApplyItemFromCode()
-        {
-            if (_loading)
-                return;
-
-            string code = _item.Text.Trim();
-            if (code.Length == 0)
-                return;
-
-            var record = FindByCode(_itemRows, code);
-            if (record == null)
-                return;
-
-            string species = DataFiles.GetRecord(record, "Species").Trim();
-            if (species.Length == 0)
-                species = DataFiles.GetRecord(record, "Description").Trim();
-            string coo = DataFiles.GetRecord(record, "COO");
-            _loading = true;
-            if (species.Length > 0)
-                _species.Text = species;
-            if (coo.Length > 0)
-                _coo.Text = coo;
-            _loading = false;
-        }
-
-        /// <summary>When a species is entered, fill the matching item code and COO if it is unique.</summary>
-        private void ApplyItemFromSpecies()
-        {
-            if (_loading || _item.Text.Trim().Length > 0)
-                return;
-
-            string needle = _species.Text.Trim();
-            if (needle.Length == 0)
-                return;
-
-            string? code = null;
-            foreach (var record in _itemRows)
+            _itemHits.Clear();
+            foreach (var record in DataFiles.VisibleRecords(DataFiles.ItemCodes))
             {
-                string species = DataFiles.GetRecord(record, "Species").Trim();
+                string code = DataFiles.GetRecord(record, "Code").Trim();
                 string description = DataFiles.GetRecord(record, "Description").Trim();
-                if (!species.Equals(needle, StringComparison.OrdinalIgnoreCase) &&
-                    !description.Equals(needle, StringComparison.OrdinalIgnoreCase))
+                string species = DataFiles.GetRecord(record, "Species").Trim();
+                if (description.Length == 0)
+                    description = species;
+                if (code.Length == 0 && description.Length == 0)
                     continue;
-                string next = DataFiles.GetRecord(record, "Code").Trim();
-                if (next.Length == 0)
-                    continue;
-                if (code != null && !code.Equals(next, StringComparison.OrdinalIgnoreCase))
-                    return;
-                code = next;
+                _itemHits.Add(new LookupSuggest.Hit(
+                    code,
+                    description,
+                    DataFiles.GetRecord(record, "COO"),
+                    species));
             }
 
-            if (code != null)
-                PickItem(code);
+            if (_freightCo != null)
+                VendorChoice.Fill(_freightCo);
+
+            foreach (var row in _lines)
+                row.AttachLookups(() => _itemHits);
         }
 
-        /// <summary>Volume = pack size × cases. Copies that into Volume Received if it is still empty.</summary>
-        private void RecalcVolume()
+        private void ApplyVendorHit(LookupSuggest.Hit hit)
         {
-            if (_calculating)
-                return;
+            _vendor.Text = hit.Code;
+            _vendorName.Text = hit.Name;
+            if (hit.Extra.Length > 0)
+                _vendorTerms.Text = hit.Extra;
+        }
 
-            decimal pack = ParseNumber(_packSize.Text);
-            decimal cs = ParseNumber(_cs.Text);
-            if (pack <= 0 || cs <= 0)
+        private static void ApplyNameHit(TextBox box, LookupSuggest.Hit hit)
+        {
+            box.Text = hit.Name.Length > 0 ? hit.Name : hit.Code;
+        }
+
+        private void RecalcLines()
+        {
+            decimal overhead = SharedOverhead();
+            decimal freight = SharedFreight();
+            decimal forwarder = SharedForwarder();
+            decimal other = SharedOther();
+            foreach (var row in _lines)
+                row.SetSharedCosts(overhead, freight, forwarder, other);
+            UpdateTotals();
+        }
+
+        private void UpdateTotals()
+        {
+            decimal volume = 0;
+            decimal cost = 0;
+            foreach (var row in _lines)
             {
-                RecalcCost();
-                return;
+                var line = row.GetLine();
+                volume += PurchaseLineRow.ParseNumber(line.Volume);
+                cost += PurchaseLineRow.ParseNumber(line.TotalCost);
             }
 
-            _calculating = true;
-            string volume = (pack * cs).ToString("0.##", CultureInfo.InvariantCulture);
-            _volume.Text = volume;
-            if (string.IsNullOrWhiteSpace(_volumeReceived.Text))
-                _volumeReceived.Text = volume;
-            _calculating = false;
-            RecalcCost();
+            _totalVolume.Text = volume.ToString("0.###", CultureInfo.InvariantCulture);
+            _totalCost.Text = cost.ToString("0.00", CultureInfo.InvariantCulture);
         }
 
-        /// <summary>Total cost / lb is the sum of the per-lb fields. Total cost is that times pounds received (or ordered).</summary>
-        private void RecalcCost()
-        {
-            if (_calculating)
-                return;
-
-            _calculating = true;
-            decimal perLb = ParseNumber(_price.Text)
-                + ParseNumber(_overhead.Text)
-                + ParseNumber(_freight.Text)
-                + ParseNumber(_forwarderLb.Text)
-                + ParseNumber(_other.Text);
-            decimal lbs = ParseNumber(_volumeReceived.Text);
-            if (lbs <= 0)
-                lbs = ParseNumber(_volume.Text);
-
-            _totalPerLb.Text = perLb.ToString("0.####", CultureInfo.InvariantCulture);
-            _totalCost.Text = (perLb * lbs).ToString("0.00", CultureInfo.InvariantCulture);
-            _calculating = false;
-        }
-
-        /// <summary>
-        /// Write this line to purchases. Edit replaces the original PO + item; add inserts a new row.
-        /// <paramref name="keepVendor"/> true (Add Another) leaves vendor fields filled.
-        /// </summary>
         private void SavePurchase(bool keepVendor = false)
         {
             if (!AppLock.HasFolder())
@@ -489,161 +432,206 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(_vendor.Text) &&
-                string.IsNullOrWhiteSpace(_item.Text))
+            var lines = _lines.Select(row => row.GetLine())
+                .Where(line => line.ItemCode.Length > 0 || line.Description.Length > 0)
+                .ToList();
+            if (lines.Count == 0)
             {
-                ToastAlert.Error(this, "Pick a vendor or item code.");
+                ToastAlert.Error(this, "Add at least one product line.");
                 return;
             }
 
-            RecalcCost();
-            var fields = new[]
+            if (string.IsNullOrWhiteSpace(_vendor.Text) &&
+                string.IsNullOrWhiteSpace(_vendorName.Text))
             {
-                po,
-                _vendor.Text.Trim(),
-                _vendorName.Text.Trim(),
-                _location.Text.Trim(),
-                _item.Text.Trim(),
-                _species.Text.Trim(),
-                _coo.Text.Trim(),
-                _packSize.Text.Trim(),
-                _cs.Text.Trim(),
-                _volume.Text.Trim(),
-                _volumeReceived.Text.Trim(),
-                _price.Text.Trim(),
-                _overhead.Text.Trim(),
-                _freight.Text.Trim(),
-                _forwarderLb.Text.Trim(),
-                _other.Text.Trim(),
-                _totalPerLb.Text.Trim(),
-                _totalCost.Text.Trim(),
-                DateText(_agreement),
-                DateText(_expectedShip),
-                _vendorTerms.Text.Trim(),
-                DateText(_vendorDue),
-                DateText(_ship),
-                DateText(_arrival),
-                _forwarder.Text.Trim(),
-                _logistics.Text.Trim(),
-                _status.Text.Trim()
-            };
+                ToastAlert.Error(this, "Pick a vendor.");
+                return;
+            }
 
+            RecalcLines();
+            var savedItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            MutateResult? last = null;
             try
             {
-                var values = DataFiles.RowFromFields(DataFiles.PurchaseSales, fields);
-                MutateResult result;
+                foreach (var line in lines)
+                {
+                    var values = BuildValues(po, line);
+                    string item = line.ItemCode;
+                    bool exists = _editing &&
+                                  _loadedItems.Contains(item) &&
+                                  po.Equals(_editPo, StringComparison.OrdinalIgnoreCase);
+                    last = exists
+                        ? DataFiles.MutateUpdate(
+                            DataFiles.PurchaseSales,
+                            record =>
+                                DataFiles.NormalizePo(DataFiles.GetRecord(record, "PO #")) ==
+                                DataFiles.NormalizePo(_editPo) &&
+                                DataFiles.GetRecord(record, "Item Code").Trim()
+                                    .Equals(item, StringComparison.OrdinalIgnoreCase),
+                            values)
+                        : DataFiles.MutateInsert(DataFiles.PurchaseSales, values);
+                    if (last is not { Ok: true })
+                    {
+                        ToastAlert.Error(this, last?.Message ?? "Could not save that line.");
+                        return;
+                    }
+
+                    if (item.Length > 0)
+                        savedItems.Add(item);
+                }
+
                 if (_editing)
                 {
-                    result = DataFiles.MutateUpdate(
-                        DataFiles.PurchaseSales,
-                        record =>
-                            DataFiles.NormalizePo(DataFiles.GetRecord(record, "PO #")) ==
-                            DataFiles.NormalizePo(_editPo) &&
-                            DataFiles.GetRecord(record, "Item Code").Trim()
-                                .Equals(_editItem, StringComparison.OrdinalIgnoreCase),
-                        values);
+                    foreach (string oldItem in _loadedItems)
+                    {
+                        if (savedItems.Contains(oldItem) &&
+                            po.Equals(_editPo, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        var doomed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["PO #"] = _editPo,
+                            ["Item Code"] = oldItem
+                        };
+                        last = DataFiles.MutateDelete(DataFiles.PurchaseSales, doomed);
+                        if (last is not { Ok: true })
+                        {
+                            ToastAlert.Error(this, last?.Message ?? "Could not remove that line.");
+                            return;
+                        }
+                    }
                 }
-                else
-                {
-                    result = DataFiles.MutateInsert(DataFiles.PurchaseSales, values);
-                }
-
-                if (!result.Ok)
-                {
-                    ToastAlert.Error(this, result.Message);
-                    return;
-                }
-
-                ToastAlert.Success(this, result.Queued
-                    ? result.Message
-                    : _editing ? "The product was updated." : "The product was added.");
-                if (_editing && !result.Queued)
-                {
-                    _editPo = po;
-                    _editItem = _item.Text.Trim();
-                    return;
-                }
-
-                if (!_editing)
-                    ResetForm(keepVendor);
             }
             catch (Exception ex)
             {
                 ToastAlert.Error(this, ex.Message);
+                return;
             }
+
+            try
+            {
+                PurchaseDocument.SaveFromPo(po);
+            }
+            catch
+            {
+                // keep the saved rows even if the PDF cannot be written
+            }
+
+            ToastAlert.Success(this, last is { Queued: true }
+                ? last.Value.Message
+                : _editing ? "The purchase was updated." : "The purchase was saved.");
+
+            if (keepVendor)
+            {
+                ResetForm(keepVendor: true);
+                return;
+            }
+
+            if (_editing)
+            {
+                _editPo = po;
+                _loadedItems.Clear();
+                foreach (string item in savedItems)
+                    _loadedItems.Add(item);
+                return;
+            }
+
+            ResetForm(keepVendor: false);
         }
 
-        /// <summary>Switch the heading and save button between New Purchase and Edit Product.</summary>
-        private void SetMode(bool editing)
+        private Dictionary<string, string> BuildValues(string po, PurchaseLine line)
         {
-            _editing = editing;
-            _modeLabel.Text = editing ? "Edit Product" : "New Purchase";
-            _save.Text = editing ? "Save Changes" : "Save Purchase";
-            _another.Visible = !editing;
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PO #"] = po,
+                ["Vendor Code"] = _vendor.Text.Trim(),
+                ["Vendor"] = _vendorName.Text.Trim(),
+                ["Location"] = _location.Text.Trim(),
+                ["Item Code"] = line.ItemCode,
+                ["Description"] = line.Description,
+                ["COO"] = line.Coo,
+                ["Pack Size"] = line.PackSize,
+                ["CS"] = line.Cases,
+                ["Volume"] = line.Volume,
+                ["Price Paid / LB"] = line.Price,
+                ["Overhead / LB"] = _overhead.Text.Trim(),
+                ["Freight / LB"] = _freight.Text.Trim(),
+                [DataFiles.FreightCompanyColumn] = VendorChoice.TextOf(_freightCo),
+                ["Forwarder / LB"] = _forwarderLb.Text.Trim(),
+                ["Other / LB"] = _other.Text.Trim(),
+                ["Total Cost / LB"] = line.TotalPerLb,
+                ["Total Cost"] = line.TotalCost,
+                ["Agreement Date"] = DateText(_agreement),
+                ["Expected Ship Date"] = DateText(_expectedShip),
+                ["Vendor Terms"] = _vendorTerms.Text.Trim(),
+                ["Vendor Due Date"] = DateText(_vendorDue),
+                ["Ship Date"] = DateText(_ship),
+                ["Arrival Date"] = DateText(_arrival),
+                ["Forwarder"] = _forwarder.Text.Trim(),
+                ["Logistics"] = _logistics.Text.Trim(),
+                ["Status"] = _status.Text.Trim()
+            };
         }
 
-        /// <summary>Copy an existing purchase row into the form and switch to edit mode.</summary>
-        private void LoadRecord(Dictionary<string, string> record)
+        private void LoadOrder(Dictionary<string, string> record)
         {
-            _loading = true;
-            _editPo = DataFiles.GetRecord(record, "PO #");
-            _editItem = DataFiles.GetRecord(record, "Item Code");
-            _po.Text = _editPo;
-            _vendor.Text = DataFiles.GetRecord(record, "Vendor Code");
-            _vendorName.Text = DataFiles.GetRecord(record, "Vendor");
-            _location.Text = DataFiles.GetRecord(record, "Location");
-            _vendorTerms.Text = DataFiles.GetRecord(record, "Vendor Terms");
-            _item.Text = _editItem;
-            _species.Text = DataFiles.GetRecord(record, "Description");
-            _coo.Text = DataFiles.GetRecord(record, "COO");
-            _packSize.Text = DataFiles.GetRecord(record, "Pack Size");
-            _cs.Text = DataFiles.GetRecord(record, "CS");
-            _volume.Text = DataFiles.GetRecord(record, "Volume");
-            _volumeReceived.Text = DataFiles.GetRecord(record, "Volume Received");
-            _price.Text = DataFiles.GetRecord(record, "Price Paid / LB");
-            _overhead.Text = DataFiles.GetRecord(record, "Overhead / LB");
-            _freight.Text = DataFiles.GetRecord(record, "Freight / LB");
-            _forwarderLb.Text = DataFiles.GetRecord(record, "Forwarder / LB");
-            _other.Text = DataFiles.GetRecord(record, "Other / LB");
-            _totalPerLb.Text = DataFiles.GetRecord(record, "Total Cost / LB");
-            _totalCost.Text = DataFiles.GetRecord(record, "Total Cost");
-            SetDate(_agreement, DataFiles.GetRecord(record, "Agreement Date"));
-            SetDate(_expectedShip, DataFiles.GetRecord(record, "Expected Ship Date"));
-            SetDate(_vendorDue, DataFiles.GetRecord(record, "Vendor Due Date"));
-            SetDate(_ship, DataFiles.GetRecord(record, "Ship Date"));
-            SetDate(_arrival, DataFiles.GetRecord(record, "Arrival Date"));
-            _forwarder.Text = DataFiles.GetRecord(record, "Forwarder");
-            _logistics.Text = DataFiles.GetRecord(record, "Logistics");
-            SelectStatus(_status, DataFiles.GetRecord(record, "Status"));
-            _loading = false;
+            string po = DataFiles.GetRecord(record, "PO #");
+            var rows = DataFiles.FindPurchasesByPo(po);
+            if (rows.Count == 0)
+                rows.Add(record);
+
+            ClearLines();
+            _editPo = po;
+            _loadedItems.Clear();
+            _po.Text = po;
+            _vendor.Text = DataFiles.GetRecord(rows[0], "Vendor Code");
+            _vendorName.Text = DataFiles.GetRecord(rows[0], "Vendor");
+            _location.Text = DataFiles.GetRecord(rows[0], "Location");
+            _vendorTerms.Text = DataFiles.GetRecord(rows[0], "Vendor Terms");
+            SetDate(_agreement, DataFiles.GetRecord(rows[0], "Agreement Date"));
+            SetDate(_expectedShip, DataFiles.GetRecord(rows[0], "Expected Ship Date"));
+            SetDate(_vendorDue, DataFiles.GetRecord(rows[0], "Vendor Due Date"));
+            SetDate(_ship, DataFiles.GetRecord(rows[0], "Ship Date"));
+            SetDate(_arrival, DataFiles.GetRecord(rows[0], "Arrival Date"));
+            _forwarder.Text = DataFiles.GetRecord(rows[0], "Forwarder");
+            _logistics.Text = DataFiles.GetRecord(rows[0], "Logistics");
+            VendorChoice.Select(
+                _freightCo,
+                DataFiles.GetRecordAny(rows[0], DataFiles.FreightCompanyColumn, "Forwarder", "Logistics"));
+            SelectStatus(_status, DataFiles.GetRecord(rows[0], "Status"));
+            _overhead.Text = DataFiles.GetRecord(rows[0], "Overhead / LB");
+            _freight.Text = DataFiles.GetRecord(rows[0], "Freight / LB");
+            _forwarderLb.Text = DataFiles.GetRecord(rows[0], "Forwarder / LB");
+            _other.Text = DataFiles.GetRecord(rows[0], "Other / LB");
+
+            foreach (var row in rows)
+            {
+                AddLine();
+                var line = _lines[^1];
+                line.FillFromRecord(row);
+                string item = DataFiles.GetRecord(row, "Item Code").Trim();
+                if (item.Length > 0)
+                    _loadedItems.Add(item);
+            }
+
+            RecalcLines();
             SetMode(true);
-            RecalcCost();
         }
 
-        /// <summary>Clear the form for another line. Optionally keep the vendor. Assigns the next PO #.</summary>
         private void ResetForm(bool keepVendor)
         {
             string vendorCode = keepVendor ? _vendor.Text.Trim() : "";
-            string vendorName = keepVendor ? _vendorName.Text : "";
+            string vendorName = keepVendor ? _vendorName.Text.Trim() : "";
             string terms = keepVendor ? _vendorTerms.Text : "";
             string location = keepVendor ? _location.Text : "";
+            string freightCo = keepVendor ? VendorChoice.TextOf(_freightCo) : "";
 
-            _loading = true;
+            ClearLines();
+            _loadedItems.Clear();
             _po.Text = DataFiles.NextPurchasePo();
-            _item.Text = "";
-            _species.Text = "";
-            _coo.Text = "";
-            _packSize.Text = "";
-            _cs.Text = "";
-            _volume.Text = "";
-            _volumeReceived.Text = "";
-            _price.Text = "";
             _overhead.Text = "";
             _freight.Text = "";
             _forwarderLb.Text = "";
             _other.Text = "";
-            _totalPerLb.Text = "";
-            _totalCost.Text = "";
             _agreement.Value = DateTime.Today;
             _agreement.Checked = true;
             Uncheck(_expectedShip);
@@ -653,6 +641,7 @@ namespace CastRightCatchInvManagement
             _forwarder.Text = "";
             _logistics.Text = "";
             SelectStatus(_status, "Pending");
+            VendorChoice.Select(_freightCo, freightCo);
 
             if (keepVendor)
             {
@@ -669,47 +658,76 @@ namespace CastRightCatchInvManagement
                 _location.Text = "";
             }
 
-            _loading = false;
             SetMode(false);
+            AddLine();
             _po.Focus();
+            UpdateTotals();
         }
 
-        private static CardPanel MakeCard(string title, int height)
+        private void ClearLines()
         {
-            var card = new CardPanel
+            foreach (var row in _lines.ToList())
             {
-                Dock = DockStyle.Top,
-                Height = height,
-                Padding = new Padding(12, 10, 12, 10)
-            };
-            var heading = new Label
-            {
-                Text = title,
-                Font = Theme.SectionTitle,
-                ForeColor = Theme.Navy,
-                AutoSize = true,
-                Location = new Point(20, 10)
-            };
-            card.Controls.Add(heading);
-            return card;
+                _lineHost.Controls.Remove(row);
+                row.Dispose();
+            }
+
+            _lines.Clear();
         }
 
-        private static Panel Spacer() => new()
+        private void SetMode(bool editing)
         {
-            Dock = DockStyle.Top,
-            Height = 12,
-            BackColor = Theme.Cream
-        };
+            _editing = editing;
+            _modeLabel.Text = editing ? "Edit Purchase" : "New Purchase";
+            _save.Text = editing ? "Save Changes" : "Save Purchase";
+            _another.Visible = !editing;
+        }
 
-        private static TextBox AddText(Control parent, string caption, int x, int y, int width)
+        private decimal SharedOverhead() => PurchaseLineRow.ParseNumber(_overhead.Text);
+        private decimal SharedFreight() => PurchaseLineRow.ParseNumber(_freight.Text);
+        private decimal SharedForwarder() => PurchaseLineRow.ParseNumber(_forwarderLb.Text);
+        private decimal SharedOther() => PurchaseLineRow.ParseNumber(_other.Text);
+
+        private static void DrawHeader(Graphics g, string text, Rectangle slot)
+        {
+            TextRenderer.DrawText(
+                g,
+                text,
+                Theme.Caption,
+                new Rectangle(slot.X, 0, slot.Width, 28),
+                Theme.HeaderText,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        }
+
+        private static Label TotalLabel(Control parent, string caption, int x, int y)
         {
             var label = new Label { Text = caption };
             Theme.StyleFieldLabel(label);
             label.Location = new Point(x, y);
-            var box = new TextBox();
+            var value = new Label
+            {
+                Location = new Point(x, y + 16),
+                Size = new Size(130, 26),
+                Font = Theme.Body,
+                ForeColor = Theme.Ink,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            parent.Controls.Add(label);
+            parent.Controls.Add(value);
+            return value;
+        }
+
+        private static TextBox AddField(Control parent, string caption, int x, int y, int width)
+        {
+            var label = new Label { Text = caption };
+            Theme.StyleFieldLabel(label);
+            label.Location = new Point(x, y);
+            var box = new TextBox
+            {
+                Location = new Point(x, y + 16),
+                Size = new Size(width, 26)
+            };
             Theme.StyleField(box);
-            box.Location = new Point(x, y + 16);
-            box.Size = new Size(width, 26);
             parent.Controls.Add(label);
             parent.Controls.Add(box);
             return box;
@@ -756,9 +774,10 @@ namespace CastRightCatchInvManagement
 
         private static void SetDate(DateTimePicker picker, string text)
         {
-            if (DateTime.TryParse(text, out var date))
+            if (NumericDateBox.TryParseCell(text, out var date) ||
+                DateTime.TryParse(text, out date))
             {
-                picker.Value = date;
+                picker.Value = date.Date;
                 picker.Checked = true;
             }
             else
@@ -767,10 +786,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
-        private static void Uncheck(DateTimePicker picker)
-        {
-            picker.Checked = false;
-        }
+        private static void Uncheck(DateTimePicker picker) => picker.Checked = false;
 
         private static void SelectStatus(ComboBox box, string? value)
         {
@@ -787,54 +803,5 @@ namespace CastRightCatchInvManagement
                 box.SelectedItem = "Pending";
         }
 
-        private void PickVendor(string code)
-        {
-            _vendor.Text = code;
-            ApplyVendorFromCode();
-        }
-
-        private void PickItem(string code)
-        {
-            _item.Text = code;
-            ApplyItemFromCode();
-        }
-
-        /// <summary>Enter or leaving a code/name box fills the linked fields when there is a unique match.</summary>
-        private void WireApply(TextBox box, Action apply)
-        {
-            box.Leave += (_, _) => apply();
-            box.KeyDown += (_, e) =>
-            {
-                if (e.KeyCode != Keys.Enter)
-                    return;
-                apply();
-                e.SuppressKeyPress = true;
-            };
-        }
-
-        private static Dictionary<string, string>? FindByCode(
-            List<Dictionary<string, string>> rows,
-            string code)
-        {
-            foreach (var record in rows)
-            {
-                if (DataFiles.GetRecord(record, "Code").Trim()
-                    .Equals(code, StringComparison.OrdinalIgnoreCase))
-                    return record;
-            }
-
-            return null;
-        }
-
-        private static decimal ParseNumber(string? text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-                return 0;
-            if (decimal.TryParse(text, NumberStyles.Any, CultureInfo.CurrentCulture, out var value))
-                return value;
-            if (decimal.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out value))
-                return value;
-            return 0;
-        }
     }
 }

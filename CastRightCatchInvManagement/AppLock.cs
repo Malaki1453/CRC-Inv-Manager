@@ -101,8 +101,6 @@ namespace CastRightCatchInvManagement
             AppState.InventoryFolder = folder;
             DataLink.Disconnect();
             SaveSettings();
-            DataFiles.EnsureStoredInvoicesFolder();
-            DataFiles.EnsureStoredSalesOrdersFolder();
         }
 
         public static void SaveServer(string host, int port, string fingerprint)

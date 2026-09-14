@@ -66,6 +66,7 @@ namespace CastRightCatchInvManagement
             private const int WmLButtonDown = 0x0201;
             private const int WmRButtonDown = 0x0204;
             private const int WmMButtonDown = 0x0207;
+            private const int WmXButtonDown = 0x020B;
             private const int WmMouseWheel = 0x020A;
             private const int WmMouseMove = 0x0200;
 
@@ -78,6 +79,7 @@ namespace CastRightCatchInvManagement
                     case WmLButtonDown:
                     case WmRButtonDown:
                     case WmMButtonDown:
+                    case WmXButtonDown:
                     case WmMouseWheel:
                     case WmMouseMove:
                         NoteActivity();

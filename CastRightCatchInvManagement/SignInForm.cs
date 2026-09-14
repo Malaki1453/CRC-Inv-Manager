@@ -230,8 +230,11 @@ namespace CastRightCatchInvManagement
             Theme.StyleOutlineButton(forgot);
             forgot.Click += (_, _) =>
             {
-                using var form = new ForgotPasswordForm();
-                form.ShowDialog(this);
+                MessageBox.Show(
+                    "Call IT support to reset your password. They will unlock your account or give you a new password.",
+                    "Forgot password",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
             };
             _signInPanel.Controls.Add(signTitle);
             _signInPanel.Controls.Add(_staySignedIn);
@@ -467,7 +470,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
-        /// <summary>Create the first IT user (always IT), require security questions, then enter the app.</summary>
+        /// <summary>Create the first IT user (always IT), then enter the app.</summary>
         private void CreateAdmin()
         {
             if (_setupPassword.Text != _setupConfirm.Text)
@@ -491,13 +494,11 @@ namespace CastRightCatchInvManagement
             }
 
             Accounts.Apply(account);
-            if (!EnsureSecurityQuestions(account.Username))
-                return;
             FinishLogin(account);
         }
 
         /// <summary>
-        /// Check username/password. May force a password change and security questions on first login.
+        /// Check username/password. May force a password change on first login.
         /// </summary>
         private void SignIn()
         {
@@ -523,9 +524,6 @@ namespace CastRightCatchInvManagement
                 account.MustChangePassword = false;
             }
 
-            if (!EnsureSecurityQuestions(account.Username))
-                return;
-
             FinishLogin(account);
         }
 
@@ -546,20 +544,6 @@ namespace CastRightCatchInvManagement
                 AppLock.LoadSharedSettings();
             DialogResult = DialogResult.OK;
             Close();
-        }
-
-        private bool EnsureSecurityQuestions(string username)
-        {
-            if (Accounts.HasSecurityQuestions(username))
-                return true;
-
-            using var form = new SecurityQuestionsForm(username);
-            if (form.ShowDialog(this) == DialogResult.OK)
-                return true;
-
-            AppState.SignOut();
-            ShowError("Set security questions before using the app.");
-            return false;
         }
 
         private void ShowError(string message)

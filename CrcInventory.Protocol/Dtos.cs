@@ -36,29 +36,6 @@ public sealed class AuthResponse
     public string? SessionToken { get; set; }
 }
 
-public sealed class RecoverQuestionsRequest
-{
-    public string Username { get; set; } = "";
-}
-
-public sealed class RecoverQuestionsResponse
-{
-    public bool Found { get; set; }
-    public string Q1 { get; set; } = "";
-    public string Q2 { get; set; } = "";
-    public string Q3 { get; set; } = "";
-    public string Error { get; set; } = "";
-}
-
-public sealed class RecoverRequest
-{
-    public string Username { get; set; } = "";
-    public string A1 { get; set; } = "";
-    public string A2 { get; set; } = "";
-    public string A3 { get; set; } = "";
-    public string NewPassword { get; set; } = "";
-}
-
 public sealed class ChangePasswordRequest
 {
     public string Username { get; set; } = "";
@@ -121,12 +98,6 @@ public sealed class AccountWriteRequest
     public bool IsAdmin { get; set; }
     public bool IsIt { get; set; }
     public string? Json { get; set; }
-    public string? Q1 { get; set; }
-    public string? A1 { get; set; }
-    public string? Q2 { get; set; }
-    public string? A2 { get; set; }
-    public string? Q3 { get; set; }
-    public string? A3 { get; set; }
 }
 
 public sealed class BankRowDto

@@ -45,17 +45,17 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            string id = Path.GetFullPath(path);
+            string id = DocumentId(path, kind, key);
             if (OpenDocs.TryGetValue(id, out var existing) &&
                 existing != null &&
                 !existing.IsDisposed)
             {
                 existing._kind ??= kind;
                 existing._key ??= key;
+                existing._path = Path.GetFullPath(path);
                 existing.ApplyChrome(title);
-                existing.BringToFront();
-                existing.WindowState = FormWindowState.Normal;
-                existing.Activate();
+                existing.NavigatePdf();
+                existing.RaiseAboveOthers();
                 return;
             }
 
@@ -67,15 +67,22 @@ namespace CastRightCatchInvManagement
                     OpenDocs.Remove(form._id);
             };
             form.Show();
-            form.Activate();
+            form.RaiseAboveOthers();
+        }
+
+        private static string DocumentId(string path, string? kind, string? key)
+        {
+            if (!string.IsNullOrWhiteSpace(kind) && !string.IsNullOrWhiteSpace(key))
+                return kind.Trim() + ":" + key.Trim();
+            return Path.GetFullPath(path);
         }
 
         private PdfViewForm(string path, string? title, string? kind, string? key)
         {
             _path = Path.GetFullPath(path);
-            _id = _path;
             _kind = kind;
             _key = string.IsNullOrWhiteSpace(key) ? null : key.Trim();
+            _id = DocumentId(_path, _kind, _key);
 
             Text = "PDF";
             StartPosition = FormStartPosition.CenterScreen;
@@ -205,7 +212,32 @@ namespace CastRightCatchInvManagement
             Controls.Add(header);
 
             ApplyChrome(title);
-            Shown += async (_, _) => await InitViewer();
+            Shown += async (_, _) =>
+            {
+                RaiseAboveOthers();
+                await InitViewer();
+                if (!IsDisposed)
+                    RaiseAboveOthers();
+            };
+        }
+
+        /// <summary>
+        /// Come to the front of every window for this first appearance, then drop TopMost
+        /// so other CRC windows can be used normally.
+        /// </summary>
+        private void RaiseAboveOthers()
+        {
+            if (IsDisposed)
+                return;
+
+            if (WindowState == FormWindowState.Minimized)
+                WindowState = FormWindowState.Normal;
+
+            TopMost = true;
+            Show();
+            BringToFront();
+            Activate();
+            TopMost = false;
         }
 
         private static Button ToolButton(string text, int width)
@@ -247,9 +279,9 @@ namespace CastRightCatchInvManagement
             {
                 _edit.Text = "Edit invoice";
                 _edit.Visible = true;
-                _save.Text = "Save PDF";
+                _save.Text = "Save to database";
                 _subtitle.Text = stored
-                    ? "Mark up in this window, then Save PDF to Stored Invoices. Edit invoice opens Create Invoice."
+                    ? "Mark up in this window, then Save to database. Edit invoice opens Create Invoice."
                     : "Mark up, print, or replace this PDF.";
             }
             else if (_kind == DataFiles.PdfKindSalesOrder)
@@ -259,6 +291,27 @@ namespace CastRightCatchInvManagement
                 _save.Text = "Save to database";
                 _subtitle.Text = stored
                     ? "Mark up in this window, then Save to database. Edit sales order opens Create Sales Order."
+                    : "Mark up, print, or replace this PDF.";
+            }
+            else if (_kind == DataFiles.PdfKindPurchase ||
+                     _kind == DataFiles.PdfKindPurchaseInvoice)
+            {
+                _edit.Text = "Edit purchase";
+                _edit.Visible = true;
+                _save.Text = "Save to database";
+                _subtitle.Text = stored
+                    ? _kind == DataFiles.PdfKindPurchaseInvoice
+                        ? "Vendor invoice stored with this PO. Mark up, then Save to database. Edit purchase opens New Purchase."
+                        : "Mark up in this window, then Save to database. Edit purchase opens New Purchase."
+                    : "Mark up, print, or replace this PDF.";
+            }
+            else if (_kind == DataFiles.PdfKindSale)
+            {
+                _edit.Text = "Edit sale";
+                _edit.Visible = true;
+                _save.Text = "Save to database";
+                _subtitle.Text = stored
+                    ? "Mark up in this window, then Save to database. Edit sale opens New Sale."
                     : "Mark up, print, or replace this PDF.";
             }
             else
@@ -322,10 +375,9 @@ namespace CastRightCatchInvManagement
             try
             {
                 byte[] bytes = File.ReadAllBytes(_path);
-                _path = DataFiles.SaveStoredPdf(_kind, _key, Path.GetFileName(_path), bytes);
-                ToastAlert.Success(this, _kind == DataFiles.PdfKindInvoice
-                    ? "Saved to Stored Invoices."
-                    : "Saved to the database.");
+                _path = Path.GetFullPath(DataFiles.SaveStoredPdf(_kind, _key, Path.GetFileName(_path), bytes));
+                NavigatePdf();
+                ToastAlert.Success(this, "Saved to the database.");
             }
             catch (Exception ex)
             {
@@ -392,10 +444,6 @@ namespace CastRightCatchInvManagement
                 if (!string.IsNullOrWhiteSpace(_kind) && !string.IsNullOrWhiteSpace(_key))
                 {
                     _path = Path.GetFullPath(DataFiles.SaveStoredPdf(_kind, _key, name, bytes));
-                    if (OpenDocs.TryGetValue(_id, out var mapped) && mapped == this)
-                        OpenDocs.Remove(_id);
-                    _id = _path;
-                    OpenDocs[_id] = this;
                 }
                 else
                 {
@@ -418,6 +466,17 @@ namespace CastRightCatchInvManagement
                 Navigator.GoTo(AppPage.InvoicePdf);
             else if (_kind == DataFiles.PdfKindSalesOrder)
                 Navigator.GoTo(AppPage.SalesOrder);
+            else if (_kind == DataFiles.PdfKindPurchase ||
+                     _kind == DataFiles.PdfKindPurchaseInvoice)
+                Navigator.GoTo(AppPage.AddPurchase);
+            else if (_kind == DataFiles.PdfKindSale)
+            {
+                var rows = DataFiles.FindSalesByPo(_key);
+                if (rows.Count > 0)
+                    SalesOrder.OpenEdit(rows[0]);
+                else
+                    Navigator.GoTo(AppPage.SalesOrder);
+            }
         }
 
         private void OpenInDefaultApp()

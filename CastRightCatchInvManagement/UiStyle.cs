@@ -49,6 +49,33 @@ namespace CastRightCatchInvManagement
             };
             toolbar.Controls.Add(jump);
 
+            var setDefault = new Button { Text = "Set default", Dock = DockStyle.Fill, TabStop = false };
+            Theme.StyleOutlineButton(setDefault);
+            setDefault.Click += (_, _) =>
+            {
+                if (MessageBox.Show(
+                        "Save the current columns as your default for this table?",
+                        "Set default",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question) != DialogResult.Yes)
+                    return;
+
+                if (GridLayout.SaveDefault(grid))
+                    ToastAlert.Success(form, "Default columns saved for this table.");
+                else
+                    ToastAlert.Error(form, AppState.SignedIn
+                        ? "Could not save default columns for this table."
+                        : "Sign in to save default columns.");
+            };
+            var setHost = new Panel
+            {
+                Dock = DockStyle.Left,
+                Width = 118,
+                Padding = new Padding(10, 0, 0, 0),
+                BackColor = Theme.Paper
+            };
+            setHost.Controls.Add(setDefault);
+
             var reset = new Button { Text = "Default columns", Dock = DockStyle.Fill, TabStop = false };
             Theme.StyleOutlineButton(reset);
             reset.Click += (_, _) => DataFiles.ResetGridColumns(grid);
@@ -60,6 +87,7 @@ namespace CastRightCatchInvManagement
                 BackColor = Theme.Paper
             };
             resetHost.Controls.Add(reset);
+            toolbar.Controls.Add(setHost);
             toolbar.Controls.Add(resetHost);
 
             grid.ColumnHeaderMouseClick += (_, e) =>
@@ -296,31 +324,23 @@ namespace CastRightCatchInvManagement
             menu.Show(grid, grid.PointToClient(Control.MousePosition));
         }
 
-        public static string PageTitle(AppPage page) => page switch
+        public static string PageTitle(AppPage page)
         {
-            AppPage.Dashboard => "Home",
-            AppPage.PurchaseSales => "Purchases",
-            AppPage.AddPurchase => "New Purchase",
-            AppPage.Sales => "Sales",
-            AppPage.AddSale => "Sales Form",
-            AppPage.SalesOrder => "Create Sales Order",
-            AppPage.Customers => "Customers",
-            AppPage.Vendors => "Vendors",
-            AppPage.ItemCodes => "Inventory",
-            AppPage.Invoicing => "Invoices",
-            AppPage.InvoicePdf => "Create Invoice",
-            AppPage.Debits => "Debits",
-            AppPage.Credits => "Credits",
-            AppPage.Banking => "Banking",
-            AppPage.Reports => "Reports",
-            AppPage.PendingChanges => "Review",
-            AppPage.Settings => "Settings",
-            AppPage.Admin => "Admin",
-            AppPage.Help => "Controls",
-            AppPage.ItUsers => "Users",
-            AppPage.ItAccess => "IT and admins",
-            _ => page.ToString()
-        };
+            string custom = MenuLayout.LabelFor(page);
+            if (custom.Length > 0)
+                return custom;
+
+            return page switch
+            {
+                AppPage.Dashboard => "Home",
+                AppPage.Settings => "Settings",
+                AppPage.Admin => "Admin",
+                AppPage.Help => "Controls",
+                AppPage.ItUsers => "Users",
+                AppPage.ItAccess => "IT and admins",
+                _ => page.ToString()
+            };
+        }
 
         public static string PageSubtitle(AppPage page)
         {

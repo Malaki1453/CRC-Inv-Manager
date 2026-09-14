@@ -3,7 +3,7 @@ namespace CastRightCatchInvManagement
     /// <summary>
     /// Purchases grid. Each row is a purchase line (PO, vendor, item, costs, dates).
     /// Toolbar New Purchase opens a blank purchase form. Double-click a row for View Details.
-    /// Right-click Edit Product or Create Invoice (vendor invoice we received).
+    /// Right-click Edit Product, Show PDF, or Create Invoice (vendor invoice we received).
     /// </summary>
     public partial class PurchaseSales : Form, INavigationPage
     {
@@ -23,6 +23,7 @@ namespace CastRightCatchInvManagement
                 AddPurchase.OpenEdit,
                 "Purchase",
                 "Edit Product",
+                ("Show PDF", ShowPurchasePdf),
                 ("Create Invoice", CreateInvoiceFromPurchase));
             DataFiles.DataChanged += LoadTable;
             LoadTable();
@@ -33,6 +34,22 @@ namespace CastRightCatchInvManagement
 
         /// <summary>Fill the grid from purchases (live only, or archive + live when Old is on).</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.PurchaseSales);
+
+        private void ShowPurchasePdf(Dictionary<string, string> record)
+        {
+            string po = DataFiles.GetRecord(record, "PO #").Trim();
+            DataFiles.ShowPurchasePdf(po, () =>
+            {
+                string? path = PurchaseDocument.SaveFromPo(po);
+                if (path == null)
+                {
+                    ToastAlert.Error(this, "Could not create a PDF for this purchase.");
+                    return;
+                }
+
+                DataFiles.OpenPdf(path, DataFiles.PdfKindPurchase, po);
+            });
+        }
 
         /// <summary>
         /// Right-click Create Invoice: vendor is the issuer, we are the receiving company.

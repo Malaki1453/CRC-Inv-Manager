@@ -383,9 +383,7 @@ namespace CastRightCatchInvManagement
                 string po = DataFiles.GetRecord(purchase, "PO #").Trim();
                 if (po.Length > 0)
                     row.Pos.Add(po);
-                row.Volume += DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Volume Received"));
-                if (row.Volume == 0)
-                    row.Volume += DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Volume"));
+                row.Volume += DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Volume"));
                 row.Cost += DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Total Cost"));
             }
 
@@ -637,9 +635,7 @@ namespace CastRightCatchInvManagement
             if (perLb == 0)
             {
                 decimal total = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Total Cost"));
-                decimal lbs = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Volume Received"));
-                if (lbs <= 0)
-                    lbs = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Volume"));
+                decimal lbs = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Volume"));
                 if (lbs > 0)
                     perLb = total / lbs;
             }

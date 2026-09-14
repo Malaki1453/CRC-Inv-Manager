@@ -97,7 +97,7 @@ namespace CastRightCatchInvManagement
                 return;
 
             int x = Math.Max(12, _host.ClientSize.Width - Width - 20);
-            int y = Math.Max(12, _host.ClientSize.Height - Height - 20);
+            int y = Math.Max(12, _host.ClientSize.Height - Height - 148);
             Location = new Point(x, y);
         }
     }

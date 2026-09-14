@@ -157,8 +157,6 @@ internal sealed partial class InventoryStore
         fileName = (fileName ?? "").Trim();
         if (kind.Length == 0 || key.Length == 0 || fileName.Length == 0 || content.Length == 0)
             return;
-        if (kind.Equals("invoice", StringComparison.OrdinalIgnoreCase))
-            return;
 
         lock (_gate)
         {
@@ -178,6 +176,24 @@ internal sealed partial class InventoryStore
             cmd.AddParam("$name", fileName);
             cmd.AddParam("$content", content);
             cmd.AddParam("$at", NowStamp());
+            cmd.Exec(_engine);
+        }
+    }
+
+    public void DeletePdf(string kind, string key)
+    {
+        kind = (kind ?? "").Trim();
+        key = (key ?? "").Trim();
+        if (kind.Length == 0 || key.Length == 0)
+            return;
+
+        lock (_gate)
+        {
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "DELETE FROM stored_pdfs WHERE kind = $kind AND doc_key = $key;";
+            cmd.AddParam("$kind", kind);
+            cmd.AddParam("$key", key);
             cmd.Exec(_engine);
         }
     }

@@ -445,7 +445,7 @@ namespace CastRightCatchInvManagement
         private TextBox _accountConfirm = null!;
         private Button _accountSave = null!;
 
-        /// <summary>Signed-in user’s username, name, email, password, security questions, and sign out.</summary>
+        /// <summary>Signed-in user’s username, name, email, password, and sign out.</summary>
         private void LayoutUserCard(CardPanel card)
         {
             var heading = new Label
@@ -522,25 +522,9 @@ namespace CastRightCatchInvManagement
             _signOut.Click += (_, _) => Accounts.LogOutAndRestart();
             card.Controls.Add(_signOut);
 
-            var questions = new Button
-            {
-                Text = "Security questions",
-                Size = new Size(160, 34),
-                Location = new Point(296, 236)
-            };
-            Theme.StyleNavyButton(questions);
-            questions.Click += (_, _) =>
-            {
-                if (!AppState.SignedIn)
-                    return;
-                using var form = new SecurityQuestionsForm(AppState.CurrentUsername);
-                form.ShowDialog(this);
-            };
-            card.Controls.Add(questions);
-
             var hint = new Label
             {
-                Text = "Username, name, email, and password are yours to change. Email is also the sales-rep address on invoices.",
+                Text = "Username, name, email, and password are yours to change. Email is also the sales-rep address on invoices. Call IT support to reset a forgotten password.",
                 Font = Theme.Small,
                 ForeColor = Theme.Muted,
                 Location = new Point(24, 280),

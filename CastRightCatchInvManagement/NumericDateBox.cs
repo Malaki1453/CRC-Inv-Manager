@@ -2,10 +2,18 @@ using System.Globalization;
 
 namespace CastRightCatchInvManagement
 {
-    /// <summary>Date field that only accepts digits and keeps MM/DD/YYYY when the date is real.</summary>
+    /// <summary>
+    /// Date field for MM/DD/YYYY. Accepts MM/DD/YY, M/D/YY (6/1/26), and . in place of /.
+    /// A two-digit year becomes four digits when the box is left.
+    /// </summary>
     internal sealed class NumericDateBox : TextBox
     {
-        private string _digits = "";
+        private string _month = "";
+        private string _day = "";
+        private string _year = "";
+        private bool _sepMonth;
+        private bool _sepDay;
+        private int _part;
         private bool _formatting;
         private DateTime? _value;
 
@@ -23,7 +31,7 @@ namespace CastRightCatchInvManagement
 
         public void ClearDate()
         {
-            _digits = "";
+            ResetParts();
             _value = null;
             Render();
             DateChanged?.Invoke(this, EventArgs.Empty);
@@ -33,16 +41,21 @@ namespace CastRightCatchInvManagement
         {
             if (char.IsControl(e.KeyChar))
                 return;
-            if (!char.IsDigit(e.KeyChar))
+
+            e.Handled = true;
+            if (SelectionLength == Text.Length && Text.Length > 0)
+                ResetParts();
+
+            if (e.KeyChar is '.' or '/')
             {
-                e.Handled = true;
+                PlaceSeparator();
                 return;
             }
 
-            e.Handled = true;
-            if (_digits.Length >= 8)
+            if (!char.IsDigit(e.KeyChar))
                 return;
-            AcceptDigits(_digits + e.KeyChar);
+
+            AcceptDigit(e.KeyChar);
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
@@ -50,15 +63,14 @@ namespace CastRightCatchInvManagement
             if (e.KeyCode == Keys.Back)
             {
                 e.SuppressKeyPress = true;
-                if (_digits.Length > 0)
-                    AcceptDigits(_digits[..^1]);
+                Backspace();
                 return;
             }
 
             if (e.KeyCode == Keys.Delete)
             {
                 e.SuppressKeyPress = true;
-                AcceptDigits("");
+                ClearDate();
                 return;
             }
 
@@ -66,7 +78,7 @@ namespace CastRightCatchInvManagement
             {
                 e.SuppressKeyPress = true;
                 string pasted = Clipboard.ContainsText() ? Clipboard.GetText() : "";
-                AcceptDigits(Digits(pasted));
+                ReadText(pasted);
             }
         }
 
@@ -74,51 +86,214 @@ namespace CastRightCatchInvManagement
         {
             if (_formatting)
                 return;
-            AcceptDigits(Digits(Text));
+            ReadText(Text);
         }
 
-        private void AcceptDigits(string digits)
+        protected override void OnLeave(EventArgs e)
         {
-            if (digits.Length > 8)
-                digits = digits[..8];
-            _digits = digits;
-            _value = Parse(_digits);
-            ForeColor = _digits.Length == 8 && _value == null ? Theme.Danger : Theme.Ink;
+            SnapToFullDate();
+            base.OnLeave(e);
+        }
+
+        private void AcceptDigit(char digit)
+        {
+            if (_part == 0)
+            {
+                if (_month.Length >= 2)
+                    _part = 1;
+                else
+                {
+                    _month += digit;
+                    if (_month.Length == 2)
+                        _part = 1;
+                    Apply();
+                    return;
+                }
+            }
+
+            if (_part == 1)
+            {
+                if (_day.Length >= 2)
+                    _part = 2;
+                else
+                {
+                    _day += digit;
+                    if (_day.Length == 2)
+                        _part = 2;
+                    Apply();
+                    return;
+                }
+            }
+
+            if (_year.Length >= 4)
+                return;
+            _year += digit;
+            Apply();
+        }
+
+        private void PlaceSeparator()
+        {
+            if (_part == 0)
+            {
+                if (_month.Length == 0)
+                    return;
+                _sepMonth = true;
+                _part = 1;
+                Apply();
+                return;
+            }
+
+            if (_part == 1)
+            {
+                if (_day.Length == 0)
+                {
+                    _sepMonth = true;
+                    Apply();
+                    return;
+                }
+
+                _sepDay = true;
+                _part = 2;
+                Apply();
+                return;
+            }
+
+            if (_year.Length == 0 && _day.Length > 0)
+            {
+                _sepDay = true;
+                Apply();
+            }
+        }
+
+        private void Backspace()
+        {
+            if (_year.Length > 0)
+            {
+                _year = _year[..^1];
+                _part = 2;
+                Apply();
+                return;
+            }
+
+            if (_sepDay)
+            {
+                _sepDay = false;
+                _part = 1;
+                Apply();
+                return;
+            }
+
+            if (_day.Length > 0)
+            {
+                _day = _day[..^1];
+                _part = 1;
+                Apply();
+                return;
+            }
+
+            if (_sepMonth)
+            {
+                _sepMonth = false;
+                _part = 0;
+                Apply();
+                return;
+            }
+
+            if (_month.Length > 0)
+            {
+                _month = _month[..^1];
+                _part = 0;
+                Apply();
+            }
+        }
+
+        private void ReadText(string text)
+        {
+            ResetParts();
+            text = (text ?? "").Trim();
+            if (text.Length == 0)
+            {
+                Apply();
+                return;
+            }
+
+            char[] marks = { '/', '.', '-' };
+            if (text.IndexOfAny(marks) < 0)
+            {
+                string digits = Digits(text);
+                if (digits.Length > 8)
+                    digits = digits[..8];
+                if (digits.Length <= 2)
+                    _month = digits;
+                else if (digits.Length <= 4)
+                {
+                    _month = digits[..2];
+                    _day = digits[2..];
+                }
+                else
+                {
+                    _month = digits[..2];
+                    _day = digits[2..4];
+                    _year = digits[4..];
+                }
+            }
+            else
+            {
+                string[] parts = text.Split(marks);
+                if (parts.Length > 0)
+                    _month = TakeDigits(parts[0], 2);
+                if (parts.Length > 1)
+                {
+                    _sepMonth = true;
+                    _day = TakeDigits(parts[1], 2);
+                }
+
+                if (parts.Length > 2)
+                {
+                    _sepDay = true;
+                    _year = TakeDigits(parts[2], 4);
+                }
+            }
+
+            if (_year.Length > 0 || _sepDay)
+                _part = 2;
+            else if (_day.Length > 0 || _sepMonth || _month.Length == 2)
+                _part = 1;
+            else
+                _part = 0;
+            Apply();
+        }
+
+        private void SnapToFullDate()
+        {
+            if (_value is not DateTime date)
+                return;
+            _month = date.Month.ToString("00", CultureInfo.InvariantCulture);
+            _day = date.Day.ToString("00", CultureInfo.InvariantCulture);
+            _year = date.Year.ToString("0000", CultureInfo.InvariantCulture);
+            _sepMonth = true;
+            _sepDay = true;
+            _part = 2;
+            Render();
+        }
+
+        private void Apply()
+        {
+            _value = TryBuild();
+            ForeColor = PartsLookComplete() && _value == null ? Theme.Danger : Theme.Ink;
             Render();
             DateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        private void Render()
+        private DateTime? TryBuild()
         {
-            string shown = Format(_digits);
-            if (Text == shown)
-                return;
-            _formatting = true;
-            int caret = shown.Length;
-            Text = shown;
-            SelectionStart = caret;
-            _formatting = false;
-        }
-
-        private static string Format(string digits)
-        {
-            if (digits.Length <= 2)
-                return digits;
-            if (digits.Length <= 4)
-                return digits[..2] + "/" + digits[2..];
-            return digits[..2] + "/" + digits[2..4] + "/" + digits[4..];
-        }
-
-        private static DateTime? Parse(string digits)
-        {
-            if (digits.Length != 8)
+            if (!PartsLookComplete())
                 return null;
-            if (!int.TryParse(digits[..2], out int month) ||
-                !int.TryParse(digits[2..4], out int day) ||
-                !int.TryParse(digits[4..], out int year))
+            if (!int.TryParse(_month, out int month) ||
+                !int.TryParse(_day, out int day) ||
+                !int.TryParse(_year, out int year))
                 return null;
-            if (year < 1900 || year > 2100)
-                return null;
+            year = ExpandYear(year, _year.Length);
             try
             {
                 return new DateTime(year, month, day);
@@ -129,28 +304,48 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        private bool PartsLookComplete() =>
+            _month.Length >= 1 && _day.Length >= 1 && (_year.Length == 2 || _year.Length == 4);
+
+        private void Render()
+        {
+            string shown = FormatParts();
+            if (Text == shown)
+                return;
+            _formatting = true;
+            Text = shown;
+            SelectionStart = shown.Length;
+            _formatting = false;
+        }
+
+        private string FormatParts()
+        {
+            string shown = _month;
+            if (_sepMonth || _day.Length > 0 || _year.Length > 0)
+                shown += "/" + _day;
+            if (_sepDay || _year.Length > 0)
+                shown += "/" + _year;
+            return shown;
+        }
+
+        private void ResetParts()
+        {
+            _month = "";
+            _day = "";
+            _year = "";
+            _sepMonth = false;
+            _sepDay = false;
+            _part = 0;
+        }
+
         public static bool TryParseCell(string? text, out DateTime date)
         {
             text = (text ?? "").Trim();
             date = default;
             if (text.Length == 0)
                 return false;
-            string[] formats =
-            {
-                "yyyy-MM-dd", "MM/dd/yyyy", "M/d/yyyy", "MM-dd-yyyy",
-                "yyyy-MM-dd HH:mm", "yyyy-MM-dd HH:mm:ss"
-            };
-            if (DateTime.TryParseExact(
-                    text,
-                    formats,
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.None,
-                    out date))
-            {
-                date = date.Date;
+            if (TryParseFlexible(text, out date))
                 return true;
-            }
-
             if (DateTime.TryParse(text, CultureInfo.CurrentCulture, DateTimeStyles.None, out date))
             {
                 date = date.Date;
@@ -167,6 +362,73 @@ namespace CastRightCatchInvManagement
             if (to != null && date > to.Value.Date)
                 return false;
             return true;
+        }
+
+        private static bool TryParseFlexible(string text, out DateTime date)
+        {
+            date = default;
+            char[] marks = { '/', '.', '-' };
+            if (text.IndexOfAny(marks) >= 0)
+            {
+                string[] parts = text.Split(marks, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length != 3)
+                    return false;
+                if (!int.TryParse(parts[0], out int a) ||
+                    !int.TryParse(parts[1], out int b) ||
+                    !int.TryParse(parts[2], out int c))
+                    return false;
+                if (parts[0].Length == 4)
+                    return TryMake(b, c, cYear: a, out date);
+                return TryMake(a, b, ExpandYear(c, parts[2].Length), out date);
+            }
+
+            string digits = Digits(text);
+            if (digits.Length == 8)
+            {
+                return TryMake(
+                    int.Parse(digits[..2], CultureInfo.InvariantCulture),
+                    int.Parse(digits[2..4], CultureInfo.InvariantCulture),
+                    int.Parse(digits[4..], CultureInfo.InvariantCulture),
+                    out date);
+            }
+
+            if (digits.Length == 6)
+            {
+                return TryMake(
+                    int.Parse(digits[..2], CultureInfo.InvariantCulture),
+                    int.Parse(digits[2..4], CultureInfo.InvariantCulture),
+                    ExpandYear(int.Parse(digits[4..], CultureInfo.InvariantCulture), 2),
+                    out date);
+            }
+
+            return false;
+        }
+
+        private static bool TryMake(int month, int day, int cYear, out DateTime date)
+        {
+            date = default;
+            try
+            {
+                date = new DateTime(cYear, month, day);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static int ExpandYear(int year, int digitCount)
+        {
+            if (digitCount != 2)
+                return year;
+            return CultureInfo.CurrentCulture.Calendar.ToFourDigitYear(year);
+        }
+
+        private static string TakeDigits(string text, int max)
+        {
+            string digits = Digits(text);
+            return digits.Length <= max ? digits : digits[..max];
         }
 
         private static string Digits(string text)

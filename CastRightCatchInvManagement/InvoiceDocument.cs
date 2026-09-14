@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 
 namespace CastRightCatchInvManagement
 {
@@ -16,47 +15,10 @@ namespace CastRightCatchInvManagement
                 DataFiles.PdfKindInvoice,
                 draft.InvoiceNumber.Trim(),
                 fileName,
-                Build(draft));
+                Draw(draft).ToPdf());
         }
 
-        private static byte[] Build(InvoiceDraft draft)
-        {
-            string content = BuildPage(draft);
-            var body = Encoding.ASCII.GetBytes(content);
-            var objects = new List<byte[]>
-            {
-                Obj("<< /Type /Catalog /Pages 2 0 R >>"),
-                Obj("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
-                Obj("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>"),
-                Stream(body),
-                Obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
-                Obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
-            };
-
-            using var ms = new MemoryStream();
-            void Write(string text) => ms.Write(Encoding.ASCII.GetBytes(text));
-
-            Write("%PDF-1.4\n");
-            var offsets = new List<long> { 0 };
-            for (int i = 0; i < objects.Count; i++)
-            {
-                offsets.Add(ms.Position);
-                Write($"{i + 1} 0 obj\n");
-                ms.Write(objects[i], 0, objects[i].Length);
-                Write("\nendobj\n");
-            }
-
-            long xref = ms.Position;
-            Write($"xref\n0 {objects.Count + 1}\n");
-            Write("0000000000 65535 f \n");
-            for (int i = 1; i < offsets.Count; i++)
-                Write($"{offsets[i]:0000000000} 00000 n \n");
-
-            Write($"trailer << /Size {objects.Count + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF");
-            return ms.ToArray();
-        }
-
-        private static string BuildPage(InvoiceDraft draft)
+        private static PdfDraw Draw(InvoiceDraft draft)
         {
             var g = new PdfDraw();
             bool received = draft.Received;
@@ -77,23 +39,28 @@ namespace CastRightCatchInvManagement
             string orderNo = received ? draft.PoNumber : draft.SoNumber;
             string partyCode = received ? draft.VendorCode : draft.CustomerCode;
 
-            g.Fill(36, 36, 4, 70, Theme.Gold);
-            g.Text(50, 48, company.ToUpperInvariant(), 16, true, Theme.Navy);
-            g.Text(50, 66, address, 8, false, Theme.Muted);
-            g.Text(50, 78, string.IsNullOrWhiteSpace(email) ? phone : $"{phone}    {email}", 8, false, Theme.Muted);
+            float y = PdfLetterhead.Draw(g, brand: !received);
+            if (received)
+            {
+                g.Fill(36, y, 4, 44, Theme.Gold);
+                g.Text(50, y + 14, company.ToUpperInvariant(), 13, true, Theme.Navy);
+                g.Text(50, y + 28, address, 8, false, Theme.Muted);
+                g.Text(50, y + 40, string.IsNullOrWhiteSpace(email) ? phone : phone + "    " + email, 8, false, Theme.Muted);
+                y += 50;
+            }
 
-            g.Text(306, 48, "INVOICE", 22, true, Theme.Navy, center: true);
-            g.Rect(430, 36, 146, 42);
-            g.Fill(430, 36, 146, 14, Theme.Navy);
-            g.Text(454, 46, "INVOICE NO.", 6.5f, true, Theme.Cream);
-            g.Text(508, 46, "DATE", 6.5f, true, Theme.Cream);
-            g.TextRight(490, 66, draft.InvoiceNumber, 9, true, Theme.Ink);
-            g.Text(516, 66, draft.InvoiceDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink, center: true, width: 52);
-            g.Line(494, 36, 494, 78);
+            g.Text(36, y + 16, "INVOICE", 16, PdfFace.SerifBold, Theme.Navy);
+            g.Rect(430, y, 146, 36);
+            g.Fill(430, y, 146, 12, Theme.Navy);
+            g.Text(454, y + 9, "INVOICE NO.", 6.5f, true, Theme.Cream);
+            g.Text(508, y + 9, "DATE", 6.5f, true, Theme.Cream);
+            g.TextRight(490, y + 28, draft.InvoiceNumber, 9, true, Theme.Ink);
+            g.Text(516, y + 28, draft.InvoiceDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink, center: true, width: 52);
+            g.Line(494, y, 494, y + 36);
             if (ein.Length > 0)
-                g.Text(430, 88, $"TAX ID# {ein}", 8, false, Theme.Ink);
+                g.Text(430, y + 48, "TAX ID# " + ein, 8, false, Theme.Ink);
 
-            float y = 108;
+            y += 56;
             g.Fill(36, y, 540, 16, Theme.Navy);
             g.Text(42, y + 11, received ? "PO #" : "SO #", 6.5f, true, Theme.Cream);
             g.Text(108, y + 11, "ORDER DATE", 6.5f, true, Theme.Cream);
@@ -196,7 +163,7 @@ namespace CastRightCatchInvManagement
                 g.Text(36, 776, "CUSTOMER SIGNATURE ________________________________", 8, false, Theme.Ink);
             }
 
-            return g.ToStream();
+            return g;
         }
 
         private static void DrawTotalRow(PdfDraw g, float y, string label, decimal value)
@@ -240,124 +207,6 @@ namespace CastRightCatchInvManagement
             foreach (var c in Path.GetInvalidFileNameChars())
                 name = name.Replace(c, '-');
             return name;
-        }
-
-        private static byte[] Obj(string body) => Encoding.ASCII.GetBytes(body);
-
-        private static byte[] Stream(byte[] data)
-        {
-            var header = Encoding.ASCII.GetBytes($"<< /Length {data.Length} >>\nstream\n");
-            var end = Encoding.ASCII.GetBytes("\nendstream");
-            var result = new byte[header.Length + data.Length + end.Length];
-            Buffer.BlockCopy(header, 0, result, 0, header.Length);
-            Buffer.BlockCopy(data, 0, result, header.Length, data.Length);
-            Buffer.BlockCopy(end, 0, result, header.Length + data.Length, end.Length);
-            return result;
-        }
-    }
-
-    /// <summary>Low-level PDF content stream writer used by invoice and sales-order documents.</summary>
-    internal sealed class PdfDraw
-    {
-        private readonly StringBuilder _s = new();
-        private const float PageH = 792;
-
-        public PdfDraw()
-        {
-            _s.Append("q\n");
-        }
-
-        public void Fill(float x, float yTop, float w, float h, Color color)
-        {
-            float y = PageH - yTop - h;
-            Rgb(color);
-            _s.Append(" rg ");
-            _s.Append(F(x)); _s.Append(' '); _s.Append(F(y)); _s.Append(' ');
-            _s.Append(F(w)); _s.Append(' '); _s.Append(F(h));
-            _s.Append(" re f\n");
-        }
-
-        public void Rect(float x, float yTop, float w, float h)
-        {
-            float y = PageH - yTop - h;
-            _s.Append("0.55 0.62 0.70 RG 0.6 w ");
-            _s.Append(F(x)); _s.Append(' '); _s.Append(F(y)); _s.Append(' ');
-            _s.Append(F(w)); _s.Append(' '); _s.Append(F(h));
-            _s.Append(" re S\n");
-        }
-
-        public void Line(float x1, float y1Top, float x2, float y2Top)
-        {
-            _s.Append("0.55 0.62 0.70 RG 0.6 w ");
-            _s.Append(F(x1)); _s.Append(' '); _s.Append(F(PageH - y1Top));
-            _s.Append(" m ");
-            _s.Append(F(x2)); _s.Append(' '); _s.Append(F(PageH - y2Top));
-            _s.Append(" l S\n");
-        }
-
-        public void Text(float x, float yTop, string? text, float size, bool bold, Color color,
-            bool center = false, float width = 0)
-        {
-            text ??= "";
-            if (text.Length == 0)
-                return;
-
-            float y = PageH - yTop;
-            if (center && width > 0)
-                x += (width - Estimate(text, size)) / 2f;
-
-            Rgb(color);
-            _s.Append(" rg BT /");
-            _s.Append(bold ? "F2" : "F1");
-            _s.Append(' ');
-            _s.Append(F(size));
-            _s.Append(" Tf ");
-            _s.Append(F(x));
-            _s.Append(' ');
-            _s.Append(F(y));
-            _s.Append(" Td (");
-            _s.Append(Esc(text));
-            _s.Append(") Tj ET\n");
-        }
-
-        public void TextRight(float right, float yTop, string? text, float size, bool bold, Color color)
-        {
-            text ??= "";
-            float x = right - Estimate(text, size);
-            Text(x, yTop, text, size, bold, color);
-        }
-
-        public string ToStream()
-        {
-            _s.Append("Q\n");
-            return _s.ToString();
-        }
-
-        private void Rgb(Color color)
-        {
-            _s.Append(F(color.R / 255f)); _s.Append(' ');
-            _s.Append(F(color.G / 255f)); _s.Append(' ');
-            _s.Append(F(color.B / 255f));
-        }
-
-        private static float Estimate(string text, float size) => text.Length * size * 0.5f;
-
-        private static string F(float n) => n.ToString("0.###", CultureInfo.InvariantCulture);
-
-        private static string Esc(string text)
-        {
-            var sb = new StringBuilder(text.Length);
-            foreach (char c in text)
-            {
-                if (c is '(' or ')' or '\\')
-                    sb.Append('\\');
-                if (c < 32 || c > 126)
-                    sb.Append('?');
-                else
-                    sb.Append(c);
-            }
-
-            return sb.ToString();
         }
     }
 }

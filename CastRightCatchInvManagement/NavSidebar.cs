@@ -9,6 +9,7 @@ namespace CastRightCatchInvManagement
         private readonly List<NavDropGroup> _groups = new();
         private readonly List<Control> _navItems = new();
         private readonly Workspace _workspace;
+        private readonly ToolTip _tips = new() { ShowAlways = true };
         private NavyScrollPanel _navHost = null!;
         private int _menuRevision = -1;
         private CrcToggleSwitch _dbToggle = null!;
@@ -73,8 +74,6 @@ namespace CastRightCatchInvManagement
             help.Dock = DockStyle.Right;
             help.Width = 52;
             help.Name = "btnHelp";
-            var helpTip = new ToolTip { ShowAlways = true };
-            helpTip.SetToolTip(help, "Controls");
 
             var settings = BuildButton(AppPage.Settings, "Settings");
             settings.Dock = DockStyle.Fill;
@@ -135,7 +134,7 @@ namespace CastRightCatchInvManagement
                     bool staff = AppState.IsAdmin || AppState.IsIt;
                     pair.Value.Visible = staff;
                     pair.Value.Enabled = unlocked && staff;
-                    pair.Value.Selected = _workspace.CurrentPage == AppPage.Admin;
+                    ApplyOpenMark(pair.Key, pair.Value);
                     continue;
                 }
 
@@ -144,13 +143,13 @@ namespace CastRightCatchInvManagement
                     bool review = DataAccess.CanReview();
                     pair.Value.Visible = review;
                     pair.Value.Enabled = unlocked && review;
-                    pair.Value.Selected = _workspace.CurrentPage == AppPage.PendingChanges;
+                    ApplyOpenMark(pair.Key, pair.Value);
                     continue;
                 }
 
                 bool allowed = TableAccess.CanPage(pair.Key);
                 pair.Value.Enabled = (unlocked || isSettings) && allowed;
-                pair.Value.Selected = pair.Key == _workspace.CurrentPage;
+                ApplyOpenMark(pair.Key, pair.Value);
                 if (!isSettings && pair.Key != AppPage.Help)
                     pair.Value.Visible = allowed;
             }
@@ -166,7 +165,7 @@ namespace CastRightCatchInvManagement
 
             if (_workspace.CurrentPage is AppPage current && !TableAccess.CanPage(current))
             {
-                Navigator.GoTo(AppPage.Dashboard, _workspace);
+                Navigator.GoTo(AppPage.Dashboard, _workspace, reuseOpenWindow: false);
                 return;
             }
 
@@ -392,7 +391,7 @@ namespace CastRightCatchInvManagement
 
                 if (!MenuLayout.TryPage(node.Key, out var page))
                     continue;
-                AddButton(page, MenuLayout.Label(node.Key));
+                AddButton(page, node.Title);
             }
 
             AddButton(AppPage.Admin, "Admin");
@@ -424,7 +423,7 @@ namespace CastRightCatchInvManagement
 
                 if (!MenuLayout.TryPage(child.Key, out var page))
                     continue;
-                drop.AddPage(new NavMenuItem(page, MenuLayout.Label(child.Key), MenuLayout.OpenAction(page)));
+                drop.AddPage(new NavMenuItem(page, child.Title, MenuLayout.OpenAction(page)));
             }
 
             return drop.HasContent ? drop : null;
@@ -447,13 +446,70 @@ namespace CastRightCatchInvManagement
 
         private void BindPageButton(CrcNavButton btn, AppPage page)
         {
-            btn.MouseDown += (_, e) =>
-            {
-                if (e.Button != MouseButtons.Middle)
-                    return;
-                Navigator.OpenDetached(page);
-            };
+            BindOpenWindow(btn, page, _workspace);
             btn.Click += (_, _) => Navigator.GoTo(page, _workspace);
+        }
+
+        private void ApplyOpenMark(AppPage page, CrcNavButton btn)
+        {
+            bool here = page == _workspace.CurrentPage;
+            btn.Selected = here;
+            btn.OpenElsewhere = !here && Navigator.IsOpen(page);
+            string tip = page == AppPage.Help ? "Controls" : "";
+            if (btn.OpenElsewhere)
+            {
+                tip = tip.Length == 0
+                    ? "Already open — click to show that window"
+                    : tip + " — already open, click to show that window";
+            }
+
+            _tips.SetToolTip(btn, tip);
+        }
+
+        /// <summary>Middle-click or right-click → Open in another window. If it is already open, that window comes forward.</summary>
+        internal static void BindOpenWindow(Control control, AppPage page, Workspace workspace)
+        {
+            control.MouseDown += (_, e) =>
+            {
+                if (e.Button == MouseButtons.Middle)
+                    Navigator.OpenDetached(page, workspace);
+            };
+            var menu = new ContextMenuStrip();
+            var openItem = menu.Items.Add(
+                "Open in another window",
+                null,
+                (_, _) => Navigator.OpenDetached(page, workspace));
+            menu.Opening += (_, e) =>
+            {
+                if (!control.Enabled)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                bool elsewhere = Navigator.IsShownElsewhere(page, workspace);
+                openItem.Text = elsewhere ? "Show window" : "Open in another window";
+
+                while (menu.Items.Count > 1)
+                    menu.Items.RemoveAt(menu.Items.Count - 1);
+
+                var open = Navigator.ListOpenPages();
+                if (open.Count == 0)
+                    return;
+
+                menu.Items.Add(new ToolStripSeparator());
+                var heading = menu.Items.Add("Open windows");
+                heading.Enabled = false;
+                foreach (var openPage in open)
+                {
+                    var target = openPage;
+                    string title = UiStyle.PageTitle(target);
+                    if (workspace.CurrentPage == target)
+                        title += " — this window";
+                    menu.Items.Add(title, null, (_, _) => Navigator.TryFocus(target));
+                }
+            };
+            control.ContextMenuStrip = menu;
         }
     }
 
@@ -782,11 +838,7 @@ namespace CastRightCatchInvManagement
             };
             var page = item.Page;
             var open = item.Open;
-            btn.MouseDown += (_, e) =>
-            {
-                if (e.Button == MouseButtons.Middle)
-                    Navigator.OpenDetached(page);
-            };
+            NavSidebar.BindOpenWindow(btn, page, _workspace);
             btn.Click += (_, _) =>
             {
                 Navigator.Activate(_workspace);
@@ -851,6 +903,7 @@ namespace CastRightCatchInvManagement
         {
             bool related = IsCurrentRelated();
             _header.Selected = related;
+            _header.OpenElsewhere = !related && HasOpenElsewhere();
             _arrow.Enabled = _header.Enabled;
             _arrow.BackColor = Theme.NavyDark;
 
@@ -932,6 +985,10 @@ namespace CastRightCatchInvManagement
         private bool IsCurrentRelated() =>
             _workspace.CurrentPage is AppPage page &&
             (_pages.Contains(page) || _nested.Any(group => group.IsCurrentRelated()));
+
+        private bool HasOpenElsewhere() =>
+            _pages.Any(page => Navigator.IsOpen(page) && page != _workspace.CurrentPage) ||
+            _nested.Any(group => group.HasOpenElsewhere());
 
         private void PaintArrow(object? sender, PaintEventArgs e)
         {
@@ -1043,6 +1100,7 @@ namespace CastRightCatchInvManagement
     internal class CrcNavButton : Button
     {
         private bool _selected;
+        private bool _openElsewhere;
 
         public bool Selected
         {
@@ -1050,6 +1108,17 @@ namespace CastRightCatchInvManagement
             set
             {
                 _selected = value;
+                ApplyColors();
+                Invalidate();
+            }
+        }
+
+        public bool OpenElsewhere
+        {
+            get => _openElsewhere;
+            set
+            {
+                _openElsewhere = value;
                 ApplyColors();
                 Invalidate();
             }
@@ -1079,11 +1148,12 @@ namespace CastRightCatchInvManagement
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
-            if (!_selected)
+            if (!_selected && !_openElsewhere)
                 return;
 
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            using var gold = new SolidBrush(Theme.Gold);
+            Color mark = _selected ? Theme.Gold : Color.FromArgb(140, Theme.Gold);
+            using var gold = new SolidBrush(mark);
             e.Graphics.FillRectangle(gold, 0, 8, 4, Height - 16);
         }
 
@@ -1199,6 +1269,181 @@ namespace CastRightCatchInvManagement
             int standX = x + w / 2;
             g.DrawLine(pen, standX, y + h, standX, y + h + 4);
             g.DrawLine(pen, standX - 5, y + h + 5, standX + 5, y + h + 5);
+        }
+    }
+
+    /// <summary>Icon Back / Forward next to the page title. Hidden with the header on Home.</summary>
+    internal sealed class NavHistoryBar : Panel
+    {
+        private readonly Workspace _workspace;
+        private readonly HistoryIconButton _back;
+        private readonly HistoryIconButton _forward;
+        private readonly ToolTip _tips = new() { ShowAlways = true };
+
+        public NavHistoryBar(Workspace workspace)
+        {
+            _workspace = workspace;
+            Width = 92;
+            MinimumSize = new Size(84, 40);
+            BackColor = Theme.Paper;
+            Padding = new Padding(16, 20, 8, 16);
+            Theme.EnableDoubleBuffer(this);
+
+            _back = new HistoryIconButton(back: true);
+            _back.Click += (_, _) =>
+            {
+                if (_workspace.CanGoBack)
+                    Navigator.GoBack(_workspace);
+            };
+            _tips.SetToolTip(_back, "Back  ·  mouse side button or Alt+Left");
+
+            _forward = new HistoryIconButton(back: false);
+            _forward.Click += (_, _) =>
+            {
+                if (_workspace.CanGoForward)
+                    Navigator.GoForward(_workspace);
+            };
+            _tips.SetToolTip(_forward, "Forward  ·  mouse side button or Alt+Right");
+
+            Controls.Add(_forward);
+            Controls.Add(_back);
+            Resize += (_, _) => LayoutButtons();
+            LayoutButtons();
+            Sync();
+        }
+
+        public void Sync()
+        {
+            _back.Usable = _workspace.CanGoBack;
+            _forward.Usable = _workspace.CanGoForward;
+        }
+
+        private void LayoutButtons()
+        {
+            int size = 32;
+            int y = Math.Max(Padding.Top, (ClientSize.Height - size) / 2);
+            _back.SetBounds(Padding.Left, y, size, size);
+            _forward.SetBounds(Padding.Left + size + 4, y, size, size);
+        }
+    }
+
+    /// <summary>Chevron icon. Gold when it can navigate, dark and faded when it cannot.</summary>
+    internal sealed class HistoryIconButton : Control
+    {
+        private readonly bool _back;
+        private bool _usable;
+        private bool _hover;
+        private bool _down;
+
+        public HistoryIconButton(bool back)
+        {
+            _back = back;
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.ResizeRedraw |
+                ControlStyles.UserPaint,
+                true);
+            Size = new Size(32, 32);
+            TabStop = false;
+            Cursor = Cursors.Default;
+        }
+
+        public bool Usable
+        {
+            get => _usable;
+            set
+            {
+                if (_usable == value)
+                    return;
+                _usable = value;
+                Cursor = value ? Cursors.Hand : Cursors.Default;
+                Invalidate();
+            }
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            _hover = true;
+            Invalidate();
+            base.OnMouseEnter(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            _hover = false;
+            _down = false;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnClick(EventArgs e)
+        {
+            if (!_usable)
+                return;
+            base.OnClick(e);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left && _usable)
+            {
+                _down = true;
+                Invalidate();
+            }
+
+            base.OnMouseDown(e);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            _down = false;
+            Invalidate();
+            base.OnMouseUp(e);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            Color color = !_usable
+                ? Color.FromArgb(110, Theme.Ink)
+                : _down
+                    ? Theme.Navy
+                    : _hover
+                        ? Theme.GoldLight
+                        : Theme.Gold;
+
+            using var pen = new Pen(color, 2.2f)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round
+            };
+
+            float cx = Width / 2f;
+            float cy = Height / 2f;
+            float dx = 6.5f;
+            float dy = 8f;
+            if (_back)
+            {
+                e.Graphics.DrawLines(pen, new[]
+                {
+                    new PointF(cx + dx, cy - dy),
+                    new PointF(cx - dx, cy),
+                    new PointF(cx + dx, cy + dy)
+                });
+            }
+            else
+            {
+                e.Graphics.DrawLines(pen, new[]
+                {
+                    new PointF(cx - dx, cy - dy),
+                    new PointF(cx + dx, cy),
+                    new PointF(cx - dx, cy + dy)
+                });
+            }
         }
     }
 }

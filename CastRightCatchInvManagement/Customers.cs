@@ -2,8 +2,8 @@ namespace CastRightCatchInvManagement
 {
     /// <summary>
     /// Customer lookup (name, company, phone, balance). Always reads the live database.
-    /// Toolbar Add Customer opens a blank record. Double-click a row for View Details.
-    /// Right-click for View History or Edit Customer.
+    /// Toolbar Add Customer opens a blank record. Double-click a row for View Details
+    /// (identity and history). Right-click for Edit Customer.
     /// </summary>
     public partial class Customers : Form, INavigationPage
     {
@@ -22,8 +22,7 @@ namespace CastRightCatchInvManagement
                 dataGridView1,
                 PartyEditForm.OpenCustomerEdit,
                 "Customer",
-                "Edit Customer",
-                ("View History", record => CustomerHistoryForm.ShowFor(this, record)));
+                "Edit Customer");
             DataFiles.DataChanged += LoadTable;
             LoadTable();
         }
