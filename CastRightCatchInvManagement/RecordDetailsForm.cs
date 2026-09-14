@@ -36,6 +36,7 @@ namespace CastRightCatchInvManagement
             string heading = string.IsNullOrWhiteSpace(title) ? "Details" : title;
             bool purchase = IsPurchase(title, table);
             bool sale = IsSale(title, table);
+            bool item = IsItem(title, table);
             var lines = purchase
                 ? DataFiles.FindPurchasesByPo(DataFiles.GetRecord(record, "PO #"))
                 : sale
@@ -49,7 +50,9 @@ namespace CastRightCatchInvManagement
                 ? First(first, "PO #", "Vendor", "Vendor Code")
                 : sale
                     ? First(first, "PO #", "SO #", "Customer", "Customer Code")
-                    : First(record, "Name", "Customer", "Vendor", "Invoice #", "PO #", "SO #");
+                    : item
+                        ? First(record, "Code", "Description", "Name")
+                        : First(record, "Name", "Customer", "Vendor", "Invoice #", "PO #", "SO #");
             Text = name.Length > 0 ? heading + "  ·  " + name : heading + " details";
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.Sizable;
@@ -58,7 +61,7 @@ namespace CastRightCatchInvManagement
             ShowInTaskbar = false;
             AutoScaleMode = AutoScaleMode.Font;
             AutoScaleDimensions = new SizeF(7F, 15F);
-            ClientSize = purchase || sale ? new Size(980, 800) : new Size(640, 640);
+            ClientSize = purchase || sale || item ? new Size(980, 720) : new Size(640, 640);
             MinimumSize = new Size(480, 400);
             BackColor = Theme.Cream;
             Font = Theme.Body;
@@ -70,12 +73,15 @@ namespace CastRightCatchInvManagement
                 name.Length > 0 ? name : heading,
                 purchase ? "Purchase order  ·  " + lines.Count + " item" + (lines.Count == 1 ? "" : "s")
                 : sale ? "Sales order  ·  " + lines.Count + " item" + (lines.Count == 1 ? "" : "s")
+                : item ? "Lots"
                 : heading + " details");
 
             var footer = Footer();
             Control body = purchase || sale
                 ? BuildOrderBody(purchase, first, lines, record)
-                : BuildFieldBody(heading, record);
+                : item
+                    ? BuildItemLotsTable()
+                    : BuildFieldBody(heading, record);
 
             Controls.Add(body);
             Controls.Add(footer);
@@ -126,6 +132,75 @@ namespace CastRightCatchInvManagement
             split.Controls.Add(headCard);
             split.Controls.Add(partyCard);
             return split;
+        }
+
+        private static Control BuildItemLotsTable()
+        {
+            var wrap = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Theme.Cream,
+                Padding = new Padding(20, 12, 20, 8)
+            };
+            var card = new CardPanel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(1)
+            };
+            var grid = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                AllowUserToOrderColumns = false,
+                MultiSelect = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                AutoGenerateColumns = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+            };
+            Theme.StyleGrid(grid);
+            grid.EnableHeadersVisualStyles = false;
+            grid.ColumnHeadersHeight = 32;
+            grid.RowTemplate.Height = 32;
+            grid.BackgroundColor = Theme.Cream;
+            grid.GridColor = Color.FromArgb(210, 214, 210);
+            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(90, 108, 122);
+            grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(200, 208, 214);
+            grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(90, 108, 122);
+            grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = Color.FromArgb(200, 208, 214);
+            grid.DefaultCellStyle.BackColor = Theme.Cream;
+            grid.DefaultCellStyle.ForeColor = Theme.Muted;
+            grid.DefaultCellStyle.SelectionBackColor = Theme.Cream;
+            grid.DefaultCellStyle.SelectionForeColor = Theme.Muted;
+            AddCol(grid, "Lot (PO #)", 110);
+            AddCol(grid, "Vendor", 180, 160);
+            AddCol(grid, "Purchased", 90);
+            AddCol(grid, "Sold", 90);
+            AddCol(grid, "Remaining", 90);
+            AddCol(grid, "Note", 160, 140);
+
+            var host = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Cream };
+            var spinner = new WaitSpinner
+            {
+                Size = new Size(48, 48),
+                BackColor = Theme.Cream
+            };
+            host.Controls.Add(grid);
+            host.Controls.Add(spinner);
+            spinner.BringToFront();
+            void CenterSpinner()
+            {
+                spinner.Location = new Point(
+                    Math.Max(0, (host.ClientSize.Width - spinner.Width) / 2),
+                    Math.Max(0, (host.ClientSize.Height - spinner.Height) / 2));
+            }
+
+            host.Resize += (_, _) => CenterSpinner();
+            CenterSpinner();
+            card.Controls.Add(host);
+            wrap.Controls.Add(card);
+            return wrap;
         }
 
         private static CardPanel LabeledFieldsCard(
@@ -681,5 +756,11 @@ namespace CastRightCatchInvManagement
             (table != null && table.Equals(DataFiles.Vendors, StringComparison.OrdinalIgnoreCase)) ||
             title.Equals("Vendors", StringComparison.OrdinalIgnoreCase) ||
             title.Equals("Vendor", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsItem(string title, string? table) =>
+            (table != null && table.Equals(DataFiles.ItemCodes, StringComparison.OrdinalIgnoreCase)) ||
+            title.Equals("Inventory", StringComparison.OrdinalIgnoreCase) ||
+            title.Equals("Item Codes", StringComparison.OrdinalIgnoreCase) ||
+            title.Equals("Item", StringComparison.OrdinalIgnoreCase);
     }
 }
