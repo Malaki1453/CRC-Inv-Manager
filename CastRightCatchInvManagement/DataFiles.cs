@@ -965,6 +965,10 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>
+        /// Customer PO for a sale. The sales table stores that number in PO # when Lot # exists,
+        /// or uses Customer PO when that column is filled.
+        /// </summary>
         public static string SalePo(Dictionary<string, string> record)
         {
             if (record.ContainsKey("Lot #"))
@@ -977,6 +981,10 @@ namespace CastRightCatchInvManagement
             return GetRecord(record, "PO #").Trim();
         }
 
+        /// <summary>
+        /// Purchase lot for a sale. Prefer Lot # (the purchase PO). If Lot # is empty and Customer PO
+        /// is filled, this returns PO #, which on a sale is often the customer PO, not the purchase lot.
+        /// </summary>
         public static string SaleLot(Dictionary<string, string> record)
         {
             string lot = GetRecord(record, "Lot #").Trim();

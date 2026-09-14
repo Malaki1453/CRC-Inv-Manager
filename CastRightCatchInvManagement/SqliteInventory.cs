@@ -338,7 +338,10 @@ namespace CastRightCatchInvManagement
         public static List<Dictionary<string, string>> Read(string table) =>
             DataAccess.RestrictRows(table, ReadUnrestricted(table));
 
-        /// <summary>Walk matching rows without loading the whole table first. Safe to call off the UI thread.</summary>
+        /// <summary>
+        /// Walk rows where <paramref name="column"/> equals <paramref name="value"/> (case-insensitive)
+        /// without loading the whole table first. Safe to call off the UI thread. Old view includes archive rows.
+        /// </summary>
         public static void ForEachWhere(
             string table,
             string column,
@@ -2281,6 +2284,7 @@ namespace CastRightCatchInvManagement
                 result.Add(ReadRow(table, reader));
         }
 
+        /// <summary>One database (live or archive). No-ops if the column is missing on that table.</summary>
         private static void ForEachWhereOn(
             string table,
             bool archive,

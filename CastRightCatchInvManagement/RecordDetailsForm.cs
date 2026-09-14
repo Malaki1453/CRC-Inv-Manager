@@ -5,6 +5,7 @@ namespace CastRightCatchInvManagement
     /// <summary>
     /// Read-only popup of a grid row. Purchases and sales show the whole order plus an item table.
     /// Customers and vendors open the identity and history view.
+    /// Inventory shows item fields and a lots table (purchase PO in, sales out, remaining lb).
     /// </summary>
     internal sealed class RecordDetailsForm : Form
     {
@@ -13,7 +14,9 @@ namespace CastRightCatchInvManagement
         private CancellationTokenSource? _lotsLoad;
         private string _itemCode = "";
         private string _itemDescription = "";
+        /// <summary>Running totals keyed by normalized PO / lot.</summary>
         private readonly Dictionary<string, LotSnap> _lots = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Grid row index for each lot key so we update in place instead of appending duplicates.</summary>
         private readonly Dictionary<string, int> _lotRows = new(StringComparer.OrdinalIgnoreCase);
         private int _lotsPaintedAt;
         private bool _lotsDone;
@@ -102,6 +105,7 @@ namespace CastRightCatchInvManagement
             {
                 _itemCode = DataFiles.GetRecord(record, "Code").Trim();
                 _itemDescription = DataFiles.GetRecordAny(record, "Description", "Species");
+                // Start after the empty grid is on screen so the spinner can paint.
                 Shown += (_, _) => StartLotsLoad();
             }
         }
@@ -165,6 +169,9 @@ namespace CastRightCatchInvManagement
             return split;
         }
 
+        /// <summary>
+        /// Item header from the clicked inventory row, plus an empty lots grid that fills from a background scan.
+        /// </summary>
         private Control BuildItemLotsTable(Dictionary<string, string> item)
         {
             var wrap = new Panel
@@ -240,6 +247,7 @@ namespace CastRightCatchInvManagement
             return wrap;
         }
 
+        /// <summary>Start the purchase/sales scan off the UI thread. Closing the form cancels it.</summary>
         private void StartLotsLoad()
         {
             _lotsLoad = new CancellationTokenSource();
@@ -249,6 +257,12 @@ namespace CastRightCatchInvManagement
             _ = Task.Run(() => LoadLots(code, description, token), token);
         }
 
+        /// <summary>
+        /// Fold matching purchase and sale lines into lots. Match on Item Code, or Description if code is empty.
+        /// Skip waiting-to-add rows only. Purchased uses purchase Volume grouped by PO #.
+        /// Sold uses sale Volume grouped by <see cref="DataFiles.SaleLot"/>, then sale PO # if that is empty.
+        /// Remaining is purchased minus sold.
+        /// </summary>
         private void LoadLots(string code, string description, CancellationToken token)
         {
             try
@@ -286,6 +300,7 @@ namespace CastRightCatchInvManagement
                         {
                             if (DataFiles.IsWaitingAdd(sale))
                                 return;
+                            // SaleLot prefers Lot #; if that is blank it may return the sale PO # (often the customer PO).
                             string lot = DataFiles.SaleLot(sale);
                             if (lot.Length == 0)
                                 lot = DataFiles.GetRecord(sale, "PO #").Trim();
@@ -305,8 +320,10 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Add purchase Volume onto the PO lot. Vendor is kept from the first purchase on that lot.</summary>
         private void AddPurchase(string lot, string vendor, decimal volume)
         {
+            // Blank PO / lot numbers share one bucket so they still show on the grid.
             string key = lot.Length > 0 ? DataFiles.NormalizePo(lot) : "(no lot)";
             bool isNew;
             lock (_lots)
@@ -330,6 +347,7 @@ namespace CastRightCatchInvManagement
             QueueLotsPaint(immediate: isNew, done: false);
         }
 
+        /// <summary>Add sale Volume onto the lot. Creates a lot row if sales exist with no matching purchase.</summary>
         private void AddSale(string lot, decimal volume)
         {
             string key = lot.Length > 0 ? DataFiles.NormalizePo(lot) : "(no lot)";
@@ -353,6 +371,9 @@ namespace CastRightCatchInvManagement
             QueueLotsPaint(immediate: isNew, done: false);
         }
 
+        /// <summary>
+        /// Push the current lots onto the grid. New lots paint immediately; later updates wait 50ms so the UI is not flooded.
+        /// </summary>
         private void QueueLotsPaint(bool immediate, bool done)
         {
             if (done)
@@ -384,6 +405,7 @@ namespace CastRightCatchInvManagement
                 Paint();
         }
 
+        /// <summary>Insert or refresh one grid row. Remaining is purchased minus sold.</summary>
         private void PaintLot(LotSnap snap)
         {
             if (_lotsGrid == null)
@@ -417,6 +439,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Hide the spinner and restore full-contrast grid colors when the scan finishes.</summary>
         private void FinishLotsLoad()
         {
             if (_lotsSpinner != null)
@@ -425,6 +448,7 @@ namespace CastRightCatchInvManagement
                 FadeLotsGrid(false);
         }
 
+        /// <summary>Muted colors while rows are still arriving; normal theme when done.</summary>
         private void FadeLotsGrid(bool fade)
         {
             if (_lotsGrid == null)
@@ -455,6 +479,7 @@ namespace CastRightCatchInvManagement
         private static string Lbs(decimal value) =>
             value.ToString("0.###", CultureInfo.InvariantCulture);
 
+        /// <summary>One PO lot while the scan is running. Key is the normalized PO #.</summary>
         private sealed class LotSnap
         {
             public string Key { get; set; } = "";
@@ -1018,6 +1043,7 @@ namespace CastRightCatchInvManagement
             title.Equals("Vendors", StringComparison.OrdinalIgnoreCase) ||
             title.Equals("Vendor", StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>Inventory / item-code grids use the lots table instead of the field list.</summary>
         private static bool IsItem(string title, string? table) =>
             (table != null && table.Equals(DataFiles.ItemCodes, StringComparison.OrdinalIgnoreCase)) ||
             title.Equals("Inventory", StringComparison.OrdinalIgnoreCase) ||
