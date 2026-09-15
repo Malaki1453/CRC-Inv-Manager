@@ -6,6 +6,7 @@ using System.Text;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Built-in PDF fonts: Helvetica, Helvetica-Bold, Times-Bold, Times-Italic.</summary>
     internal enum PdfFace
     {
         Sans,
@@ -24,11 +25,13 @@ namespace CastRightCatchInvManagement
         private readonly List<XImage> _images = new();
         private readonly List<(string Name, float Opacity)> _gs = new();
 
+        /// <summary>Start a graphics state so ToStream can restore with Q.</summary>
         public PdfDraw()
         {
             _s.Append("q\n");
         }
 
+        /// <summary>Filled rectangle. yTop is from the top of the page like WinForms.</summary>
         public void Fill(float x, float yTop, float w, float h, Color color)
         {
             float y = PageH - yTop - h;
@@ -39,11 +42,13 @@ namespace CastRightCatchInvManagement
             _s.Append(" re f\n");
         }
 
+        /// <summary>Hairline box in the default grid-line color.</summary>
         public void Rect(float x, float yTop, float w, float h)
         {
             Stroke(x, yTop, w, h, Color.FromArgb(140, 158, 178), 0.6f);
         }
 
+        /// <summary>Stroked rectangle in PDF space (origin bottom-left).</summary>
         public void Stroke(float x, float yTop, float w, float h, Color color, float width)
         {
             float y = PageH - yTop - h;
@@ -56,11 +61,13 @@ namespace CastRightCatchInvManagement
             _s.Append(" re S\n");
         }
 
+        /// <summary>Hairline in the default grid-line color.</summary>
         public void Line(float x1, float y1Top, float x2, float y2Top)
         {
             Line(x1, y1Top, x2, y2Top, Color.FromArgb(140, 158, 178), 0.6f);
         }
 
+        /// <summary>Stroke a line; y values are from the top of the page.</summary>
         public void Line(float x1, float y1Top, float x2, float y2Top, Color color, float width)
         {
             Rgb(color);
@@ -73,6 +80,7 @@ namespace CastRightCatchInvManagement
             _s.Append(" l S\n");
         }
 
+        /// <summary>Filled diamond used on the letterhead divider.</summary>
         public void Diamond(float cx, float yTop, float size, Color color)
         {
             float cy = PageH - yTop;
@@ -84,20 +92,24 @@ namespace CastRightCatchInvManagement
             _s.Append(F(cx - size)); _s.Append(' '); _s.Append(F(cy)); _s.Append(" l f\n");
         }
 
+        /// <summary>Draw Helvetica or Helvetica-Bold text.</summary>
         public void Text(float x, float yTop, string? text, float size, bool bold, Color color,
             bool center = false, float width = 0)
         {
             Text(x, yTop, text, size, bold ? PdfFace.SansBold : PdfFace.Sans, color, center, width);
         }
 
+        /// <summary>Draw text in the chosen face; skip blanks so we do not emit empty Tj.</summary>
         public void Text(float x, float yTop, string? text, float size, PdfFace face, Color color,
             bool center = false, float width = 0)
         {
             text ??= "";
+            // Empty strings would still consume a text object in the stream.
             if (text.Length == 0)
                 return;
 
             float y = PageH - yTop;
+            // Center within a cell when invoices pass a column width.
             if (center && width > 0)
                 x += (width - Estimate(text, size)) / 2f;
 
@@ -115,14 +127,17 @@ namespace CastRightCatchInvManagement
             _s.Append(") Tj ET\n");
         }
 
+        /// <summary>Right-align text by subtracting the estimated width from the right edge.</summary>
         public void TextRight(float right, float yTop, string? text, float size, bool bold, Color color)
         {
             text ??= "";
             Text(right - Estimate(text, size), yTop, text, size, bold, color);
         }
 
+        /// <summary>Place a prepared image; optional opacity uses an ExtGState for watermarks.</summary>
         public void Image(PdfSoftImage? image, float x, float yTop, float w, float h, float opacity = 1f)
         {
+            // Missing assets or zero size would emit a broken Do operator.
             if (image == null || w <= 0 || h <= 0)
                 return;
 
@@ -130,6 +145,7 @@ namespace CastRightCatchInvManagement
             _images.Add(new XImage(name, image));
             float y = PageH - yTop - h;
             _s.Append("q ");
+            // Watermarks need a graphics state; fully opaque images skip it.
             if (opacity < 0.999f)
             {
                 string gs = "GS" + (_gs.Count + 1);
@@ -148,12 +164,14 @@ namespace CastRightCatchInvManagement
             _s.Append(" Do Q\n");
         }
 
+        /// <summary>Close the graphics state and return the page content stream.</summary>
         public string ToStream()
         {
             _s.Append("Q\n");
             return _s.ToString();
         }
 
+        /// <summary>Build a one-page PDF 1.4 file with fonts, images, and optional opacity.</summary>
         public byte[] ToPdf()
         {
             string content = ToStream();
@@ -167,6 +185,7 @@ namespace CastRightCatchInvManagement
             var gsRes = new StringBuilder();
             for (int i = 0; i < _gs.Count; i++)
             {
+                // Space-separate ExtGState names in the resource dictionary.
                 if (gsRes.Length > 0)
                     gsRes.Append(' ');
                 gsRes.Append('/').Append(_gs[i].Name).Append(' ').Append(gsStart + i).Append(" 0 R");
@@ -175,6 +194,7 @@ namespace CastRightCatchInvManagement
             int obj = imgStart;
             foreach (var image in _images)
             {
+                // Space-separate image XObject names.
                 if (xObject.Length > 0)
                     xObject.Append(' ');
                 xObject.Append('/').Append(image.Name).Append(' ').Append(obj).Append(" 0 R");
@@ -184,6 +204,7 @@ namespace CastRightCatchInvManagement
             var pageDict = new StringBuilder();
             pageDict.Append("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << ");
             pageDict.Append("/Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R /F4 8 0 R >> ");
+            // Omit empty resource dictionaries so Acrobat stays happy.
             if (xObject.Length > 0)
                 pageDict.Append("/XObject << ").Append(xObject).Append(" >> ");
             if (gsRes.Length > 0)
@@ -205,6 +226,7 @@ namespace CastRightCatchInvManagement
                 int self = objects.Count + 1;
                 int mask = image.Data.Alpha == null ? 0 : self + 1;
                 objects.Add(ImageObj(image.Data, mask));
+                // Soft mask object follows the RGB image when the PNG had transparency.
                 if (image.Data.Alpha != null)
                     objects.Add(MaskObj(image.Data));
             }
@@ -232,6 +254,7 @@ namespace CastRightCatchInvManagement
             return ms.ToArray();
         }
 
+        /// <summary>Emit r g b (0–1) for the next fill or stroke operator.</summary>
         private void Rgb(Color color)
         {
             _s.Append(F(color.R / 255f)); _s.Append(' ');
@@ -239,6 +262,7 @@ namespace CastRightCatchInvManagement
             _s.Append(F(color.B / 255f));
         }
 
+        /// <summary>Resource name for the four Type1 fonts in the page dictionary.</summary>
         private static string FontName(PdfFace face) => face switch
         {
             PdfFace.SansBold => "F2",
@@ -247,17 +271,22 @@ namespace CastRightCatchInvManagement
             _ => "F1"
         };
 
+        /// <summary>Rough Helvetica width used only for centering and right-align.</summary>
         private static float Estimate(string text, float size) => text.Length * size * 0.5f;
 
+        /// <summary>Invariant number for PDF operators (no locale commas).</summary>
         internal static string F(float n) => n.ToString("0.###", CultureInfo.InvariantCulture);
 
+        /// <summary>Escape ( ) \\ and drop non-ASCII so the literal string stays valid.</summary>
         private static string Esc(string text)
         {
             var sb = new StringBuilder(text.Length);
             foreach (char c in text)
             {
+                // PDF literal strings treat these as syntax unless escaped.
                 if (c is '(' or ')' or '\\')
                     sb.Append('\\');
+                // Win-1252 is not declared; replace other glyphs so the file still parses.
                 if (c < 32 || c > 126)
                     sb.Append('?');
                 else
@@ -267,8 +296,10 @@ namespace CastRightCatchInvManagement
             return sb.ToString();
         }
 
+        /// <summary>ASCII object body without the obj/endobj wrappers.</summary>
         private static byte[] Obj(string body) => Encoding.ASCII.GetBytes(body);
 
+        /// <summary>Content stream object: dictionary, stream, bytes, endstream.</summary>
         private static byte[] Stream(byte[] data)
         {
             var header = Encoding.ASCII.GetBytes($"<< /Length {data.Length} >>\nstream\n");
@@ -280,18 +311,21 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Flate-encoded RGB image XObject, optionally pointing at a soft mask.</summary>
         private static byte[] ImageObj(PdfSoftImage image, int maskObj)
         {
             var dict = new StringBuilder();
             dict.Append("<< /Type /XObject /Subtype /Image /Width ").Append(image.Width);
             dict.Append(" /Height ").Append(image.Height);
             dict.Append(" /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode");
+            // SMask makes the letterhead PNG keep its transparent background.
             if (maskObj > 0)
                 dict.Append(" /SMask ").Append(maskObj).Append(" 0 R");
             dict.Append(" /Length ").Append(image.Rgb.Length).Append(" >>\nstream\n");
             return Concat(Encoding.ASCII.GetBytes(dict.ToString()), image.Rgb, Encoding.ASCII.GetBytes("\nendstream"));
         }
 
+        /// <summary>DeviceGray alpha XObject used as the image soft mask.</summary>
         private static byte[] MaskObj(PdfSoftImage image)
         {
             var alpha = image.Alpha ?? Array.Empty<byte>();
@@ -303,6 +337,7 @@ namespace CastRightCatchInvManagement
             return Concat(Encoding.ASCII.GetBytes(dict.ToString()), alpha, Encoding.ASCII.GetBytes("\nendstream"));
         }
 
+        /// <summary>Join dictionary, stream bytes, and endstream without extra copies of strings.</summary>
         private static byte[] Concat(byte[] a, byte[] b, byte[] c)
         {
             var result = new byte[a.Length + b.Length + c.Length];
@@ -312,9 +347,11 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Named image resource on the page (Im1, Im2, …).</summary>
         private readonly record struct XImage(string Name, PdfSoftImage Data);
     }
 
+    /// <summary>Flate RGB (and optional alpha) ready to embed in a PDF.</summary>
     internal sealed class PdfSoftImage
     {
         public int Width { get; init; }
@@ -323,17 +360,21 @@ namespace CastRightCatchInvManagement
         public byte[]? Alpha { get; init; }
     }
 
+    /// <summary>Cached lockup and seal bitmaps prepared for PDF (knockout + crop + deflate).</summary>
     internal static class PdfImages
     {
         private static PdfSoftImage? _lockup;
         private static PdfSoftImage? _seal;
 
+        /// <summary>Boat lockup with gray background knocked out, prepared once.</summary>
         public static PdfSoftImage? Lockup() =>
             _lockup ??= Prepare(BrandAssets.BoatLogo, knockoutGray: true);
 
+        /// <summary>Seal watermark with dark background knocked out, prepared once.</summary>
         public static PdfSoftImage? Seal() =>
             _seal ??= Prepare(BrandAssets.Seal, knockoutDark: true, keepAlpha: true);
 
+        /// <summary>Convert a brand image to cropped, deflated RGB (and alpha) for PDF.</summary>
         public static PdfSoftImage? Prepare(
             Image? source,
             bool knockoutDark = false,
@@ -341,6 +382,7 @@ namespace CastRightCatchInvManagement
             float fade = 0f,
             bool keepAlpha = false)
         {
+            // Missing brand files should omit the image rather than throw.
             if (source == null)
                 return null;
 
@@ -371,10 +413,13 @@ namespace CastRightCatchInvManagement
                         int r = (argb >> 16) & 255;
                         int g = (argb >> 8) & 255;
                         int b = argb & 255;
+                        // Navy/black photo backdrops would print as a box on the cream page.
                         if (knockoutDark && r <= 36 && g <= 36 && b <= 36)
                             a = 0;
+                        // Gray studio backdrop around the boat lockup should not print.
                         if (knockoutGray && Math.Abs(r - g) < 14 && Math.Abs(g - b) < 14 && r is >= 70 and <= 210)
                             a = 0;
+                        // Near-transparent pixels become white so JPEG-like fringes disappear.
                         if (a < 16)
                         {
                             a = 0;
@@ -384,6 +429,7 @@ namespace CastRightCatchInvManagement
                         }
                         else if (fade > 0)
                         {
+                            // Optional wash toward white for a lighter watermark.
                             r = (int)(r + (255 - r) * fade);
                             g = (int)(g + (255 - g) * fade);
                             b = (int)(b + (255 - b) * fade);
@@ -394,8 +440,10 @@ namespace CastRightCatchInvManagement
                         rgb[i * 3] = (byte)r;
                         rgb[i * 3 + 1] = (byte)g;
                         rgb[i * 3 + 2] = (byte)b;
+                        // Opaque pixels do not need a soft mask.
                         if (a < 250)
                             anyAlpha = true;
+                        // Transparent pixels are not part of the crop box.
                         if (a < 16)
                             continue;
                         if (x < minX) minX = x;
@@ -405,6 +453,7 @@ namespace CastRightCatchInvManagement
                     }
                 }
 
+                // Entirely knocked-out images should not become a blank XObject.
                 if (maxX <= minX || maxY <= minY)
                     return null;
 
@@ -440,10 +489,12 @@ namespace CastRightCatchInvManagement
             }
             finally
             {
+                // Clone bitmap is not using-disposed earlier because LockBits needs it alive.
                 bmp.Dispose();
             }
         }
 
+        /// <summary>Downscale large brand PNGs so the PDF stays small.</summary>
         private static Bitmap Fit(Image source, int maxW, int maxH)
         {
             int w = source.Width;
@@ -459,6 +510,7 @@ namespace CastRightCatchInvManagement
             return bmp;
         }
 
+        /// <summary>zlib-compress image bytes for /Filter /FlateDecode.</summary>
         private static byte[] Deflate(byte[] data)
         {
             using var ms = new MemoryStream();

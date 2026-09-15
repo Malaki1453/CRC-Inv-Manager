@@ -9,6 +9,7 @@ namespace CastRightCatchInvManagement
     /// <summary>Per-column filter boxes under grid headers, plus sort arrows and hide/show.</summary>
     internal sealed class ColumnSearch
     {
+        // HeaderHeight is the title row; OpenHeaderHeight adds room for the filter boxes.
         private const int HeaderHeight = 40;
         private const int OpenHeaderHeight = 70;
         private const int ArrowWidth = 22;
@@ -30,6 +31,7 @@ namespace CastRightCatchInvManagement
         private ListSortDirection _sortDirection = ListSortDirection.Ascending;
         private bool _wired;
 
+        /// <summary>Attach filters to the grid; the table stays hidden until a search is typed.</summary>
         public ColumnSearch(DataGridView grid, ColumnJumpPicker? jump = null)
         {
             _grid = grid;
@@ -38,12 +40,14 @@ namespace CastRightCatchInvManagement
             _grid.Visible = false;
         }
 
+        /// <summary>Bind the idle placeholder that shows when no search or date filter is active.</summary>
         public void SetEmptyState(Control empty)
         {
             _empty = empty;
             SyncTableVisible();
         }
 
+        /// <summary>Recreate per-column text and date filters after the grid columns change.</summary>
         public void Rebuild()
         {
             foreach (var box in _boxes.Values)
@@ -68,6 +72,7 @@ namespace CastRightCatchInvManagement
 
             foreach (DataGridViewColumn col in _grid.Columns)
             {
+                // The trailing "+" column is not searchable or sortable.
                 if (Theme.IsAddColumn(col))
                     continue;
                 col.SortMode = DataGridViewColumnSortMode.Programmatic;
@@ -95,12 +100,14 @@ namespace CastRightCatchInvManagement
             ColumnsReady?.Invoke();
         }
 
+        /// <summary>Apply the page-wide search box as an extra row filter.</summary>
         public void SetGlobalQuery(string query)
         {
             _globalQuery = (query ?? "").Trim();
             Apply();
         }
 
+        /// <summary>Apply the page-wide from/to dates across every date column on the row.</summary>
         public void SetDateRange(DateTime? from, DateTime? to)
         {
             _fromDate = from;
@@ -108,6 +115,7 @@ namespace CastRightCatchInvManagement
             Apply();
         }
 
+        /// <summary>True for Established, * At, and any header containing Date.</summary>
         public static bool IsDateColumn(string? header)
         {
             header = (header ?? "").Trim();
@@ -120,12 +128,14 @@ namespace CastRightCatchInvManagement
             return header.Contains("Date", StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>Show or hide each data row from column filters, date ranges, and the global query.</summary>
         public void Apply()
         {
             if (_grid.IsDisposed)
                 return;
 
             SyncTableVisible();
+            // Nothing to filter while the idle placeholder is showing.
             if (!_grid.Visible || _grid.Rows.Count == 0)
                 return;
 
@@ -142,6 +152,7 @@ namespace CastRightCatchInvManagement
 
             foreach (DataGridViewRow row in _grid.Rows)
             {
+                // The unused new-row template is not inventory data.
                 if (row.IsNewRow)
                     continue;
 
@@ -152,6 +163,7 @@ namespace CastRightCatchInvManagement
                         continue;
 
                     string text = row.Cells[pair.Key].Value?.ToString() ?? "";
+                    // Column box is a case-insensitive substring filter.
                     if (text.IndexOf(pair.Value, StringComparison.OrdinalIgnoreCase) < 0)
                     {
                         match = false;
@@ -168,6 +180,7 @@ namespace CastRightCatchInvManagement
                         if (!pair.Value.HasRange)
                             continue;
                         string text = row.Cells[pair.Key].Value?.ToString() ?? "";
+                        // Unparseable or out-of-range dates fail this column's from/to.
                         if (!NumericDateBox.TryParseCell(text, out var date) ||
                             !NumericDateBox.InRange(date, pair.Value.From, pair.Value.To))
                         {
@@ -177,6 +190,7 @@ namespace CastRightCatchInvManagement
                     }
                 }
 
+                // Page-wide dates keep the row if any date column falls in range.
                 if (match && (_fromDate != null || _toDate != null) && HasDateColumns)
                 {
                     bool any = false;
@@ -217,6 +231,7 @@ namespace CastRightCatchInvManagement
             _grid.Invalidate();
         }
 
+        /// <summary>Show the grid only after a search or date filter is set; otherwise show the idle placeholder.</summary>
         private void SyncTableVisible()
         {
             bool show = _globalQuery.Length > 0 ||
@@ -238,6 +253,7 @@ namespace CastRightCatchInvManagement
                 _grid.Parent?.Invalidate(true);
         }
 
+        /// <summary>Subscribe once to paint, click, scroll, and jump events.</summary>
         private void Wire()
         {
             if (_wired)
@@ -257,6 +273,7 @@ namespace CastRightCatchInvManagement
                 _jump.ColumnChosen += OnJumpChosen;
         }
 
+        /// <summary>Build a header filter box; Escape clears it and returns focus to the grid.</summary>
         private TextBox CreateBox(int columnIndex)
         {
             var box = new TextBox
@@ -289,6 +306,7 @@ namespace CastRightCatchInvManagement
                 {
                     if (box.IsDisposed)
                         return;
+                    // Collapse an empty filter when the user leaves the box.
                     if (string.IsNullOrWhiteSpace(box.Text) && _openColumn == columnIndex)
                         _openColumn = -1;
                     SyncHeaderHeight();
@@ -297,6 +315,7 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Reposition filter boxes and refresh the jump list after show/hide or reorder.</summary>
         public void NotifyColumnsChanged()
         {
             LayoutBoxes();
@@ -304,6 +323,7 @@ namespace CastRightCatchInvManagement
             _grid.Refresh();
         }
 
+        /// <summary>Left-click: add-column menu, sort arrow, or open the header filter box.</summary>
         private void OnHeaderClick(object? sender, DataGridViewCellMouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left || e.ColumnIndex < 0)
@@ -315,6 +335,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Clicks in the filter-box band should not toggle sort or reopen search.
             if (e.Y > HeaderHeight)
                 return;
 
@@ -328,6 +349,7 @@ namespace CastRightCatchInvManagement
             OpenSearch(e.ColumnIndex);
         }
 
+        /// <summary>Fill the jump picker with visible data-column headers in display order.</summary>
         private void RefreshJump()
         {
             if (_jump == null || _jump.IsDisposed)
@@ -342,6 +364,7 @@ namespace CastRightCatchInvManagement
             _jump.SetColumns(headers);
         }
 
+        /// <summary>Scroll the grid to the visible column at the jump picker's index.</summary>
         private void OnJumpChosen(object? sender, int index)
         {
             if (index < 0)
@@ -362,6 +385,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Scroll horizontally to <paramref name="target"/> and keep the current row selected when possible.</summary>
         private void ScrollToColumn(DataGridViewColumn target)
         {
             if (target == null || !target.Visible || _grid.Columns.Count == 0)
@@ -407,6 +431,7 @@ namespace CastRightCatchInvManagement
                 // column may already be as far left as it can go
             }
 
+            // Restore selection on the same data row after the scroll, if it is still visible.
             if (rowIndex >= 0 &&
                 rowIndex < _grid.Rows.Count &&
                 _grid.Rows[rowIndex].Visible)
@@ -430,8 +455,10 @@ namespace CastRightCatchInvManagement
             _grid.Refresh();
         }
 
+        /// <summary>Expand the header and focus this column's text or date filter.</summary>
         private void OpenSearch(int columnIndex)
         {
+            // Close a previously opened empty box so only one idle filter stays expanded.
             if (_openColumn >= 0 &&
                 _openColumn != columnIndex &&
                 _boxes.TryGetValue(_openColumn, out var previous) &&
@@ -457,6 +484,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Toggle asc/desc on the same column; a new column starts ascending.</summary>
         private void ToggleSort(int columnIndex)
         {
             if (_sortColumn == columnIndex)
@@ -484,6 +512,7 @@ namespace CastRightCatchInvManagement
             _grid.Invalidate();
         }
 
+        /// <summary>Owner-draw header title, sort/filter arrow, and the add-column plus.</summary>
         private void OnCellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
         {
             if (e.RowIndex != -1 || e.ColumnIndex < 0)
@@ -547,6 +576,7 @@ namespace CastRightCatchInvManagement
             Theme.PaintHeaderArrow(g, arrowBounds, sorted || filtered, sorted && ascending);
         }
 
+        /// <summary>True when a header filter is open or any column still has filter text/dates.</summary>
         private bool AnySearchVisible()
         {
             if (_openColumn >= 0)
@@ -555,6 +585,7 @@ namespace CastRightCatchInvManagement
                    _dates.Values.Any(range => range.HasRange);
         }
 
+        /// <summary>Grow the header to fit filter boxes while any search is active.</summary>
         private void SyncHeaderHeight()
         {
             int needed = AnySearchVisible() ? OpenHeaderHeight : HeaderHeight;
@@ -565,6 +596,7 @@ namespace CastRightCatchInvManagement
             _grid.Invalidate();
         }
 
+        /// <summary>Place visible filter boxes under their columns, hiding those scrolled off-screen.</summary>
         private void LayoutBoxes()
         {
             if (_boxes.Count == 0)
@@ -583,6 +615,7 @@ namespace CastRightCatchInvManagement
                 {
                     bool keep = expanded &&
                                 (col.Index == _openColumn || !string.IsNullOrWhiteSpace(box.Text));
+                    // Hidden columns and unused empty boxes should not sit over the grid.
                     if (!keep || !col.Visible)
                     {
                         box.Visible = false;
@@ -610,6 +643,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>From/to date pair hosted under a date-column header.</summary>
         private sealed class DateRangeHost : Panel
         {
             private readonly NumericDateBox _from = new();
@@ -647,6 +681,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Client X of a column, accounting for row headers and horizontal scroll.</summary>
         private int ColumnLeft(DataGridViewColumn target)
         {
             int x = _grid.RowHeadersVisible ? _grid.RowHeadersWidth : 0;
@@ -663,6 +698,7 @@ namespace CastRightCatchInvManagement
             return x;
         }
 
+        /// <summary>Sort dates, then money, then Windows Explorer-style text (A2 before A10).</summary>
         private sealed class FileSystemRowComparer : IComparer
         {
             private readonly DataGridView _grid;
@@ -688,6 +724,7 @@ namespace CastRightCatchInvManagement
                 return CompareValues(a, b) * _direction;
             }
 
+            /// <summary>Prefer calendar order, then numeric money/qty, then natural string order.</summary>
             private static int CompareValues(string a, string b)
             {
                 if (DateTime.TryParse(a, CultureInfo.CurrentCulture, DateTimeStyles.None, out var d1) &&

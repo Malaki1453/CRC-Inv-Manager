@@ -3,6 +3,7 @@ namespace CastRightCatchInvManagement
     /// <summary>Item-code lookup used on purchase and sales forms. Always reads the live database.</summary>
     public partial class ItemCodes : Form, INavigationPage
     {
+        /// <summary>Build the Inventory grid page and load live item codes.</summary>
         public ItemCodes()
         {
             InitializeComponent();

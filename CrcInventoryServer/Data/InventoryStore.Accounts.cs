@@ -5,6 +5,7 @@ namespace CrcInventory.Server;
 
 internal sealed partial class InventoryStore
 {
+    /// <summary>Number of rows in app_accounts.</summary>
     public int CountAccounts()
     {
         lock (_gate)
@@ -16,10 +17,12 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Loads one account by username, including hash and role flags; false when missing.</summary>
     public bool TryGetAccountRecord(string username, out AccountRecord record)
     {
         record = default;
         username = (username ?? "").Trim();
+        // Blank names are not stored and must not hit the table.
         if (username.Length == 0)
             return false;
 
@@ -37,6 +40,7 @@ internal sealed partial class InventoryStore
                 """;
             cmd.AddParam("$user", username);
             using var reader = cmd.Query(_engine);
+            // Unknown username is a failed lookup, not an exception.
             if (!reader.Read())
                 return false;
 
@@ -57,14 +61,17 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Account editor DTO; Found is false when the username does not exist.</summary>
     public AccountGetDto? GetAccount(string username)
     {
+        // Missing users still return a DTO so the client can show "not found".
         if (!TryGetAccountRecord(username, out var record))
             return new AccountGetDto { Found = false };
 
         return ToDto(record);
     }
 
+    /// <summary>All accounts for the IT user list, including IT-lock state.</summary>
     public List<AccountListDto> ListAccounts()
     {
         lock (_gate)
@@ -101,6 +108,7 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Creates an account and updates admins.json; false on blank name, weak password, or duplicate.</summary>
     public bool InsertAccount(
         string username,
         string displayName,
@@ -111,8 +119,10 @@ internal sealed partial class InventoryStore
         bool mustChange)
     {
         username = (username ?? "").Trim();
+        // Accounts need a sign-in name.
         if (username.Length == 0)
             return false;
+        // Reject passwords that fail the shared policy before hashing.
         if (!Passwords.MeetsPolicy(password, out _))
             return false;
 
@@ -137,11 +147,14 @@ internal sealed partial class InventoryStore
             cmd.AddParam("$admin", isAdmin ? 1 : 0);
             cmd.AddParam("$it", isIt ? 1 : 0);
             cmd.AddParam("$must", mustChange ? 1 : 0);
+            // Unique-constraint failures are expected on duplicate usernames.
             try
             {
+                // Zero rows means the insert did not land.
                 if (cmd.Exec(_engine) <= 0)
                     return false;
             }
+            // Duplicate username (or similar constraint) is reported as failure, not a crash.
             catch (DbException)
             {
                 return false;
@@ -152,9 +165,11 @@ internal sealed partial class InventoryStore
         return true;
     }
 
+    /// <summary>Updates display name and email; false when the username is blank or missing.</summary>
     public bool UpdateAccount(string username, string displayName, string email)
     {
         username = (username ?? "").Trim();
+        // Blank names cannot match a row.
         if (username.Length == 0)
             return false;
         lock (_gate)
@@ -174,9 +189,11 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Rehashes the password, drops sessions, and clears lockouts; false on blank name or weak password.</summary>
     public bool UpdateAccountPassword(string username, string password)
     {
         username = (username ?? "").Trim();
+        // Blank names or policy failures must not rewrite the hash.
         if (username.Length == 0 || !Passwords.MeetsPolicy(password, out _))
             return false;
 
@@ -195,6 +212,7 @@ internal sealed partial class InventoryStore
             cmd.AddParam("$salt", salt);
             cmd.AddParam("$user", username);
             bool updated = cmd.Exec(_engine) > 0;
+            // A new password invalidates stay-signed-in tokens and clears brute-force counters.
             if (updated)
             {
                 DeleteSessionsForUserUnlocked(username);
@@ -205,9 +223,11 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Sets or clears must-change-password; no-ops on a blank name.</summary>
     public void SetMustChangePassword(string username, bool mustChange)
     {
         username = (username ?? "").Trim();
+        // Blank names cannot match a row.
         if (username.Length == 0)
             return;
         lock (_gate)
@@ -222,12 +242,15 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Renames an account and its sessions/roles; false on blank names, missing row, or duplicate new name.</summary>
     public bool RenameAccount(string oldUsername, string newUsername)
     {
         oldUsername = (oldUsername ?? "").Trim();
         newUsername = (newUsername ?? "").Trim();
+        // Both names are required for a rename.
         if (oldUsername.Length == 0 || newUsername.Length == 0)
             return false;
+        // Same name (ignoring case) is already the desired state.
         if (oldUsername.Equals(newUsername, StringComparison.OrdinalIgnoreCase))
             return true;
 
@@ -238,12 +261,15 @@ internal sealed partial class InventoryStore
             cmd.CommandText = "UPDATE app_accounts SET username = $new WHERE username = $old;";
             cmd.AddParam("$new", newUsername);
             cmd.AddParam("$old", oldUsername);
+            // Unique-constraint on the new name is a failed rename, not a crash.
             try
             {
+                // Zero rows means the old username was not found.
                 if (cmd.Exec(_engine) <= 0)
                     return false;
                 RenameSessionsUnlocked(oldUsername, newUsername);
             }
+            // Unique-constraint on the new name is reported as failure, not a crash.
             catch (DbException)
             {
                 return false;
@@ -254,9 +280,11 @@ internal sealed partial class InventoryStore
         return true;
     }
 
+    /// <summary>Updates only the email column; no-ops on a blank name.</summary>
     public void UpdateAccountEmail(string username, string email)
     {
         username = (username ?? "").Trim();
+        // Blank names cannot match a row.
         if (username.Length == 0)
             return;
         lock (_gate)
@@ -270,9 +298,11 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Deletes the account, its sessions, and role membership; false when missing.</summary>
     public bool DeleteAccount(string username)
     {
         username = (username ?? "").Trim();
+        // Blank names cannot match a row.
         if (username.Length == 0)
             return false;
 
@@ -283,6 +313,7 @@ internal sealed partial class InventoryStore
             using var cmd = db.CreateCommand();
             cmd.CommandText = "DELETE FROM app_accounts WHERE username = $user;";
             cmd.AddParam("$user", username);
+            // Zero rows means the user was already gone.
             if (cmd.Exec(_engine) <= 0)
                 return false;
         }
@@ -291,16 +322,20 @@ internal sealed partial class InventoryStore
         return true;
     }
 
+    /// <summary>Stay-signed-in flag for the account, or false when the user is missing.</summary>
     public bool GetStaySignedIn(string username)
     {
+        // Missing users do not have the preference.
         if (!TryGetAccountRecord(username, out var record))
             return false;
         return record.StaySignedIn;
     }
 
+    /// <summary>Sets stay-signed-in; turning it off also drops that user's session tokens.</summary>
     public void SetStaySignedIn(string username, bool enabled)
     {
         username = (username ?? "").Trim();
+        // Blank names cannot match a row.
         if (username.Length == 0)
             return;
         lock (_gate)
@@ -312,14 +347,17 @@ internal sealed partial class InventoryStore
             cmd.AddParam("$flag", enabled ? 1 : 0);
             cmd.AddParam("$user", username);
             cmd.Exec(_engine);
+            // Disabled stay-signed-in must not leave resumable tokens around.
             if (!enabled)
                 DeleteSessionsForUserUnlocked(username);
         }
     }
 
+    /// <summary>Writes admin/IT flags on the account and mirrors them into admins.json.</summary>
     public void SetAccountRoles(string username, bool isAdmin, bool isIt)
     {
         username = (username ?? "").Trim();
+        // Blank names cannot match a row.
         if (username.Length == 0)
             return;
         lock (_gate)
@@ -337,15 +375,19 @@ internal sealed partial class InventoryStore
         Roles.Ensure(username, isAdmin, isIt);
     }
 
+    /// <summary>Raw table_access overlay JSON stored on the account, or empty when missing.</summary>
     public string GetStoredTableAccess(string username)
     {
+        // Missing users have no overlay.
         if (!TryGetAccountRecord(username, out var record))
             return "";
         return record.TableAccess;
     }
 
+    /// <summary>Effective table_access: merged group baseline overlaid with the user's JSON.</summary>
     public string GetTableAccess(string username)
     {
+        // Missing users have no policy.
         if (!TryGetAccountRecord(username, out var record))
             return "";
         var groups = SplitGroups(GetAccessGroup(username));
@@ -357,9 +399,11 @@ internal sealed partial class InventoryStore
         return AccessFilter.Overlay(baseline, record.TableAccess);
     }
 
+    /// <summary>Comma/semicolon-separated access-group names stored on the account.</summary>
     public string GetAccessGroup(string username)
     {
         username = (username ?? "").Trim();
+        // Blank names cannot match a row.
         if (username.Length == 0)
             return "";
         lock (_gate)
@@ -372,8 +416,10 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Splits a stored access_group string on commas and semicolons.</summary>
     private static List<string> SplitGroups(string stored)
     {
+        // Empty storage means no groups.
         if (string.IsNullOrWhiteSpace(stored))
             return new List<string>();
         return stored
@@ -383,9 +429,11 @@ internal sealed partial class InventoryStore
             .ToList();
     }
 
+    /// <summary>table_access JSON for one named access group, or empty when missing.</summary>
     public string GetGroupAccess(string name)
     {
         name = (name ?? "").Trim();
+        // Blank group names are not stored.
         if (name.Length == 0)
             return "";
         lock (_gate)
@@ -398,9 +446,11 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Writes the user's table_access overlay JSON; no-ops on a blank name.</summary>
     public void SetTableAccess(string username, string json)
     {
         username = (username ?? "").Trim();
+        // Blank names cannot match a row.
         if (username.Length == 0)
             return;
         lock (_gate)
@@ -414,6 +464,7 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Clears recovery-question failure counters (caller already holds <c>_gate</c>).</summary>
     private void ClearRecoveryFailsUnlocked(string username)
     {
         using var db = Open();
@@ -424,10 +475,12 @@ internal sealed partial class InventoryStore
         cmd.Exec(_engine);
     }
 
+    /// <summary>False when the account is IT-locked or still inside a timed lock; sets <paramref name="error"/>.</summary>
     public bool AllowLogin(string username, out string error)
     {
         error = "";
         username = (username ?? "").Trim();
+        // Sign-in requires a username.
         if (username.Length == 0)
         {
             error = "Enter a username and password.";
@@ -446,27 +499,32 @@ internal sealed partial class InventoryStore
                 untilText = cmd.Scalar(_engine)?.ToString() ?? "";
             }
 
+            // IT lock is not time-based; only IT can clear it.
             if (RecoveryGuard.IsItLock(untilText))
             {
                 error = RecoveryGuard.ItLockMessage;
                 return false;
             }
 
+            // A future timestamp means the 15-minute window is still active.
             if (DateTime.TryParse(untilText, out var until) && until > DateTime.Now)
             {
                 error = RecoveryGuard.LockedMessage(until);
                 return false;
             }
 
+            // An expired timestamp should be cleared so the next failure starts a fresh window.
             if (untilText.Length > 0)
                 ClearLoginTimeLockUnlocked(username);
             return true;
         }
     }
 
+    /// <summary>Increments login failures and returns the lock/tries message; generic text when the user is missing.</summary>
     public string NoteLoginFailure(string username)
     {
         username = (username ?? "").Trim();
+        // Do not reveal whether the username exists.
         if (username.Length == 0)
             return "That username or password is not right.";
 
@@ -478,6 +536,7 @@ internal sealed partial class InventoryStore
                 "SELECT COALESCE(login_fails, 0) FROM app_accounts WHERE username = $user;";
             read.AddParam("$user", username);
             object? raw = read.Scalar(_engine);
+            // Unknown username gets the same wording as a wrong password.
             if (raw == null)
                 return "That username or password is not right.";
 
@@ -500,15 +559,18 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Clears login-failure counters and lock; no-ops on a blank name.</summary>
     public void ClearLoginFails(string username)
     {
         username = (username ?? "").Trim();
+        // Blank names cannot match a row.
         if (username.Length == 0)
             return;
         lock (_gate)
             ClearLoginFailsUnlocked(username);
     }
 
+    /// <summary>Clears login_fails and login_lock_until (caller already holds <c>_gate</c>).</summary>
     private void ClearLoginFailsUnlocked(string username)
     {
         using var db = Open();
@@ -519,6 +581,7 @@ internal sealed partial class InventoryStore
         cmd.Exec(_engine);
     }
 
+    /// <summary>Clears only an expired timed lock, leaving the failure count in place.</summary>
     private void ClearLoginTimeLockUnlocked(string username)
     {
         using var db = Open();
@@ -529,6 +592,7 @@ internal sealed partial class InventoryStore
         cmd.Exec(_engine);
     }
 
+    /// <summary>Stores a hashed stay-signed-in token and returns the raw token for the client.</summary>
     public string InsertSession(string username, DateTime expiresAt)
     {
         string token = Passwords.NewSessionToken();
@@ -553,6 +617,7 @@ internal sealed partial class InventoryStore
         return token;
     }
 
+    /// <summary>Username for a still-valid session token, or null when missing/expired.</summary>
     public string? FindSessionUsername(string token)
     {
         string tokenHash = Passwords.HashSessionToken(token);
@@ -573,6 +638,7 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Deletes one session by the raw token the client holds.</summary>
     public void DeleteSession(string token)
     {
         string tokenHash = Passwords.HashSessionToken(token);
@@ -586,12 +652,14 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Deletes every session for <paramref name="username"/>.</summary>
     public void DeleteSessionsForUser(string username)
     {
         lock (_gate)
             DeleteSessionsForUserUnlocked(username);
     }
 
+    /// <summary>Builds the signed-in AuthResponse, combining table flags with admins.json roles.</summary>
     public AuthResponse ToAuth(AccountRecord record, string? sessionToken = null) => new()
     {
         Username = record.Username,
@@ -608,6 +676,7 @@ internal sealed partial class InventoryStore
         SessionToken = sessionToken
     };
 
+    /// <summary>Maps an account record to the editor DTO with Found = true.</summary>
     private AccountGetDto ToDto(AccountRecord record) => new()
     {
         Found = true,
@@ -621,6 +690,7 @@ internal sealed partial class InventoryStore
         TableAccess = record.TableAccess
     };
 
+    /// <summary>Deletes app_sessions rows for one user (caller already holds <c>_gate</c>).</summary>
     private void DeleteSessionsForUserUnlocked(string username)
     {
         using var db = Open();
@@ -630,6 +700,7 @@ internal sealed partial class InventoryStore
         cmd.Exec(_engine);
     }
 
+    /// <summary>Points existing sessions at the new username after a rename.</summary>
     private void RenameSessionsUnlocked(string oldUsername, string newUsername)
     {
         using var db = Open();
@@ -640,6 +711,7 @@ internal sealed partial class InventoryStore
         cmd.Exec(_engine);
     }
 
+    /// <summary>Deletes stay-signed-in rows whose expires_at is in the past.</summary>
     private void DeleteExpiredSessionsUnlocked()
     {
         using var db = Open();
@@ -650,16 +722,27 @@ internal sealed partial class InventoryStore
     }
 }
 
+/// <summary>One app_accounts row used for login, resume, and account editor mapping.</summary>
 internal struct AccountRecord
 {
+    /// <summary>Sign-in name.</summary>
     public string Username;
+    /// <summary>Friendly name; may be empty.</summary>
     public string DisplayName;
+    /// <summary>Contact email.</summary>
     public string Email;
+    /// <summary>Argon2id PHC string or legacy PBKDF2 hash.</summary>
     public string PasswordHash;
+    /// <summary>Legacy PBKDF2 salt, or the argon2id marker.</summary>
     public string PasswordSalt;
+    /// <summary>True when the user must set a new password before other work.</summary>
     public bool MustChangePassword;
+    /// <summary>Administrator flag stored on the row.</summary>
     public bool IsAdmin;
+    /// <summary>IT flag stored on the row.</summary>
     public bool IsIt;
+    /// <summary>Whether stay-signed-in is enabled for this account.</summary>
     public bool StaySignedIn;
+    /// <summary>User overlay table_access JSON.</summary>
     public string TableAccess;
 }

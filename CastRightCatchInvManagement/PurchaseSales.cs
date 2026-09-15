@@ -7,6 +7,7 @@ namespace CastRightCatchInvManagement
     /// </summary>
     public partial class PurchaseSales : Form, INavigationPage
     {
+        /// <summary>Wire the purchases grid, New Purchase, row edit, and PDF/invoice shortcuts.</summary>
         public PurchaseSales()
         {
             InitializeComponent();
@@ -35,12 +36,14 @@ namespace CastRightCatchInvManagement
         /// <summary>Fill the grid from purchases (live only, or archive + live when Old is on).</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.PurchaseSales);
 
+        /// <summary>Open the stored purchase PDF, or build one from the PO if it is missing.</summary>
         private void ShowPurchasePdf(Dictionary<string, string> record)
         {
             string po = DataFiles.GetRecord(record, "PO #").Trim();
             DataFiles.ShowPurchasePdf(po, () =>
             {
                 string? path = PurchaseDocument.SaveFromPo(po);
+                // No matching purchase lines, so there is nothing to draw.
                 if (path == null)
                 {
                     ToastAlert.Error(this, "Could not create a PDF for this purchase.");
@@ -57,6 +60,7 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void CreateInvoiceFromPurchase(Dictionary<string, string> record)
         {
+            // View-only accounts cannot write invoice rows.
             if (!DataAccess.CanMutate(DataFiles.Invoices))
             {
                 MessageBox.Show(
@@ -68,6 +72,7 @@ namespace CastRightCatchInvManagement
             }
 
             string po = DataFiles.GetRecord(record, "PO #").Trim();
+            // Prefill looks up purchase lines by PO.
             if (po.Length == 0)
             {
                 MessageBox.Show(
@@ -92,8 +97,10 @@ namespace CastRightCatchInvManagement
             var form = Navigator.Ensure<InvoicePdf>(AppPage.InvoicePdf);
             form.TryAddPurchase(prefill, error =>
             {
+                // This page may have closed before the add finished.
                 if (IsDisposed)
                     return;
+                // Stay here so the user can pick a different purchase.
                 if (error != null)
                 {
                     ToastAlert.Error(this, error);

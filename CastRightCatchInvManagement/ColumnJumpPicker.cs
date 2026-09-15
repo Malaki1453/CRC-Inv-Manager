@@ -13,6 +13,7 @@ namespace CastRightCatchInvManagement
 
         public event EventHandler<int>? ColumnChosen;
 
+        /// <summary>Owner-drawn jump control with a gold accent and drop-down arrow.</summary>
         public ColumnJumpPicker()
         {
             SetStyle(
@@ -31,6 +32,7 @@ namespace CastRightCatchInvManagement
 
         public int SelectedIndex => _selectedIndex;
 
+        /// <summary>Replace the jump list with the grid's current visible headers.</summary>
         public void SetColumns(IEnumerable<string> headers)
         {
             _columns.Clear();
@@ -40,6 +42,7 @@ namespace CastRightCatchInvManagement
             Invalidate();
         }
 
+        /// <summary>Close the drop-down before disposing native handles.</summary>
         protected override void Dispose(bool disposing)
         {
             if (disposing)
@@ -47,6 +50,7 @@ namespace CastRightCatchInvManagement
             base.Dispose(disposing);
         }
 
+        /// <summary>Highlight the border while the pointer is over the control.</summary>
         protected override void OnMouseEnter(EventArgs e)
         {
             _hover = true;
@@ -54,6 +58,7 @@ namespace CastRightCatchInvManagement
             base.OnMouseEnter(e);
         }
 
+        /// <summary>Clear hover styling when the pointer leaves.</summary>
         protected override void OnMouseLeave(EventArgs e)
         {
             _hover = false;
@@ -61,18 +66,21 @@ namespace CastRightCatchInvManagement
             base.OnMouseLeave(e);
         }
 
+        /// <summary>Repaint so the gold border shows keyboard focus.</summary>
         protected override void OnGotFocus(EventArgs e)
         {
             Invalidate();
             base.OnGotFocus(e);
         }
 
+        /// <summary>Repaint so the gold border drops when focus leaves.</summary>
         protected override void OnLostFocus(EventArgs e)
         {
             Invalidate();
             base.OnLostFocus(e);
         }
 
+        /// <summary>Click opens or closes the column list.</summary>
         protected override void OnClick(EventArgs e)
         {
             Focus();
@@ -80,8 +88,10 @@ namespace CastRightCatchInvManagement
             base.OnClick(e);
         }
 
+        /// <summary>Down/Enter/Space open the list; Escape closes it.</summary>
         protected override void OnKeyDown(KeyEventArgs e)
         {
+            // Keyboard users open the same list as a click.
             if (e.KeyCode is Keys.Down or Keys.Enter or Keys.Space)
             {
                 ToggleDrop();
@@ -89,6 +99,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Escape dismisses the list without jumping.
             if (e.KeyCode == Keys.Escape && _open)
             {
                 CloseDrop();
@@ -98,6 +109,7 @@ namespace CastRightCatchInvManagement
             base.OnKeyDown(e);
         }
 
+        /// <summary>Draw caption, current column, gold accent, and drop arrow.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
@@ -158,8 +170,10 @@ namespace CastRightCatchInvManagement
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         }
 
+        /// <summary>Open the list if closed, or close it if already showing.</summary>
         private void ToggleDrop()
         {
+            // Nothing to jump to when the grid has no visible data columns.
             if (!Enabled || _columns.Count == 0)
                 return;
 
@@ -169,6 +183,7 @@ namespace CastRightCatchInvManagement
                 ShowDrop();
         }
 
+        /// <summary>Build an owner-drawn list of headers and show it under the control.</summary>
         private void ShowDrop()
         {
             CloseDrop();
@@ -207,23 +222,27 @@ namespace CastRightCatchInvManagement
             list.MouseMove += (_, e) =>
             {
                 int index = list.IndexFromPoint(e.Location);
+                // Hovering a row highlights it so click and keyboard share the same selection.
                 if (index >= 0 && list.SelectedIndex != index)
                     list.SelectedIndex = index;
             };
             list.MouseDown += (_, e) =>
             {
                 int index = list.IndexFromPoint(e.Location);
+                // Clicks in padding do not jump.
                 if (index < 0)
                     return;
                 Pick(index);
             };
             list.KeyDown += (_, e) =>
             {
+                // Enter jumps to the highlighted column.
                 if (e.KeyCode == Keys.Enter && list.SelectedIndex >= 0)
                 {
                     Pick(list.SelectedIndex);
                     e.Handled = true;
                 }
+                // Escape closes without changing the current column.
                 else if (e.KeyCode == Keys.Escape)
                 {
                     CloseDrop();
@@ -276,8 +295,10 @@ namespace CastRightCatchInvManagement
             list.Focus();
         }
 
+        /// <summary>Remember the chosen header and raise <see cref="ColumnChosen"/> after the drop closes.</summary>
         private void Pick(int index)
         {
+            // Guard against a stale index if the column list changed while open.
             if (index < 0 || index >= _columns.Count)
                 return;
 
@@ -292,11 +313,13 @@ namespace CastRightCatchInvManagement
             });
         }
 
+        /// <summary>Close and dispose the drop-down if it is still open.</summary>
         private void CloseDrop()
         {
             var drop = _drop;
             _drop = null;
             _open = false;
+            // Already closed (or never opened).
             if (drop == null)
             {
                 Invalidate();
@@ -310,6 +333,7 @@ namespace CastRightCatchInvManagement
             }
             catch (ObjectDisposedException)
             {
+                // The native drop-down can dispose itself during AutoClose.
             }
 
             if (!drop.IsDisposed)
@@ -318,8 +342,10 @@ namespace CastRightCatchInvManagement
             Invalidate();
         }
 
+        /// <summary>Paint one header row with a gold bar when selected.</summary>
         private static void DrawItem(ListBox list, DrawItemEventArgs e)
         {
+            // DrawItem can fire for an empty list.
             if (e.Index < 0)
                 return;
 
@@ -343,6 +369,7 @@ namespace CastRightCatchInvManagement
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         }
 
+        /// <summary>Strip the default ToolStrip chrome so the gold border is the only frame.</summary>
         private sealed class JumpDropRenderer : ToolStripProfessionalRenderer
         {
             public JumpDropRenderer() : base(new ProfessionalColorTable()) { }

@@ -5,6 +5,7 @@ namespace CrcInventory.Server;
 
 internal sealed partial class InventoryStore
 {
+    /// <summary>Bank-account list without Plaid secrets.</summary>
     public List<BankRowDto> ListBankAccounts()
     {
         lock (_gate)
@@ -31,6 +32,7 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Inserts a bank_accounts row and returns its new id.</summary>
     public long InsertBankAccount(string name, string bank, string last4, string notes)
     {
         lock (_gate)
@@ -54,6 +56,7 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Updates non-secret fields on a bank_accounts row.</summary>
     public void UpdateBankAccount(long id, string name, string bank, string last4, string notes)
     {
         lock (_gate)
@@ -75,6 +78,7 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Deletes a bank_accounts row by id.</summary>
     public void DeleteBankAccount(long id)
     {
         lock (_gate)
@@ -87,6 +91,7 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Opens the sealed Plaid access token and returns link fields; empty DTO when the id is missing.</summary>
     public BankLinkDto GetBankLiveLink(long id)
     {
         lock (_gate)
@@ -101,6 +106,7 @@ internal sealed partial class InventoryStore
                 """;
             cmd.AddParam("$id", id);
             using var reader = cmd.Query(_engine);
+            // Unknown id is an empty link, not an error.
             if (!reader.Read())
                 return new BankLinkDto();
             return new BankLinkDto
@@ -113,6 +119,7 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Stores Plaid link fields, sealing the access token at rest.</summary>
     public void SetBankLiveLink(long id, string accessToken, string itemId, string accountId, string cursor)
     {
         lock (_gate)
@@ -137,6 +144,7 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Updates only the Plaid transactions cursor so sync can resume.</summary>
     public void SetBankLiveCursor(long id, string cursor)
     {
         lock (_gate)
@@ -150,11 +158,13 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Upserts a stored PDF; no-ops when kind, key, file name, or bytes are missing.</summary>
     public void SavePdf(string kind, string key, string fileName, byte[] content)
     {
         kind = (kind ?? "").Trim();
         key = (key ?? "").Trim();
         fileName = (fileName ?? "").Trim();
+        // Incomplete keys or empty bytes would store a useless row.
         if (kind.Length == 0 || key.Length == 0 || fileName.Length == 0 || content.Length == 0)
             return;
 
@@ -180,10 +190,12 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Deletes a stored PDF by kind and key; no-ops when either is blank.</summary>
     public void DeletePdf(string kind, string key)
     {
         kind = (kind ?? "").Trim();
         key = (key ?? "").Trim();
+        // Incomplete keys cannot identify a row.
         if (kind.Length == 0 || key.Length == 0)
             return;
 
@@ -198,10 +210,12 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>True when a PDF exists for kind+key.</summary>
     public bool HasPdf(string kind, string key)
     {
         kind = (kind ?? "").Trim();
         key = (key ?? "").Trim();
+        // Incomplete keys cannot identify a row.
         if (kind.Length == 0 || key.Length == 0)
             return false;
 
@@ -217,10 +231,12 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Loads a PDF by exact key, or a file-name contains match; null when missing or empty.</summary>
     public PdfDto? TryGetPdf(string kind, string key)
     {
         kind = (kind ?? "").Trim();
         key = (key ?? "").Trim();
+        // Incomplete keys cannot identify a row.
         if (kind.Length == 0 || key.Length == 0)
             return null;
 
@@ -241,6 +257,7 @@ internal sealed partial class InventoryStore
             cmd.AddParam("$kind", kind);
             cmd.AddParam("$key", key);
             using var reader = cmd.Query(_engine);
+            // No exact or fuzzy match.
             if (!reader.Read())
                 return null;
 
@@ -248,6 +265,7 @@ internal sealed partial class InventoryStore
             byte[] bytes = reader.IsDBNull(1)
                 ? Array.Empty<byte>()
                 : reader.GetFieldValue<byte[]>(1);
+            // An empty blob is treated as missing so the client does not open a blank PDF.
             if (bytes.Length == 0)
                 return null;
 

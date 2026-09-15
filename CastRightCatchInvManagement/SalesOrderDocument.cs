@@ -5,6 +5,7 @@ namespace CastRightCatchInvManagement
     /// <summary>Draws a sales-order / pick-ticket PDF from a SalesOrderDraft.</summary>
     internal static class SalesOrderDocument
     {
+        /// <summary>Draw a sales-order PDF from the draft and store it by SO #.</summary>
         public static string Save(SalesOrderDraft draft)
         {
             string customer = string.IsNullOrWhiteSpace(draft.CustomerCode)
@@ -18,6 +19,7 @@ namespace CastRightCatchInvManagement
                 Draw(draft).ToPdf());
         }
 
+        /// <summary>Lay out letterhead, customer/ship-to, and the pick-ticket item table.</summary>
         private static PdfDraw Draw(SalesOrderDraft draft)
         {
             var g = new PdfDraw();
@@ -43,6 +45,7 @@ namespace CastRightCatchInvManagement
             g.Text(330, y, "Email:", 8, true, Theme.Navy);
             g.Text(420, y, Clip(draft.Email, 28), 8, false, Theme.Ink);
 
+            // Second address line only when Ship To is multi-line.
             if (addressLines.Length > 1 && addressLines[1].Trim().Length > 0)
             {
                 y += 12;
@@ -90,6 +93,7 @@ namespace CastRightCatchInvManagement
             {
                 var line = draft.Lines[i];
                 float ly = y + i * rowH;
+                // Zebra-stripe odd rows so the pick ticket is easier to scan.
                 if (i % 2 == 1)
                     g.Fill(36.5f, ly, 539, rowH, Theme.GridAlt);
                 g.Text(42, ly + 12, Clip(line.ItemCode, 12), 7.5f, false, Theme.Ink);
@@ -119,6 +123,7 @@ namespace CastRightCatchInvManagement
             return g;
         }
 
+        /// <summary>Format a quantity, leaving blank cells empty instead of printing 0.</summary>
         private static string FormatQty(string? value)
         {
             decimal n = InvoiceLineRow.ParseNumber(value);
@@ -127,17 +132,20 @@ namespace CastRightCatchInvManagement
             return n.ToString("0.###", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>Trim text that would overflow a PDF column, adding a trailing period.</summary>
         private static string Clip(string? text, int max)
         {
             text ??= "";
             return text.Length <= max ? text : text[..(max - 1)] + ".";
         }
 
+        /// <summary>First non-blank value, used for contact phone fallbacks.</summary>
         private static string FirstNonEmpty(params string?[] values)
         {
             return values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)) ?? "";
         }
 
+        /// <summary>Replace characters that cannot appear in a stored PDF file name.</summary>
         private static string SanitizeFile(string name)
         {
             foreach (var c in Path.GetInvalidFileNameChars())

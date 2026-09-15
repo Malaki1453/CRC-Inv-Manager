@@ -6,19 +6,24 @@ namespace CastRightCatchInvManagement
     /// </summary>
     internal sealed class LookupSuggest : IDisposable
     {
+        /// <summary>One suggestion row: code, display name, extra label, and optional extra search text.</summary>
         public readonly record struct Hit(string Code, string Name, string Extra, string Search = "")
         {
             public string DisplayName => Name.Length > 0 ? Name : Code;
 
+            /// <summary>Label shown in the list: code first or name first, skipping a blank side.</summary>
             public string Label(bool codeFirst)
             {
+                // A missing code still shows the party or product name.
                 if (Code.Length == 0)
                     return DisplayName;
+                // A code-only row (no name) should not print a dangling dash.
                 if (DisplayName.Length == 0)
                     return Code;
                 return codeFirst ? Code + " - " + DisplayName : DisplayName + " - " + Code;
             }
 
+            /// <summary>True when the typed text matches code, name, or extra search tokens.</summary>
             public bool Matches(string needle)
             {
                 return Code.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
@@ -37,6 +42,7 @@ namespace CastRightCatchInvManagement
         private bool _applying;
         private bool _placed;
 
+        /// <summary>Attach a popup list to <paramref name="box"/> that fills from <paramref name="source"/> as the user types.</summary>
         public LookupSuggest(
             TextBox box,
             Func<IReadOnlyList<Hit>> source,
@@ -64,6 +70,7 @@ namespace CastRightCatchInvManagement
             _box.KeyDown += OnKeyDown;
             _box.Leave += (_, _) =>
             {
+                // Keep the list open while the mouse is over it so a click can pick a row.
                 if (ListHasMouse())
                     return;
                 Hide();
@@ -71,29 +78,35 @@ namespace CastRightCatchInvManagement
             _list.MouseDown += (_, e) =>
             {
                 int index = _list.IndexFromPoint(e.Location);
+                // Clicking a row selects it before PickSelected reads SelectedIndex.
                 if (index >= 0)
                     _list.SelectedIndex = index;
                 PickSelected();
             };
             _list.LostFocus += (_, _) =>
             {
+                // Closing only when both box and list lost focus avoids flicker during a pick.
                 if (!_box.Focused)
                     Hide();
             };
         }
 
+        /// <summary>Hide the list and dispose the popup control.</summary>
         public void Dispose()
         {
             Hide();
             _list.Dispose();
         }
 
+        /// <summary>Rebuild the visible hits for the current box text, or hide when there are none.</summary>
         private void Filter()
         {
+            // Ignore changes caused by applying a pick, and do not pop up when the box is not focused.
             if (_applying || !_box.Focused)
                 return;
 
             string needle = _box.Text.Trim();
+            // An empty box should not show every vendor/customer.
             if (needle.Length == 0)
             {
                 Hide();
@@ -105,10 +118,12 @@ namespace CastRightCatchInvManagement
             {
                 if (hit.Matches(needle))
                     _hits.Add(hit);
+                // Cap the list so typing a short letter does not flood the form.
                 if (_hits.Count >= 12)
                     break;
             }
 
+            // No close matches: hide rather than show an empty popup.
             if (_hits.Count == 0)
             {
                 Hide();
@@ -125,19 +140,24 @@ namespace CastRightCatchInvManagement
             ShowList();
         }
 
+        /// <summary>Sort key: exact, then prefix, then other substring matches.</summary>
         private static int Rank(Hit hit, string needle)
         {
+            // Exact code or name should sit at the top of the list.
             if (hit.Code.Equals(needle, StringComparison.OrdinalIgnoreCase) ||
                 hit.DisplayName.Equals(needle, StringComparison.OrdinalIgnoreCase))
                 return 0;
+            // Prefix matches next so typing the start of a code still ranks high.
             if (hit.Code.StartsWith(needle, StringComparison.OrdinalIgnoreCase) ||
                 hit.DisplayName.StartsWith(needle, StringComparison.OrdinalIgnoreCase))
                 return 1;
             return 2;
         }
 
+        /// <summary>Arrow keys move the highlight; Enter picks; Escape closes without changing the box.</summary>
         private void OnKeyDown(object? sender, KeyEventArgs e)
         {
+            // Escape dismisses suggestions without applying a hit.
             if (e.KeyCode == Keys.Escape)
             {
                 Hide();
@@ -145,6 +165,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Down opens the list if needed, then moves the highlight.
             if (e.KeyCode == Keys.Down)
             {
                 if (!_list.Visible)
@@ -155,6 +176,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Up only moves when the list is already showing.
             if (e.KeyCode == Keys.Up)
             {
                 if (_list.Visible && _list.Items.Count > 0)
@@ -163,6 +185,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Enter commits the highlighted suggestion into the box.
             if (e.KeyCode == Keys.Enter && _list.Visible)
             {
                 PickSelected();
@@ -170,9 +193,11 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Apply the highlighted hit to the box and close the list.</summary>
         private void PickSelected()
         {
             int index = _list.SelectedIndex;
+            // No highlight means the click or Enter should do nothing.
             if (index < 0 || index >= _hits.Count)
                 return;
 
@@ -183,12 +208,15 @@ namespace CastRightCatchInvManagement
             _applying = false;
         }
 
+        /// <summary>Place the popup under the box, flipping above when it would clip the form.</summary>
         private void ShowList()
         {
             var host = _box.FindForm();
+            // The list is parented on the form; skip if the box is not on a form yet.
             if (host == null)
                 return;
 
+            // Add the list once so later filters only move it.
             if (!_placed)
             {
                 host.Controls.Add(_list);
@@ -201,6 +229,7 @@ namespace CastRightCatchInvManagement
             int height = Math.Min(_hits.Count, 8) * (_list.ItemHeight + 2) + 4;
             int x = Math.Max(0, Math.Min(local.X, Math.Max(0, host.ClientSize.Width - width)));
             int y = local.Y;
+            // Flip above the box when there is not enough room below.
             if (y + height > host.ClientSize.Height)
                 y = Math.Max(0, local.Y - _box.Height - height);
             _list.SetBounds(x, y, width, height);
@@ -208,6 +237,7 @@ namespace CastRightCatchInvManagement
             _list.BringToFront();
         }
 
+        /// <summary>Hide the popup and drop cached hits.</summary>
         private void Hide()
         {
             _list.Visible = false;
@@ -215,6 +245,7 @@ namespace CastRightCatchInvManagement
             _hits.Clear();
         }
 
+        /// <summary>True when the mouse is over the visible list, so Leave on the box should not hide it yet.</summary>
         private bool ListHasMouse()
         {
             if (!_list.Visible)

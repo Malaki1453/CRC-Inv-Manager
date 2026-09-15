@@ -29,6 +29,7 @@ namespace CastRightCatchInvManagement
         public event EventHandler? Changed;
         public event EventHandler? RemoveRequested;
 
+        /// <summary>Build the product-line editors and wire volume/cost recalculation.</summary>
         public PurchaseLineRow()
         {
             SetStyle(
@@ -86,11 +87,13 @@ namespace CastRightCatchInvManagement
         public string ItemCode => _item.Text.Trim();
         public string Description => _description.Text.Trim();
 
+        /// <summary>Put the caret on Item Code so the user can type the next product.</summary>
         public void FocusItem()
         {
             _item.Focus();
         }
 
+        /// <summary>Bind item-code and description lookups so picking a hit fills the rest of the line.</summary>
         public void AttachLookups(Func<IReadOnlyList<LookupSuggest.Hit>> items)
         {
             _itemSuggest?.Dispose();
@@ -99,6 +102,7 @@ namespace CastRightCatchInvManagement
             _descSuggest = new LookupSuggest(_description, items, codeFirst: false, ApplyHit);
         }
 
+        /// <summary>Apply header per-lb costs to this line and refresh total cost.</summary>
         public void SetSharedCosts(decimal overhead, decimal freight, decimal forwarder, decimal other)
         {
             _overhead = overhead;
@@ -108,20 +112,25 @@ namespace CastRightCatchInvManagement
             RecalcCost();
         }
 
+        /// <summary>Fill code, description, and COO from a lookup pick without firing mid-fill recalcs.</summary>
         private void ApplyHit(LookupSuggest.Hit hit)
         {
             _filling = true;
             try
             {
+                // Keep whatever the user typed when the hit has no code.
                 if (hit.Code.Length > 0)
                     _item.Text = hit.Code;
+                // Name is the catalog description for this item.
                 if (hit.Name.Length > 0)
                     _description.Text = hit.Name;
+                // Extra on item hits is country of origin.
                 if (hit.Extra.Length > 0)
                     _coo.Text = hit.Extra;
             }
             finally
             {
+                // TextChanged must run again after the lookup write finishes.
                 _filling = false;
             }
 
@@ -129,6 +138,7 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Load this line from a purchases-table row.</summary>
         public void FillFromRecord(Dictionary<string, string> record)
         {
             Fill(
@@ -141,6 +151,7 @@ namespace CastRightCatchInvManagement
                 DataFiles.GetRecord(record, "Price Paid / LB"));
         }
 
+        /// <summary>Load this line from a draft product line.</summary>
         public void FillFromLine(PurchaseLine line)
         {
             Fill(
@@ -153,6 +164,7 @@ namespace CastRightCatchInvManagement
                 line.Price);
         }
 
+        /// <summary>Write every editor at once, then recalc cost after the fill flag drops.</summary>
         private void Fill(
             string item,
             string description,
@@ -175,6 +187,7 @@ namespace CastRightCatchInvManagement
             }
             finally
             {
+                // Recalc once after all fields are set, not on each TextChanged.
                 _filling = false;
             }
 
@@ -182,6 +195,7 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Snapshot the current editors, including computed totals.</summary>
         public PurchaseLine GetLine()
         {
             RecalcCost();
@@ -199,11 +213,14 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>True when any editor on this line has text.</summary>
         public bool HasContent() =>
             Fields().Any(box => !string.IsNullOrWhiteSpace(box.Text));
 
+        /// <summary>Dispose lookup popups with this row.</summary>
         protected override void Dispose(bool disposing)
         {
+            // Managed lookup windows must be closed with this row.
             if (disposing)
             {
                 _itemSuggest?.Dispose();
@@ -213,6 +230,7 @@ namespace CastRightCatchInvManagement
             base.Dispose(disposing);
         }
 
+        /// <summary>Draw the row border and gold accent used by purchase lines.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
@@ -224,21 +242,26 @@ namespace CastRightCatchInvManagement
             e.Graphics.FillRectangle(gold, 0, 0, 3, Height);
         }
 
+        /// <summary>Recalc totals when the user edits a field, but not during programmatic fills.</summary>
         private void OnFieldChanged()
         {
+            // Fill/ApplyHit writes several boxes; wait until that batch finishes.
             if (_filling)
                 return;
             RecalcCost();
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Derive volume from pack size × cases when both values are present.</summary>
         private void RecalcVolume()
         {
+            // Skip while Fill is writing pack/cases/volume together.
             if (_filling)
                 return;
 
             decimal pack = ParseNumber(_packSize.Text);
             decimal cs = ParseNumber(_cs.Text);
+            // Incomplete qty should not overwrite a volume the user already typed.
             if (pack <= 0 || cs <= 0)
             {
                 RecalcCost();
@@ -252,6 +275,7 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Total / LB is price plus header costs; Total is that rate times volume.</summary>
         private void RecalcCost()
         {
             decimal perLb = ParseNumber(_price.Text) + _overhead + _freight + _forwarder + _other;
@@ -260,6 +284,7 @@ namespace CastRightCatchInvManagement
             _total.Text = (perLb * lbs).ToString("0.00", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>Place editors in the shared purchase-line column slots.</summary>
         private void LayoutFields()
         {
             var slots = PurchaseLineLayout.Slots(Width);
@@ -275,6 +300,7 @@ namespace CastRightCatchInvManagement
             _remove.Bounds = slots.Remove;
         }
 
+        /// <summary>Editable boxes that participate in HasContent and change events.</summary>
         private IEnumerable<TextBox> Fields()
         {
             yield return _item;
@@ -286,6 +312,7 @@ namespace CastRightCatchInvManagement
             yield return _price;
         }
 
+        /// <summary>Themed single-line editor used by every product field.</summary>
         private static TextBox MakeBox()
         {
             var box = new TextBox();
@@ -294,6 +321,7 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Read-only total cell styled like a grid amount.</summary>
         private static Label MakeTotal()
         {
             return new Label
@@ -307,8 +335,10 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Parse a money or quantity cell, treating blank or junk as zero.</summary>
         public static decimal ParseNumber(string? text)
         {
+            // Blank cells are zero so totals can sum mixed empty/filled lines.
             if (string.IsNullOrWhiteSpace(text))
                 return 0;
 
@@ -317,16 +347,21 @@ namespace CastRightCatchInvManagement
                 .Replace("lbs", "", StringComparison.OrdinalIgnoreCase)
                 .Trim();
 
+            // Prefer the user's locale (typed values).
             if (decimal.TryParse(cleaned, NumberStyles.Any, CultureInfo.CurrentCulture, out var value))
                 return value;
+            // CSV/PDF numbers often use invariant format.
             if (decimal.TryParse(cleaned, NumberStyles.Any, CultureInfo.InvariantCulture, out value))
                 return value;
+            // Unparseable text should not throw from a grid cell.
             return 0;
         }
     }
 
+    /// <summary>Column rectangles for a purchase product line at a given width.</summary>
     internal static class PurchaseLineLayout
     {
+        /// <summary>Compute editor bounds, giving leftover width to Description.</summary>
         public static PurchaseLineSlots Slots(int width)
         {
             int pad = 10;
@@ -361,6 +396,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Pixel bounds for each editor on a purchase line.</summary>
     internal readonly record struct PurchaseLineSlots(
         Rectangle Item,
         Rectangle Description,
@@ -373,6 +409,7 @@ namespace CastRightCatchInvManagement
         Rectangle Total,
         Rectangle Remove);
 
+    /// <summary>One product line as saved on a purchase order.</summary>
     internal sealed class PurchaseLine
     {
         public string ItemCode { get; set; } = "";

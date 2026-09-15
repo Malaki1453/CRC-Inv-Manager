@@ -13,8 +13,10 @@ namespace CastRightCatchInvManagement
         /// <summary>Start watching once the main window is up. No-op if Stay signed in is off.</summary>
         public static void Start()
         {
+            // Idle close only applies to remembered sessions (Admin policy + checkbox).
             if (!AppState.StaySignedIn)
                 return;
+            // Already watching this process; just treat startup as activity.
             if (_timer != null)
             {
                 NoteActivity();
@@ -29,8 +31,10 @@ namespace CastRightCatchInvManagement
             _timer.Start();
         }
 
+        /// <summary>Stop the idle timer and message filter, e.g. before a forced exit.</summary>
         public static void Stop()
         {
+            // Timer is null when Start never ran or Stop already ran.
             if (_timer != null)
             {
                 _timer.Stop();
@@ -38,6 +42,7 @@ namespace CastRightCatchInvManagement
                 _timer = null;
             }
 
+            // Filter is only installed after a stay-signed-in Start.
             if (_filter != null)
             {
                 Application.RemoveMessageFilter(_filter);
@@ -45,12 +50,16 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Record that the user just used the mouse or keyboard.</summary>
         public static void NoteActivity() => _lastActivityUtc = DateTime.UtcNow;
 
+        /// <summary>Exit the app when the Admin idle-hours window has elapsed with no input.</summary>
         private static void CheckIdle()
         {
+            // Policy may have been turned off, or we are already exiting.
             if (_closing || !AppState.StaySignedIn)
                 return;
+            // Still inside the allowed idle window.
             if (DateTime.UtcNow - _lastActivityUtc < Accounts.IdleCloseAfter)
                 return;
 
@@ -59,6 +68,7 @@ namespace CastRightCatchInvManagement
             Application.Exit();
         }
 
+        /// <summary>Treats keyboard and mouse messages as activity for the idle clock.</summary>
         private sealed class Filter : IMessageFilter
         {
             private const int WmKeyDown = 0x0100;
@@ -70,10 +80,12 @@ namespace CastRightCatchInvManagement
             private const int WmMouseWheel = 0x020A;
             private const int WmMouseMove = 0x0200;
 
+            /// <summary>Reset the idle clock on input without swallowing the message.</summary>
             public bool PreFilterMessage(ref Message m)
             {
                 switch (m.Msg)
                 {
+                    // Any keyboard or mouse input means the user is still here.
                     case WmKeyDown:
                     case WmSysKeyDown:
                     case WmLButtonDown:

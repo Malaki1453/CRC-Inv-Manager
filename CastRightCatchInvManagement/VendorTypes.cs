@@ -9,6 +9,7 @@ namespace CastRightCatchInvManagement
         public string Name { get; set; } = "";
         public List<string> Types { get; set; } = new();
 
+        /// <summary>List boxes show the filter name, falling back to the stored id.</summary>
         public override string ToString() => string.IsNullOrWhiteSpace(Name) ? Id : Name;
     }
 
@@ -45,16 +46,20 @@ namespace CastRightCatchInvManagement
 
         private static VendorTypeCatalog? _cache;
 
+        /// <summary>Copy of the Type names used by the Edit Vendor dropdown.</summary>
         public static List<string> Load() => Catalog().Types.ToList();
 
+        /// <summary>Shared catalog from settings, cached until the next write.</summary>
         public static VendorTypeCatalog Catalog()
         {
+            // Avoid re-reading JSON on every lookup field paint.
             if (_cache != null)
                 return _cache;
             _cache = Read();
             return _cache;
         }
 
+        /// <summary>Replace Type names and drop filter members that no longer exist.</summary>
         public static void SaveTypes(IEnumerable<string> types)
         {
             var catalog = Catalog();
@@ -64,37 +69,46 @@ namespace CastRightCatchInvManagement
             Write(catalog);
         }
 
+        /// <summary>Persist a full catalog after Admin edits types, filters, or slots.</summary>
         public static void SaveCatalog(VendorTypeCatalog catalog) => Write(Normalize(catalog));
 
+        /// <summary>True when this vendor's Type is in the filter assigned to the form slot.</summary>
         public static bool MatchesSlot(Dictionary<string, string> record, string slot)
         {
             var filter = FilterForSlot(slot);
+            // Empty or unassigned filters match nobody so lookups stay blank.
             if (filter == null || filter.Types.Count == 0)
                 return false;
             string type = DataFiles.GetRecord(record, "Type");
             return filter.Types.Any(item => item.Equals(type, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>The named type-group bound to a form field, or null if the slot is unset.</summary>
         public static VendorTypeFilter? FilterForSlot(string slot)
         {
             var catalog = Catalog();
+            // Slot has no filter id yet — the field should not guess a group.
             if (!catalog.Slots.TryGetValue(slot, out var id) || string.IsNullOrWhiteSpace(id))
                 return null;
             return catalog.Filters.FirstOrDefault(filter =>
                 filter.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>Short unique id for a new lookup filter.</summary>
         public static string NewFilterId() => Guid.NewGuid().ToString("N")[..10];
 
+        /// <summary>Rename a Type everywhere it is listed so filters stay in sync.</summary>
         public static void RenameType(string from, string to)
         {
             from = (from ?? "").Trim();
             to = (to ?? "").Trim();
+            // Blank names would wipe types from the dropdown.
             if (from.Length == 0 || to.Length == 0)
                 return;
             var catalog = Catalog();
             for (int i = 0; i < catalog.Types.Count; i++)
             {
+                // Keep list order; only replace the matching name.
                 if (catalog.Types[i].Equals(from, StringComparison.OrdinalIgnoreCase))
                     catalog.Types[i] = to;
             }
@@ -103,6 +117,7 @@ namespace CastRightCatchInvManagement
             {
                 for (int i = 0; i < filter.Types.Count; i++)
                 {
+                    // Filters store type names, so they must follow the rename.
                     if (filter.Types[i].Equals(from, StringComparison.OrdinalIgnoreCase))
                         filter.Types[i] = to;
                 }
@@ -111,15 +126,19 @@ namespace CastRightCatchInvManagement
             Write(catalog);
         }
 
+        /// <summary>Load catalog JSON, migrating the old name-only array if needed.</summary>
         private static VendorTypeCatalog Read()
         {
             var map = SqliteInventory.ReadPublicSettings();
+            // First run: Forwarder and Logistics with matching default filters.
             if (!map.TryGetValue(SettingKey, out var json) || string.IsNullOrWhiteSpace(json))
                 return Seed();
 
             json = json.Trim();
+            // Settings JSON can be an old name array or the full catalog object.
             try
             {
+                // Older builds stored only a string array of type names.
                 if (json.StartsWith('['))
                 {
                     var names = JsonSerializer.Deserialize<List<string>>(json, JsonOptions);
@@ -131,10 +150,12 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Corrupt settings must not block vendor forms.
                 return Seed();
             }
         }
 
+        /// <summary>Default Forwarder/Logistics types, filters, and purchase slots.</summary>
         private static VendorTypeCatalog Seed(IEnumerable<string>? extra = null)
         {
             var catalog = new VendorTypeCatalog
@@ -151,14 +172,17 @@ namespace CastRightCatchInvManagement
             return catalog;
         }
 
+        /// <summary>Fill missing built-in filters and repair empty slot assignments.</summary>
         private static VendorTypeCatalog Normalize(VendorTypeCatalog catalog)
         {
             catalog.Types = DistinctNames(catalog.Types);
             catalog.Filters ??= new List<VendorTypeFilter>();
             catalog.Slots ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+            // Keep the original Forwarder filter even if it was deleted from JSON.
             if (!catalog.Filters.Any(filter => filter.Id.Equals("forwarder", StringComparison.OrdinalIgnoreCase)))
                 catalog.Filters.Insert(0, new VendorTypeFilter { Id = "forwarder", Name = Forwarder, Types = { Forwarder } });
+            // Same for Logistics so purchase lookups always have a group.
             if (!catalog.Filters.Any(filter => filter.Id.Equals("logistics", StringComparison.OrdinalIgnoreCase)))
                 catalog.Filters.Add(new VendorTypeFilter { Id = "logistics", Name = Logistics, Types = { Logistics } });
 
@@ -171,6 +195,7 @@ namespace CastRightCatchInvManagement
 
             foreach (var slot in Slots)
             {
+                // Point the form field at the default filter when the stored id is gone.
                 if (!catalog.Slots.TryGetValue(slot.Slot, out var id) ||
                     string.IsNullOrWhiteSpace(id) ||
                     catalog.Filters.All(filter => !filter.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
@@ -180,6 +205,7 @@ namespace CastRightCatchInvManagement
             return catalog;
         }
 
+        /// <summary>Write the catalog to shared settings and refresh the in-memory cache.</summary>
         private static void Write(VendorTypeCatalog catalog)
         {
             catalog = Normalize(catalog);
@@ -190,9 +216,11 @@ namespace CastRightCatchInvManagement
             _cache = catalog;
         }
 
+        /// <summary>Case-insensitive membership check for Type names.</summary>
         private static bool ContainsType(List<string> types, string name) =>
             types.Any(item => item.Equals(name, StringComparison.OrdinalIgnoreCase));
 
+        /// <summary>Trim, drop blanks, and keep the first spelling of each Type name.</summary>
         private static List<string> DistinctNames(IEnumerable<string>? values)
         {
             var names = new List<string>();
@@ -200,6 +228,7 @@ namespace CastRightCatchInvManagement
             foreach (var raw in values ?? Array.Empty<string>())
             {
                 string name = (raw ?? "").Trim();
+                // Skip empty or duplicate names so the dropdown stays unique.
                 if (name.Length == 0 || !seen.Add(name))
                     continue;
                 names.Add(name);

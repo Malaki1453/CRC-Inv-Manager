@@ -3,6 +3,7 @@ namespace CastRightCatchInvManagement
     /// <summary>Page chrome: titles, data grids, and shared toolbar wiring.</summary>
     internal static class UiStyle
     {
+        /// <summary>Cream background and body font for a nested workspace page.</summary>
         public static void ApplyChildPage(Form form)
         {
             form.BackColor = Theme.Cream;
@@ -11,6 +12,7 @@ namespace CastRightCatchInvManagement
             Theme.EnableDoubleBuffer(form);
         }
 
+        /// <summary>Standard table page: jump picker, default-columns, grid, and double-click details.</summary>
         public static void ApplyDataPage(
             Form form,
             string titleText,
@@ -53,6 +55,7 @@ namespace CastRightCatchInvManagement
             Theme.StyleOutlineButton(setDefault);
             setDefault.Click += (_, _) =>
             {
+                // Accidental click should not overwrite another user's saved layout.
                 if (MessageBox.Show(
                         "Save the current columns as your default for this table?",
                         "Set default",
@@ -92,11 +95,13 @@ namespace CastRightCatchInvManagement
 
             grid.ColumnHeaderMouseClick += (_, e) =>
             {
+                // Left-click still sorts; hide is a right-click on a real column.
                 if (e.Button != MouseButtons.Right || e.ColumnIndex < 0)
                     return;
                 ShowRemoveColumnMenu(grid, e.ColumnIndex);
             };
 
+            // Optional primary action (New invoice, etc.) sits on the right of the toolbar.
             if (!string.IsNullOrWhiteSpace(actionText) && actionClick != null)
             {
                 var action = new Button { Text = actionText, Dock = DockStyle.Fill };
@@ -127,6 +132,7 @@ namespace CastRightCatchInvManagement
 
             grid.CellDoubleClick += (_, e) =>
             {
+                // Header double-click is not a record.
                 if (e.RowIndex < 0)
                     return;
                 RecordDetailsForm.ShowRecord(
@@ -153,10 +159,12 @@ namespace CastRightCatchInvManagement
         public static void AddDataPageAction(Form form, string text, EventHandler click, bool gold = false)
         {
             Panel? toolbar = FindDataToolbar(form);
+            // Page did not use ApplyDataPage, so there is no shared toolbar.
             if (toolbar == null)
                 return;
 
             var button = new Button { Text = text, Dock = DockStyle.Fill };
+            // Gold is the primary CTA; navy is a secondary action.
             if (gold)
                 Theme.StyleGoldButton(button);
             else
@@ -174,14 +182,17 @@ namespace CastRightCatchInvManagement
             toolbar.Controls.Add(host);
         }
 
+        /// <summary>Find the shared DataToolbar inside a page's card, if ApplyDataPage ran.</summary>
         private static Panel? FindDataToolbar(Form form)
         {
             foreach (Control outer in form.Controls)
             {
+                // Designer leftovers and chrome sit outside the content card.
                 if (outer is not CardPanel card)
                     continue;
                 foreach (Control inner in card.Controls)
                 {
+                    // The card also hosts the grid and search stage.
                     if (inner is Panel panel && panel.Name == "DataToolbar")
                         return panel;
                 }
@@ -190,6 +201,7 @@ namespace CastRightCatchInvManagement
             return null;
         }
 
+        /// <summary>Right-click row menu: extras, edit, and delete when the user can mutate the table.</summary>
         public static void BindRowEdit(
             DataGridView grid,
             Action<Dictionary<string, string>>? onEdit,
@@ -199,6 +211,7 @@ namespace CastRightCatchInvManagement
         {
             grid.CellMouseClick += (_, e) =>
             {
+                // Context menu is right-click on a data row, not the header.
                 if (e.Button != MouseButtons.Right || e.RowIndex < 0)
                     return;
 
@@ -207,11 +220,13 @@ namespace CastRightCatchInvManagement
                 try
                 {
                     int col = e.ColumnIndex;
+                    // Hidden or filler columns cannot be the current cell.
                     if (col < 0 || col >= grid.Columns.Count || !grid.Columns[col].Visible)
                     {
                         var first = grid.Columns.GetFirstColumn(DataGridViewElementStates.Visible);
                         col = first?.Index ?? 0;
                     }
+                    // CurrentCell is required for some grid edit paths.
                     if (col < grid.Columns.Count)
                         grid.CurrentCell = grid.Rows[e.RowIndex].Cells[col];
                 }
@@ -230,12 +245,14 @@ namespace CastRightCatchInvManagement
                     menu.Items.Add(item.Text, null, (_, _) => item.Click(record));
                 }
 
+                // Review-only and denied tables cannot edit live rows.
                 if (onEdit != null && canMutate)
                     menu.Items.Add(editText, null, (_, _) => onEdit(record));
                 if (canMutate && table.Length > 0)
                 {
                     menu.Items.Add("Delete", null, (_, _) =>
                     {
+                        // Deletes queue or apply immediately; confirm either way.
                         if (MessageBox.Show(
                                 "Delete this row?",
                                 "Delete",
@@ -244,15 +261,18 @@ namespace CastRightCatchInvManagement
                             return;
                         var result = DataFiles.MutateDelete(table, record);
                         var host = grid.FindForm();
+                        // Grid can be disposed mid-click if the page was stolen.
                         if (host == null)
                             return;
                         if (!result.Ok)
                             ToastAlert.Error(host, result.Message);
                         else if (result.Queued)
+                            // Non-admins queue deletes for Review instead of applying them.
                             ToastAlert.Success(host, result.Message);
                     });
                 }
 
+                // Review-only users get no items; skip an empty menu.
                 if (menu.Items.Count == 0)
                     return;
 
@@ -260,6 +280,7 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Context menu listing hidden columns the user is allowed to show again.</summary>
         internal static void ShowAddColumnMenu(DataGridView grid)
         {
             string table = grid.Tag is ColumnSearch search ? search.FileBaseName ?? "" : "";
@@ -281,6 +302,7 @@ namespace CastRightCatchInvManagement
             }
             else
             {
+                // Each item unhides one user-hidden column (not IT-denied columns).
                 foreach (var col in hidden)
                 {
                     var column = col;
@@ -288,6 +310,7 @@ namespace CastRightCatchInvManagement
                     {
                         column.Visible = true;
                         Theme.FitAllColumns(grid);
+                        // Jump picker and search boxes must match the new visible set.
                         if (grid.Tag is ColumnSearch search)
                             search.NotifyColumnsChanged();
                         GridLayout.Save(grid);
@@ -298,12 +321,15 @@ namespace CastRightCatchInvManagement
             menu.Show(grid, grid.PointToClient(Control.MousePosition));
         }
 
+        /// <summary>Right-click a header to hide that column, keeping at least one data column.</summary>
         private static void ShowRemoveColumnMenu(DataGridView grid, int columnIndex)
         {
+            // Click landed on the header gutter, not a column.
             if (columnIndex < 0 || columnIndex >= grid.Columns.Count)
                 return;
 
             var column = grid.Columns[columnIndex];
+            // The trailing "+" column is not a data field.
             if (!column.Visible || Theme.IsAddColumn(column))
                 return;
 
@@ -312,6 +338,7 @@ namespace CastRightCatchInvManagement
             {
                 int visible = grid.Columns.Cast<DataGridViewColumn>()
                     .Count(c => c.Visible && !Theme.IsAddColumn(c));
+                // A table with zero data columns cannot be used.
                 if (visible <= 1)
                     return;
 
@@ -324,12 +351,15 @@ namespace CastRightCatchInvManagement
             menu.Show(grid, grid.PointToClient(Control.MousePosition));
         }
 
+        /// <summary>Header title: catalog/custom label, or a built-in name for chrome pages.</summary>
         public static string PageTitle(AppPage page)
         {
             string custom = MenuLayout.LabelFor(page);
+            // Catalog pages (and Admin-renamed ones) win over the built-in chrome titles.
             if (custom.Length > 0)
                 return custom;
 
+            // Chrome pages are not in the menu catalog.
             return page switch
             {
                 AppPage.Dashboard => "Home",
@@ -342,8 +372,10 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Subtitle: term/view plus folder or file name, or a lock message with no folder.</summary>
         public static string PageSubtitle(AppPage page)
         {
+            // No folder or server yet: explain why tables are locked.
             if (!AppLock.HasFolder())
                 return "Select a data folder in Settings to unlock the workspace";
 

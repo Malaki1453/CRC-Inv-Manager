@@ -11,11 +11,14 @@ namespace CrcInventory.Protocol;
 /// </summary>
 public static class Wire
 {
+    /// <summary>Hard cap on a single frame so a peer cannot force a huge allocation.</summary>
     public const int MaxFrameBytes = 32 * 1024 * 1024;
 
+    /// <summary>Serializes <paramref name="frame"/> to JSON and writes the 4-byte length plus payload.</summary>
     public static async Task WriteAsync(Stream stream, object frame, CancellationToken cancel = default)
     {
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(frame, JsonWire.Options);
+        // Refuse to send a frame that the peer would reject as oversized.
         if (json.Length > MaxFrameBytes)
             throw new InvalidOperationException("Frame is larger than " + MaxFrameBytes + " bytes.");
 
@@ -26,10 +29,12 @@ public static class Wire
         await stream.FlushAsync(cancel).ConfigureAwait(false);
     }
 
+    /// <summary>Reads one length-prefixed JSON frame and deserializes it as <typeparamref name="T"/>.</summary>
     public static async Task<T?> ReadAsync<T>(Stream stream, CancellationToken cancel = default)
     {
         byte[] header = await ReadExactAsync(stream, 4, cancel).ConfigureAwait(false);
         int length = BinaryPrimitives.ReadInt32BigEndian(header);
+        // Negative or huge lengths would allocate badly or never finish; abort the frame.
         if (length < 0 || length > MaxFrameBytes)
             throw new InvalidOperationException("Invalid frame length " + length + ".");
 
@@ -37,6 +42,7 @@ public static class Wire
         return JsonSerializer.Deserialize<T>(json, JsonWire.Options);
     }
 
+    /// <summary>Builds a request with a new correlation id and a JSON payload (empty object when null).</summary>
     public static WireRequest Request(string op, object? payload)
     {
         JsonElement element = payload == null
@@ -52,6 +58,7 @@ public static class Wire
         };
     }
 
+    /// <summary>Builds a success response; omits payload when <paramref name="payload"/> is null.</summary>
     public static WireResponse Ok(string id, object? payload)
     {
         JsonElement? element = payload == null
@@ -67,6 +74,7 @@ public static class Wire
         };
     }
 
+    /// <summary>Builds a failure response with a public error string and no payload.</summary>
     public static WireResponse Fail(string id, string error) => new()
     {
         Version = ServerOps.ProtocolVersion,
@@ -75,6 +83,7 @@ public static class Wire
         Error = error
     };
 
+    /// <summary>Reads exactly <paramref name="count"/> bytes, throwing if the stream ends early.</summary>
     private static async Task<byte[]> ReadExactAsync(Stream stream, int count, CancellationToken cancel)
     {
         byte[] buffer = new byte[count];
@@ -83,6 +92,7 @@ public static class Wire
         {
             int read = await stream.ReadAsync(buffer.AsMemory(offset, count - offset), cancel)
                 .ConfigureAwait(false);
+            // Zero bytes means the peer closed before the frame was complete.
             if (read == 0)
                 throw new EndOfStreamException();
             offset += read;
@@ -91,5 +101,6 @@ public static class Wire
         return buffer;
     }
 
+    /// <summary>UTF-8 decode of a JSON buffer, for logging or diagnostics.</summary>
     public static string Describe(byte[] json) => Encoding.UTF8.GetString(json);
 }

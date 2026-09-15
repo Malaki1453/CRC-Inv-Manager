@@ -5,6 +5,7 @@ namespace CastRightCatchInvManagement
     /// <summary>Draws an invoice PDF from an InvoiceDraft, including company info from Settings.</summary>
     internal static class InvoiceDocument
     {
+        /// <summary>Draw an invoice PDF from the draft and store it by invoice number.</summary>
         public static string Save(InvoiceDraft draft)
         {
             string party = draft.Received
@@ -18,6 +19,7 @@ namespace CastRightCatchInvManagement
                 Draw(draft).ToPdf());
         }
 
+        /// <summary>Lay out letterhead or vendor header, sold-to/ship-to, item table, and totals.</summary>
         private static PdfDraw Draw(InvoiceDraft draft)
         {
             var g = new PdfDraw();
@@ -40,6 +42,7 @@ namespace CastRightCatchInvManagement
             string partyCode = received ? draft.VendorCode : draft.CustomerCode;
 
             float y = PdfLetterhead.Draw(g, brand: !received);
+            // Received invoices print the vendor as issuer instead of our letterhead.
             if (received)
             {
                 g.Fill(36, y, 4, 44, Theme.Gold);
@@ -57,6 +60,7 @@ namespace CastRightCatchInvManagement
             g.TextRight(490, y + 28, draft.InvoiceNumber, 9, true, Theme.Ink);
             g.Text(516, y + 28, draft.InvoiceDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink, center: true, width: 52);
             g.Line(494, y, 494, y + 36);
+            // Incoming vendor invoices do not print our EIN.
             if (ein.Length > 0)
                 g.Text(430, y + 48, "TAX ID# " + ein, 8, false, Theme.Ink);
 
@@ -109,6 +113,7 @@ namespace CastRightCatchInvManagement
             {
                 var line = draft.Lines[i];
                 float ly = y + i * rowH;
+                // Zebra-stripe odd rows so the item table is easier to scan.
                 if (i % 2 == 1)
                     g.Fill(36.5f, ly, 539, rowH, Theme.GridAlt);
                 g.Text(42, ly + 12, Clip(line.PoNumber, 12), 7.5f, false, Theme.Ink);
@@ -150,6 +155,7 @@ namespace CastRightCatchInvManagement
             g.TextRight(528, ty + 59, "INVOICE TOTAL", 8, true, Theme.Cream);
             g.TextRight(572, ty + 59, FormatMoney(draft.InvoiceTotal), 8, true, Theme.Cream);
 
+            // Footer wording depends on whether we issued or received the invoice.
             if (received)
             {
                 g.Text(36, 748, "VENDOR INVOICE AS RECEIVED. CAST RIGHT CATCH IS THE RECEIVING COMPANY.", 6.5f, false, Theme.Muted);
@@ -166,6 +172,7 @@ namespace CastRightCatchInvManagement
             return g;
         }
 
+        /// <summary>One discount/freight/tax row; zero amounts stay blank instead of printing 0.00.</summary>
         private static void DrawTotalRow(PdfDraw g, float y, string label, decimal value)
         {
             g.TextRight(528, y + 12, label, 8, true, Theme.Navy);
@@ -174,6 +181,7 @@ namespace CastRightCatchInvManagement
             g.Line(422, y + 16, 576, y + 16);
         }
 
+        /// <summary>Print up to three Sold To / Ship To lines.</summary>
         private static void DrawBlock(PdfDraw g, float x, float y, string text)
         {
             var lines = (text ?? "").Replace("\r", "").Split('\n');
@@ -181,8 +189,10 @@ namespace CastRightCatchInvManagement
                 g.Text(x, y + i * 11, Clip(lines[i], 46), 8, false, Theme.Ink);
         }
 
+        /// <summary>Format a money amount with two decimal places.</summary>
         private static string FormatMoney(decimal value) => value.ToString("0.00", CultureInfo.InvariantCulture);
 
+        /// <summary>Format a quantity, leaving blank cells empty instead of printing 0.</summary>
         private static string FormatQty(string? value)
         {
             decimal n = InvoiceLineRow.ParseNumber(value);
@@ -191,17 +201,20 @@ namespace CastRightCatchInvManagement
             return n.ToString("0.###", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>Trim text that would overflow a PDF column, adding a trailing period.</summary>
         private static string Clip(string? text, int max)
         {
             text ??= "";
             return text.Length <= max ? text : text[..(max - 1)] + ".";
         }
 
+        /// <summary>First non-blank value, used for company and party fallbacks.</summary>
         private static string FirstNonEmpty(params string?[] values)
         {
             return values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)) ?? "";
         }
 
+        /// <summary>Replace characters that cannot appear in a stored PDF file name.</summary>
         private static string SanitizeFile(string name)
         {
             foreach (var c in Path.GetInvalidFileNameChars())

@@ -5,14 +5,17 @@ namespace CastRightCatchInvManagement
     /// <summary>Sale PDF stored by customer PO #.</summary>
     internal static class SaleDocument
     {
+        /// <summary>Build and store a sale PDF for this customer PO, or null when no lines exist.</summary>
         public static string? SaveFromPo(string? po)
         {
             var rows = DataFiles.FindSalesByPo(po);
             return rows.Count == 0 ? null : Save(rows);
         }
 
+        /// <summary>Draw a sale PDF from the given lines and store it by customer PO #.</summary>
         public static string Save(IReadOnlyList<Dictionary<string, string>> rows)
         {
+            // A sale PDF needs at least one product line.
             if (rows.Count == 0)
                 throw new InvalidOperationException("This sale has no lines.");
 
@@ -23,6 +26,7 @@ namespace CastRightCatchInvManagement
             return PdfFile.Save(DataFiles.PdfKindSale, po, title, BuildPage(rows));
         }
 
+        /// <summary>Lay out letterhead, customer fields, and the item table for the sale PDF.</summary>
         private static PdfDraw BuildPage(IReadOnlyList<Dictionary<string, string>> rows)
         {
             var first = rows[0];
@@ -77,6 +81,7 @@ namespace CastRightCatchInvManagement
             {
                 var row = rows[i];
                 float ly = y + i * rowH;
+                // Zebra-stripe odd rows so the item table is easier to scan.
                 if (i % 2 == 1)
                     g.Fill(36.5f, ly, 539, rowH, Theme.GridAlt);
                 g.Text(42, ly + 12, Clip(DataFiles.GetRecord(row, "Item Code"), 12), 7.5f, false, Theme.Ink);
@@ -109,18 +114,21 @@ namespace CastRightCatchInvManagement
             return g;
         }
 
+        /// <summary>Format a quantity, leaving blank cells empty instead of printing 0.</summary>
         private static string Qty(string? value)
         {
             decimal n = InvoiceLineRow.ParseNumber(value);
             return n == 0 && string.IsNullOrWhiteSpace(value) ? "" : n.ToString("0.###", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>Format money, leaving blank cells empty instead of printing 0.00.</summary>
         private static string Money(string? value)
         {
             decimal n = InvoiceLineRow.ParseNumber(value);
             return n == 0 && string.IsNullOrWhiteSpace(value) ? "" : n.ToString("0.00", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>Trim text that would overflow a PDF column, adding a trailing period.</summary>
         private static string Clip(string? text, int max)
         {
             text ??= "";

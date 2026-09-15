@@ -6,6 +6,7 @@ namespace CastRightCatchInvManagement
         private DataGridView _grid = null!;
         private readonly List<Dictionary<string, string>> _rows = new();
 
+        /// <summary>Build the Review page and load waiting add/edit/delete requests.</summary>
         public PendingChanges()
         {
             Text = "Review";
@@ -16,8 +17,10 @@ namespace CastRightCatchInvManagement
             LoadTable();
         }
 
+        /// <summary>Reload queued changes when this page is shown.</summary>
         public void HighlightCurrentPage() => LoadTable();
 
+        /// <summary>Lay out the review grid and Accept / Reject actions.</summary>
         private void BuildUi()
         {
             var title = new Label
@@ -71,6 +74,7 @@ namespace CastRightCatchInvManagement
             _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             _grid.CellDoubleClick += (_, e) =>
             {
+                // Header clicks and stale indexes have no pending row to open.
                 if (e.RowIndex < 0 || e.RowIndex >= _rows.Count)
                     return;
                 RecordDetailsForm.ShowRecord(this, "Pending change", _rows[e.RowIndex]);
@@ -85,12 +89,14 @@ namespace CastRightCatchInvManagement
             Controls.Add(title);
         }
 
+        /// <summary>Show only requests still waiting for Accept or Reject.</summary>
         private void LoadTable()
         {
             _rows.Clear();
             _grid.Rows.Clear();
             foreach (var record in DataFiles.ReadRecords(DataFiles.PendingChanges))
             {
+                // Already decided rows stay in history but not on this queue.
                 if (!DataFiles.GetRecord(record, "Status").Equals("pending", StringComparison.OrdinalIgnoreCase))
                     continue;
                 _rows.Add(record);
@@ -103,17 +109,21 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>The pending record for the current grid row, or null if none.</summary>
         private Dictionary<string, string>? Selected()
         {
+            // No current row until the user clicks a request.
             if (_grid.CurrentRow == null)
                 return null;
             int index = _grid.CurrentRow.Index;
             return index >= 0 && index < _rows.Count ? _rows[index] : null;
         }
 
+        /// <summary>Accept the selected request into live tables, or reject and undo it.</summary>
         private void Review(bool accept)
         {
             var record = Selected();
+            // Accept/Reject need a selected request so we do not guess.
             if (record == null)
             {
                 ToastAlert.Error(this, "Select a pending change first.");
@@ -121,6 +131,7 @@ namespace CastRightCatchInvManagement
             }
 
             bool ok = accept ? DataFiles.AcceptPending(record) : DataFiles.RejectPending(record);
+            // Leave the row in place when the write fails so they can retry.
             if (!ok)
             {
                 ToastAlert.Error(this, "Could not update that request.");

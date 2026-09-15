@@ -42,6 +42,7 @@ namespace CastRightCatchInvManagement
             form.ShowDialog();
         }
 
+        /// <summary>Build identity, banking, and history for add or edit.</summary>
         private PartyEditForm(bool vendor, Dictionary<string, string>? record)
         {
             _vendor = vendor;
@@ -62,6 +63,7 @@ namespace CastRightCatchInvManagement
             BackColor = Theme.Cream;
             Font = Theme.Body;
             ForeColor = Theme.Ink;
+            // Match other CRC dialogs when the brand icon is present.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
 
@@ -107,6 +109,7 @@ namespace CastRightCatchInvManagement
             Theme.StyleGoldButton(save);
             save.Click += (_, _) =>
             {
+                // Close only after a successful write or queued confirm.
                 if (SaveRecord())
                     DialogResult = DialogResult.OK;
             };
@@ -145,6 +148,7 @@ namespace CastRightCatchInvManagement
             _established = new TextBox { Visible = false };
 
             CardPanel identity;
+            // Vendor layout omits email/address and uses Type/amount.
             if (vendor)
             {
                 identity = Section("Identity", 266, 5, out var grid);
@@ -163,6 +167,7 @@ namespace CastRightCatchInvManagement
                 _established.PlaceholderText = "0.00";
                 FillVendorTypes(_type, record == null ? "" : DataFiles.GetRecord(record, "Type"));
             }
+            // Opposite branch of the condition above.
             else
             {
                 identity = Section("Identity", 340, 4, out var grid);
@@ -200,6 +205,7 @@ namespace CastRightCatchInvManagement
             _account.PlaceholderText = "Full account number — only last 4 is shown after save";
             _account.GotFocus += (_, _) =>
             {
+                // Masked last-4 is not a new account number to save.
                 if (_account.Text.Contains('•'))
                     _account.SelectAll();
             };
@@ -219,6 +225,7 @@ namespace CastRightCatchInvManagement
             Theme.StyleField(_notes);
             var history = BuildHistoryCard(vendor, record, _notes);
 
+            // Editing prefills identity and banking from the row.
             if (record != null)
             {
                 _code.Text = DataFiles.GetRecord(record, "Code");
@@ -228,11 +235,13 @@ namespace CastRightCatchInvManagement
                 _balance.Text = DataFiles.GetRecord(record, "Current Balance");
                 _terms.Text = DataFiles.GetRecord(record, "Terms");
                 _notes.Text = First(record, "Description", "Notes");
+                // Vendor layout omits email/address and uses Type/amount.
                 if (vendor)
                 {
                     _contact.Text = DataFiles.GetRecord(record, "Contact Name");
                     _established.Text = DataFiles.GetRecord(record, "Amount");
                 }
+                // Opposite branch of the condition above.
                 else
                 {
                     _extra.Text = DataFiles.GetRecord(record, "Credit Limit");
@@ -277,16 +286,20 @@ namespace CastRightCatchInvManagement
             Controls.Add(header);
         }
 
+        /// <summary>Header subtitle from company, name, and code as they type.</summary>
         private void UpdateSubtitle()
         {
             string name = _name.Text.Trim();
             string company = _company.Text.Trim();
             string code = _code.Text.Trim();
             var parts = new List<string>();
+            // Company is extra context only when it differs from the name.
             if (company.Length > 0 && !company.Equals(name, StringComparison.OrdinalIgnoreCase))
                 parts.Add(company);
+            // Use name when company is blank or the same.
             else if (name.Length > 0)
                 parts.Add(name);
+            // Code helps staff find the same row in the lookup grid.
             if (code.Length > 0)
                 parts.Add(code);
             _subtitle.Text = parts.Count > 0
@@ -297,6 +310,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Insert or replace the customer/vendor by Code. Returns false if validation fails.</summary>
         private bool SaveRecord()
         {
+            // Cannot write a party without a database.
             if (!AppLock.HasFolder())
             {
                 MessageBox.Show("Select a data folder in Settings first.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -305,6 +319,7 @@ namespace CastRightCatchInvManagement
 
             string code = _code.Text.Trim();
             string name = _name.Text.Trim();
+            // Code and name are required identity.
             if (code.Length == 0 || name.Length == 0)
             {
                 MessageBox.Show("Enter a code and a name.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -314,6 +329,7 @@ namespace CastRightCatchInvManagement
             string baseName = _vendor ? DataFiles.Vendors : DataFiles.Customers;
             bool exists = DataFiles.ReadAllRecords(baseName).Any(record =>
                 DataFiles.GetRecord(record, "Code").Equals(code, StringComparison.OrdinalIgnoreCase));
+            // Do not steal another party’s code when renaming.
             if (exists && !code.Equals(_originalCode, StringComparison.OrdinalIgnoreCase))
             {
                 MessageBox.Show("That code is already in use.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -334,9 +350,11 @@ namespace CastRightCatchInvManagement
                 [DataFiles.AccountNumber] = DataFiles.ResolveAccountNumber(_account.Text, _storedAccount)
             };
 
+            // Vendors store Type/amount; customers store email/address/credit.
             if (_vendor)
             {
                 string type = (_type.SelectedItem as string ?? _type.Text).Trim();
+                // Vendor Type is required so lookup filters can match.
                 if (type.Length == 0)
                 {
                     MessageBox.Show("Choose a type.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -347,6 +365,7 @@ namespace CastRightCatchInvManagement
                 fields["Contact Name"] = _contact.Text.Trim();
                 fields["Amount"] = _established.Text.Trim();
             }
+            // Opposite branch of the condition above.
             else
             {
                 fields["Credit Limit"] = _extra.Text.Trim();
@@ -356,9 +375,11 @@ namespace CastRightCatchInvManagement
                 fields["Established"] = _established.Text.Trim();
             }
 
+            // Mutate can throw if the database is locked.
             try
             {
                 MutateResult result;
+                // Editing replaces the existing code row.
                 if (_originalCode.Length > 0)
                 {
                     result = DataFiles.MutateUpdate(
@@ -367,22 +388,26 @@ namespace CastRightCatchInvManagement
                             .Equals(_originalCode, StringComparison.OrdinalIgnoreCase),
                         fields);
                 }
+                // Opposite branch of the condition above.
                 else
                 {
                     result = DataFiles.MutateInsert(baseName, fields);
                 }
 
+                // Validation or write errors keep the dialog open.
                 if (!result.Ok)
                 {
                     MessageBox.Show(result.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return false;
                 }
 
+                // Confirm-first users need to know the row is waiting on Review.
                 if (result.Queued)
                     MessageBox.Show(result.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                 return true;
             }
+            // Keep the dialog open so they can retry.
             catch (Exception ex)
             {
                 MessageBox.Show(ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -390,11 +415,13 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>First non-blank field among the given keys.</summary>
         private static string First(Dictionary<string, string> record, params string[] keys)
         {
             foreach (var key in keys)
             {
                 string value = DataFiles.GetRecord(record, key).Trim();
+                // Prefer the first populated identity field.
                 if (value.Length > 0)
                     return value;
             }
@@ -402,6 +429,7 @@ namespace CastRightCatchInvManagement
             return "";
         }
 
+        /// <summary>Absolute row heights, or 100% for a 0 sentinel.</summary>
         private static void SetRowHeights(TableLayoutPanel grid, params int[] heights)
         {
             grid.RowStyles.Clear();
@@ -451,8 +479,10 @@ namespace CastRightCatchInvManagement
             descPage.Controls.Add(notes);
 
             var lines = MakeHistoryGrid();
+            // Vendor layout omits email/address and uses Type/amount.
             if (vendor)
                 FillPurchases(lines, code, name);
+            // Opposite branch of the condition above.
             else
                 FillSales(lines, code, name);
             var linesPage = new TabPage(vendor ? "Purchases" : "Sales")
@@ -480,8 +510,10 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Owner-draw history tabs with a gold underline when selected.</summary>
         private static void PaintHistoryTab(object? sender, DrawItemEventArgs e)
         {
+            // Owner-draw can fire for a removed tab.
             if (sender is not TabControl tabs || e.Index < 0 || e.Index >= tabs.TabCount)
                 return;
 
@@ -496,6 +528,7 @@ namespace CastRightCatchInvManagement
                 bounds,
                 selected ? Theme.Navy : Theme.Muted,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            // Gold underline marks the active history tab.
             if (selected)
             {
                 using var gold = new SolidBrush(Theme.Gold);
@@ -503,6 +536,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Read-only grid used for sales, purchases, or bank lines.</summary>
         private static DataGridView MakeHistoryGrid()
         {
             var grid = new DataGridView
@@ -515,6 +549,7 @@ namespace CastRightCatchInvManagement
             return grid;
         }
 
+        /// <summary>Customer sales history: SO, invoice, dates, and amounts.</summary>
         private static void FillSales(DataGridView grid, string code, string name)
         {
             grid.Columns.Clear();
@@ -524,10 +559,12 @@ namespace CastRightCatchInvManagement
             grid.Columns.Add("Item Code", "Item Code");
             grid.Columns.Add("Amount", "Amount");
 
+            // Blank parties have no history to load.
             if (code.Length > 0 || name.Length > 0)
             {
                 foreach (var sale in DataFiles.VisibleRecords(DataFiles.Sales))
                 {
+                    // Skip queued adds and other customers’ sales.
                     if (DataFiles.IsWaitingAdd(sale) || !DataFiles.MatchesCustomer(sale, code, name))
                         continue;
                     grid.Rows.Add(
@@ -539,10 +576,12 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            // Placeholder so the history tab is not a blank hole.
             if (grid.Rows.Count == 0)
                 grid.Rows.Add("No sales yet", "", "", "", "");
         }
 
+        /// <summary>Vendor purchase history: PO, dates, and amounts.</summary>
         private static void FillPurchases(DataGridView grid, string code, string name)
         {
             grid.Columns.Clear();
@@ -552,10 +591,12 @@ namespace CastRightCatchInvManagement
             grid.Columns.Add("Species", "Species");
             grid.Columns.Add("Total Cost", "Total Cost");
 
+            // Blank parties have no history to load.
             if (code.Length > 0 || name.Length > 0)
             {
                 foreach (var purchase in DataFiles.VisibleRecords(DataFiles.PurchaseSales))
                 {
+                    // Skip queued adds and other vendors’ purchases.
                     if (DataFiles.IsWaitingAdd(purchase) || !DataFiles.MatchesVendor(purchase, code, name))
                         continue;
                     grid.Rows.Add(
@@ -567,10 +608,12 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            // Placeholder so the history tab is not a blank hole.
             if (grid.Rows.Count == 0)
                 grid.Rows.Add("No purchases yet", "", "", "", "");
         }
 
+        /// <summary>Titled card wrapping a field grid.</summary>
         private static CardPanel Section(string title, int height, int columns, out TableLayoutPanel grid)
         {
             var card = new CardPanel
@@ -607,6 +650,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Caption plus text box in a table cell.</summary>
         private static TextBox PutField(
             TableLayoutPanel grid,
             int col,
@@ -640,16 +684,19 @@ namespace CastRightCatchInvManagement
             };
             Theme.StyleFieldLabel(label);
             box.Dock = multiline ? DockStyle.Fill : DockStyle.Top;
+            // Single-line fields stay one row high.
             if (!multiline)
                 box.Height = 28;
             cell.Controls.Add(box);
             cell.Controls.Add(label);
             grid.Controls.Add(cell, col, row);
+            // Notes/address span the full identity row.
             if (colSpan > 1)
                 grid.SetColumnSpan(cell, colSpan);
             return box;
         }
 
+        /// <summary>Caption plus drop-down in a table cell.</summary>
         private static ComboBox PutCombo(TableLayoutPanel grid, int col, int row, string caption)
         {
             while (grid.RowCount <= row)
@@ -683,6 +730,7 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Type names from Admin, restoring the current Type.</summary>
         private static void FillVendorTypes(ComboBox box, string selected)
         {
             box.Items.Clear();
@@ -690,6 +738,7 @@ namespace CastRightCatchInvManagement
                 box.Items.Add(name);
 
             selected = (selected ?? "").Trim();
+            // New vendors start with no Type selected.
             if (selected.Length == 0)
             {
                 box.SelectedIndex = -1;
@@ -698,6 +747,7 @@ namespace CastRightCatchInvManagement
 
             for (int i = 0; i < box.Items.Count; i++)
             {
+                // Restore the stored Type ignoring case.
                 if (box.Items[i] is string item &&
                     item.Equals(selected, StringComparison.OrdinalIgnoreCase))
                 {

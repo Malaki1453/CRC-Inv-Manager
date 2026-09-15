@@ -44,6 +44,7 @@ namespace CastRightCatchInvManagement
         public static readonly Font HeroTitle = CreateFont("Georgia", 28f, FontStyle.Bold);
         public static readonly Font HeroSub = CreateFont("Georgia", 12f, FontStyle.Italic);
 
+        /// <summary>Create a font, falling back to Segoe UI when the family is missing.</summary>
         public static Font CreateFont(string family, float size, FontStyle style)
         {
             try
@@ -52,10 +53,12 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Georgia (and similar) may be missing on locked-down PCs.
                 return new Font("Segoe UI", size, style, GraphicsUnit.Point);
             }
         }
 
+        /// <summary>Turn on the protected DoubleBuffered flag to cut nested-page flicker.</summary>
         public static void EnableDoubleBuffer(Control control)
         {
             typeof(Control)
@@ -65,6 +68,7 @@ namespace CastRightCatchInvManagement
                 ?.SetValue(control, true, null);
         }
 
+        /// <summary>Georgia page title on navy ink, left-aligned in a fixed-height label.</summary>
         public static void StylePageTitle(Label label)
         {
             label.Font = PageTitle;
@@ -73,6 +77,7 @@ namespace CastRightCatchInvManagement
             label.TextAlign = ContentAlignment.MiddleLeft;
         }
 
+        /// <summary>Primary gold CTA used on save/sign-in.</summary>
         public static void StyleGoldButton(Button button)
         {
             button.FlatStyle = FlatStyle.Flat;
@@ -86,6 +91,7 @@ namespace CastRightCatchInvManagement
             button.UseVisualStyleBackColor = false;
         }
 
+        /// <summary>Solid navy action button used on toolbars.</summary>
         public static void StyleNavyButton(Button button)
         {
             button.FlatStyle = FlatStyle.Flat;
@@ -99,6 +105,7 @@ namespace CastRightCatchInvManagement
             button.UseVisualStyleBackColor = false;
         }
 
+        /// <summary>White navy-outline button for secondary actions.</summary>
         public static void StyleOutlineButton(Button button)
         {
             button.FlatStyle = FlatStyle.Flat;
@@ -111,6 +118,7 @@ namespace CastRightCatchInvManagement
             button.UseVisualStyleBackColor = false;
         }
 
+        /// <summary>Single-border paper text box.</summary>
         public static void StyleField(TextBox box)
         {
             box.BorderStyle = BorderStyle.FixedSingle;
@@ -119,6 +127,7 @@ namespace CastRightCatchInvManagement
             box.ForeColor = Ink;
         }
 
+        /// <summary>Flat paper combo used on data forms.</summary>
         public static void StyleCombo(ComboBox box)
         {
             box.FlatStyle = FlatStyle.Flat;
@@ -127,6 +136,7 @@ namespace CastRightCatchInvManagement
             box.ForeColor = Ink;
         }
 
+        /// <summary>Small muted caption above a field.</summary>
         public static void StyleFieldLabel(Label label)
         {
             label.Font = Caption;
@@ -134,6 +144,7 @@ namespace CastRightCatchInvManagement
             label.AutoSize = true;
         }
 
+        /// <summary>Navy headers, cream rows, full-row select, and custom cell borders.</summary>
         public static void StyleGrid(DataGridView grid)
         {
             grid.BackgroundColor = Paper;
@@ -182,12 +193,15 @@ namespace CastRightCatchInvManagement
             grid.CellPainting += PaintGridDataCell;
         }
 
+        /// <summary>Paint default cell contents plus a single hairline under each data cell.</summary>
         private static void PaintGridDataCell(object? sender, DataGridViewCellPaintingEventArgs e)
         {
+            // Headers use their own painter.
             if (e.RowIndex < 0 || e.ColumnIndex < 0)
                 return;
 
             e.Paint(e.CellBounds, DataGridViewPaintParts.All & ~DataGridViewPaintParts.Border);
+            // Graphics can be null in some accessibility paint paths.
             if (e.Graphics != null)
             {
                 using var pen = new Pen(GridLine, 1);
@@ -198,6 +212,7 @@ namespace CastRightCatchInvManagement
             e.Handled = true;
         }
 
+        /// <summary>Manual column widths with both scrollbars so FitAllColumns can stretch leftover space.</summary>
         public static void ApplyTableScrollMode(DataGridView grid)
         {
             EnsureManualColumnWidths(grid);
@@ -205,14 +220,17 @@ namespace CastRightCatchInvManagement
             grid.AllowUserToResizeColumns = true;
         }
 
+        /// <summary>Size each visible data column to its longest cell, then fill leftover width.</summary>
         public static void FitAllColumns(DataGridView grid)
         {
+            // Newly created grids have no columns until data binds.
             if (grid.Columns.Count == 0)
                 return;
 
             EnsureManualColumnWidths(grid);
             for (int i = 0; i < grid.Columns.Count; i++)
             {
+                // Hidden and "+" columns are not measured.
                 if (!grid.Columns[i].Visible || IsAddColumn(grid.Columns[i]))
                     continue;
                 FitLongest(grid, i);
@@ -224,18 +242,22 @@ namespace CastRightCatchInvManagement
         public const string AddColumnTag = "__add_column__";
         public const int AddColumnWidth = 42;
 
+        /// <summary>True for the trailing "+" column that opens the add-column menu.</summary>
         public static bool IsAddColumn(DataGridViewColumn? column)
         {
             return column != null &&
                    string.Equals(column.Tag as string, AddColumnTag, StringComparison.Ordinal);
         }
 
+        /// <summary>Append the "+" column once, skipping empty or status-only grids.</summary>
         public static void EnsureAddColumn(DataGridView grid)
         {
+            // Already has the trailing "+" control column.
             if (grid.Columns.Cast<DataGridViewColumn>().Any(IsAddColumn))
                 return;
             if (grid.Columns.Count == 0)
                 return;
+            // Status-only pending grids have no user-hidable fields.
             if (grid.Columns.Count == 1 &&
                 string.Equals(grid.Columns[0].HeaderText, "Status", StringComparison.OrdinalIgnoreCase))
                 return;
@@ -258,11 +280,13 @@ namespace CastRightCatchInvManagement
             grid.Columns.Add(add);
         }
 
+        /// <summary>Give leftover client width to visible data columns so the row fills the card.</summary>
         public static void StretchVisibleColumns(DataGridView grid)
         {
             var visible = grid.Columns.Cast<DataGridViewColumn>()
                 .Where(c => c.Visible && !IsAddColumn(c))
                 .ToList();
+            // Nothing to stretch when every data column is hidden.
             if (visible.Count == 0)
                 return;
 
@@ -277,10 +301,12 @@ namespace CastRightCatchInvManagement
             }
 
             int available = Math.Max(0, grid.ClientSize.Width - 2);
+            // A visible vertical scrollbar steals width from the last column.
             if (grid.Controls.OfType<VScrollBar>().Any(bar => bar.Visible))
                 available -= SystemInformation.VerticalScrollBarWidth;
 
             int extra = available - used;
+            // Columns already overflow; leave horizontal scroll instead of shrinking.
             if (extra <= 0)
                 return;
 
@@ -293,17 +319,20 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Solid navy fill for a custom column-header cell.</summary>
         public static void PaintHeaderBackground(Graphics g, Rectangle bounds)
         {
             using var fill = new SolidBrush(HeaderBack);
             g.FillRectangle(fill, bounds);
         }
 
+        /// <summary>Sort chevron; active sort gets a gold chip behind the arrow.</summary>
         public static void PaintHeaderArrow(Graphics g, Rectangle bounds, bool active, bool up)
         {
             int cx = bounds.X + bounds.Width / 2;
             int cy = bounds.Y + bounds.Height / 2;
 
+            // Idle headers keep a faint chevron without the gold chip.
             if (active)
             {
                 var chip = new Rectangle(cx - 9, cy - 9, 18, 18);
@@ -320,8 +349,10 @@ namespace CastRightCatchInvManagement
             g.FillPolygon(brush, pts);
         }
 
+        /// <summary>Switch AutoSize off while keeping current pixel widths so FitAllColumns can run.</summary>
         public static void EnsureManualColumnWidths(DataGridView grid)
         {
+            // Already manual; changing mode would reset widths.
             if (grid.AutoSizeColumnsMode == DataGridViewAutoSizeColumnsMode.None)
                 return;
 
@@ -334,6 +365,7 @@ namespace CastRightCatchInvManagement
                 grid.Columns[i].Width = widths[i];
         }
 
+        /// <summary>Pixel width of a cell or header, plus padding for two extra characters.</summary>
         public static int MeasureColumnText(DataGridView grid, string? text, Font? font)
         {
             font ??= grid.DefaultCellStyle.Font ?? Body;
@@ -347,8 +379,10 @@ namespace CastRightCatchInvManagement
             return size.Width + 24 + twoChars;
         }
 
+        /// <summary>Set one column to the widest of its header and cell values.</summary>
         public static void FitLongest(DataGridView grid, int columnIndex)
         {
+            // Caller may pass a removed column after a layout change.
             if (columnIndex < 0 || columnIndex >= grid.Columns.Count)
                 return;
 
@@ -357,6 +391,7 @@ namespace CastRightCatchInvManagement
             var cellFont = grid.DefaultCellStyle.Font ?? Body;
             foreach (DataGridViewRow row in grid.Rows)
             {
+                // The asterisk new-row has no values to measure.
                 if (row.IsNewRow)
                     continue;
                 width = Math.Max(width, MeasureColumnText(grid, row.Cells[columnIndex].Value?.ToString(), cellFont));
@@ -365,12 +400,14 @@ namespace CastRightCatchInvManagement
             SetColumnWidth(grid, columnIndex, width);
         }
 
+        /// <summary>Clamp a column width so it stays usable but cannot blow out the grid.</summary>
         private static void SetColumnWidth(DataGridView grid, int columnIndex, int width)
         {
             EnsureManualColumnWidths(grid);
             grid.Columns[columnIndex].Width = Math.Clamp(width, 48, 2400);
         }
 
+        /// <summary>Closed rounded-rect path used by chips and cards.</summary>
         public static GraphicsPath RoundRect(Rectangle bounds, int radius)
         {
             int d = radius * 2;
@@ -413,6 +450,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Navy cover that redraws on resize.</summary>
         public CoverBanner()
         {
             Theme.EnableDoubleBuffer(this);
@@ -420,9 +458,11 @@ namespace CastRightCatchInvManagement
             SetStyle(ControlStyles.ResizeRedraw, true);
         }
 
+        /// <summary>Cover-crop the hero, fade the top, and optionally overlay the wordmark.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.Clear(BackColor);
+            // Layout can paint at 0x0 before the first resize.
             if (Width <= 0 || Height <= 0)
                 return;
 
@@ -430,6 +470,7 @@ namespace CastRightCatchInvManagement
             e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
             e.Graphics.SmoothingMode = SmoothingMode.HighQuality;
 
+            // Cover still paints navy when the hero file is missing.
             if (_image != null)
             {
                 float scale = Math.Max((float)Width / _image.Width, (float)Height / _image.Height);
@@ -451,6 +492,7 @@ namespace CastRightCatchInvManagement
                 e.Graphics.FillRectangle(fade, 0, 0, Width, topBand);
             }
 
+            // Wordmark is optional; home hero still works without it.
             if (_overlay != null)
             {
                 int maxW = Math.Max(160, (int)(Width * 0.32));
@@ -468,6 +510,7 @@ namespace CastRightCatchInvManagement
     /// <summary>White content card with a gold leading edge.</summary>
     internal sealed class CardPanel : Panel
     {
+        /// <summary>Paper card with a gold leading bar.</summary>
         public CardPanel()
         {
             BackColor = Theme.Paper;
@@ -475,6 +518,7 @@ namespace CastRightCatchInvManagement
             Theme.EnableDoubleBuffer(this);
         }
 
+        /// <summary>Cream border plus a 4px gold leading edge.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
@@ -505,6 +549,7 @@ namespace CastRightCatchInvManagement
             set => _hint.Text = value;
         }
 
+        /// <summary>Caption, large value, and hint on a gold-edged paper card.</summary>
         public StatCard(string caption, string value, string hint)
         {
             BackColor = Theme.Paper;
@@ -544,6 +589,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(_hint);
         }
 
+        /// <summary>Cream border plus a 4px gold leading edge.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);

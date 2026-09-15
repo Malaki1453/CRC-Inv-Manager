@@ -3,21 +3,27 @@ namespace CastRightCatchInvManagement
     /// <summary>Customer or vendor history: identity plus tabs for description, sales or purchases, and bank transactions.</summary>
     internal sealed class CustomerHistoryForm : Form
     {
+        /// <summary>Open customer identity and sales/bank history as a modal dialog.</summary>
         public static void ShowFor(IWin32Window? owner, Dictionary<string, string> customer) =>
             Show(owner, customer, vendor: false);
 
+        /// <summary>Open vendor identity and purchase/bank history as a modal dialog.</summary>
         public static void ShowVendor(IWin32Window? owner, Dictionary<string, string> vendor) =>
             Show(owner, vendor, vendor: true);
 
+        /// <summary>Show the history form owned by the caller when one is provided.</summary>
         private static void Show(IWin32Window? owner, Dictionary<string, string> record, bool vendor)
         {
             using var form = new CustomerHistoryForm(record, vendor);
+            // Keep the dialog on top of Customers/Vendors when opened from a grid.
             if (owner != null)
                 form.ShowDialog(owner);
+            // No owner when opened from a context that is not a window.
             else
                 form.ShowDialog();
         }
 
+        /// <summary>Build identity, notes, and history tabs for this customer or vendor.</summary>
         private CustomerHistoryForm(Dictionary<string, string> customer, bool vendor)
         {
             string name = First(customer, "Name", "Company");
@@ -40,6 +46,7 @@ namespace CastRightCatchInvManagement
             BackColor = Theme.Cream;
             Font = Theme.Body;
             ForeColor = Theme.Ink;
+            // Match other CRC dialogs when the brand icon is present.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
 
@@ -66,10 +73,13 @@ namespace CastRightCatchInvManagement
                 TextAlign = ContentAlignment.BottomLeft
             };
             var subtitleParts = new List<string>();
+            // Company is extra context only when it differs from the display name.
             if (company.Length > 0 && !company.Equals(name, StringComparison.OrdinalIgnoreCase))
                 subtitleParts.Add(company);
+            // Code helps staff find the same row in the lookup grid.
             if (code.Length > 0)
                 subtitleParts.Add(code);
+            // Contact name is useful when the company name is the title.
             if (contact.Length > 0)
                 subtitleParts.Add(contact);
             var subtitle = new Label
@@ -148,6 +158,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(header);
         }
 
+        /// <summary>Read-only identity fields: vendor layout is shorter, customer includes address.</summary>
         private static CardPanel BuildIdentityCard(bool vendor, Dictionary<string, string> record)
         {
             var card = new CardPanel
@@ -178,6 +189,7 @@ namespace CastRightCatchInvManagement
             PutReadout(grid, 2, 0, "COMPANY", First(record, "Company", "Name"));
             PutReadout(grid, 3, 0, "PHONE", DataFiles.GetRecord(record, "Phone"));
 
+            // Vendor identity has type/terms/amount instead of email/address.
             if (vendor)
             {
                 PutReadout(grid, 0, 1, "TERMS", DataFiles.GetRecord(record, "Terms"));
@@ -191,6 +203,7 @@ namespace CastRightCatchInvManagement
             }
             else
             {
+                // Customer identity includes credit, established date, and a full-width address.
                 PutReadout(grid, 0, 1, "CONTACT NAME", DataFiles.GetRecord(record, "Contact Name"));
                 PutReadout(grid, 1, 1, "EMAIL", DataFiles.GetRecord(record, "Email"));
                 PutReadout(grid, 2, 1, "TERMS", DataFiles.GetRecord(record, "Terms"));
@@ -214,6 +227,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Caption plus value cell; colSpan stretches Address across the row.</summary>
         private static void PutReadout(
             TableLayoutPanel grid,
             int col,
@@ -245,18 +259,22 @@ namespace CastRightCatchInvManagement
             cell.Controls.Add(box);
             cell.Controls.Add(label);
             grid.Controls.Add(cell, col, row);
+            // Address (and similar) should span the whole identity row.
             if (colSpan > 1)
                 grid.SetColumnSpan(cell, colSpan);
         }
 
+        /// <summary>Show an em dash when the field was never filled in.</summary>
         private static string Display(string value) =>
             string.IsNullOrWhiteSpace(value) ? "—" : value.Trim();
 
+        /// <summary>First non-blank field among the given keys (Name vs Company).</summary>
         private static string First(Dictionary<string, string> record, params string[] keys)
         {
             foreach (var key in keys)
             {
                 string value = DataFiles.GetRecord(record, key).Trim();
+                // Prefer the first populated identity field rather than concatenating.
                 if (value.Length > 0)
                     return value;
             }

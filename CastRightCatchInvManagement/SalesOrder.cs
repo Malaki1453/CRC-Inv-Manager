@@ -43,17 +43,22 @@ namespace CastRightCatchInvManagement
         private string _editPo = "";
         private string _editCustomer = "";
 
+        /// <summary>Sales row queued by OpenEdit until this page is shown.</summary>
         internal static Dictionary<string, string>? PendingEdit { get; set; }
+        /// <summary>True when OpenNew should wipe the last draft on the next show.</summary>
         internal static bool StartNew { get; set; }
 
+        /// <summary>Build the sales-order page and start on a blank draft.</summary>
         public SalesOrder()
         {
             InitializeComponent();
             BuildUi();
         }
 
+        /// <summary>Open this page as a blank sales order. Assigns the next SO #.</summary>
         public static void OpenNew()
         {
+            // View-only accounts cannot insert sales rows.
             if (!DataAccess.CanMutate(DataFiles.Sales))
             {
                 MessageBox.Show("This account can only view sales.", "Sales Order",
@@ -66,8 +71,10 @@ namespace CastRightCatchInvManagement
             Navigator.GoTo(AppPage.SalesOrder);
         }
 
+        /// <summary>Open this page with every product on that customer PO loaded for edit.</summary>
         public static void OpenEdit(Dictionary<string, string> record)
         {
+            // View-only accounts cannot update sales rows.
             if (!DataAccess.CanMutate(DataFiles.Sales))
             {
                 MessageBox.Show("This account can only view sales.", "Edit Sale",
@@ -80,9 +87,11 @@ namespace CastRightCatchInvManagement
             Navigator.GoTo(AppPage.SalesOrder);
         }
 
+        /// <summary>Apply a queued new/edit request, or keep at least one blank product line.</summary>
         public void HighlightCurrentPage()
         {
             RefreshLookups();
+            // OpenEdit queued a sales row to load.
             if (PendingEdit != null)
             {
                 var record = PendingEdit;
@@ -92,6 +101,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // OpenNew asked for a fresh draft instead of the last ticket.
             if (StartNew)
             {
                 StartNew = false;
@@ -99,6 +109,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Always keep one empty product line to type into.
             if (_lines.Count == 0)
                 AddLine();
         }
@@ -109,6 +120,7 @@ namespace CastRightCatchInvManagement
         /// </summary>
         internal void BeginFromSale(InvoiceSalePrefill prefill, Action<string?> done)
         {
+            // A different customer cannot share this pick ticket.
             if (OrderHasCustomer() && !PrefillMatchesCustomer(prefill))
                 ResetDraft();
             TryAddSale(prefill, done);
@@ -130,12 +142,14 @@ namespace CastRightCatchInvManagement
             if (_lines.Count == 0)
                 AddLine();
 
+            // Refuse to mix two customers on one sales order.
             if (OrderHasCustomer() && !PrefillMatchesCustomer(prefill))
             {
                 done("Customer does not match. Please remove old data or pick a different sale.");
                 return;
             }
 
+            // Keep an existing SO # from the sale when the ticket is still blank.
             if (prefill.So.Length > 0)
                 _soNo.Text = prefill.So;
 
@@ -145,6 +159,7 @@ namespace CastRightCatchInvManagement
             StartAddItems(key, code, name, done);
         }
 
+        /// <summary>Assemble header, product lines, and footer cards for this page.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
@@ -168,6 +183,7 @@ namespace CastRightCatchInvManagement
             ResetDraft(keepCustomer: false);
         }
 
+        /// <summary>Sales-order header: customer, dates, freight, and ship-to.</summary>
         private CardPanel BuildHeader()
         {
             var card = new CardPanel { Height = 268, Padding = new Padding(16, 10, 16, 10) };
@@ -212,6 +228,7 @@ namespace CastRightCatchInvManagement
             _customerPo.Leave += (_, _) => RequestPoFill();
             _customerPo.KeyDown += (_, e) =>
             {
+                // Enter on Customer PO should fill lines, not beep.
                 if (e.KeyCode != Keys.Enter)
                     return;
                 e.SuppressKeyPress = true;
@@ -221,6 +238,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Scrollable product table with column headers and an add-line bar.</summary>
         private CardPanel BuildLinesCard()
         {
             var card = new CardPanel { Padding = new Padding(1) };
@@ -288,6 +306,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Append a blank product line and give it focus.</summary>
         private SalesOrderLineRow AddLine()
         {
             var row = new SalesOrderLineRow();
@@ -303,11 +322,13 @@ namespace CastRightCatchInvManagement
             return row;
         }
 
+        /// <summary>Drop a product line, keeping at least one empty row so the ticket can still be typed.</summary>
         private void RemoveLine(SalesOrderLineRow row)
         {
             _lines.Remove(row);
             _lineHost.Controls.Remove(row);
             row.Dispose();
+            // A sales order with zero lines cannot be saved; leave a blank row instead.
             if (_lines.Count == 0)
                 AddLine();
             LayoutLines();
@@ -315,6 +336,7 @@ namespace CastRightCatchInvManagement
             UpdateTotals();
         }
 
+        /// <summary>Stack product rows in the host and size the scrollbar to the last line.</summary>
         private void LayoutLines()
         {
             int y = _lineHost.Padding.Top;
@@ -328,13 +350,16 @@ namespace CastRightCatchInvManagement
             _lineHost.AutoScrollMinSize = new Size(0, y + 8);
         }
 
+        /// <summary>Reuse the last empty row, or add a new one, before filling from a sale.</summary>
         private SalesOrderLineRow GetOpenLine()
         {
+            // Prefer the trailing blank row over stacking empty lines.
             if (_lines.Count > 0 && !_lines[^1].HasContent())
                 return _lines[^1];
             return AddLine();
         }
 
+        /// <summary>Dispose every product row before loading or resetting the draft.</summary>
         private void ClearLines()
         {
             foreach (var row in _lines.ToList())
@@ -346,6 +371,7 @@ namespace CastRightCatchInvManagement
             _lines.Clear();
         }
 
+        /// <summary>Paint a navy column caption into a line-header slot.</summary>
         private static void DrawHeader(Graphics g, string text, Rectangle slot)
         {
             TextRenderer.DrawText(
@@ -357,6 +383,7 @@ namespace CastRightCatchInvManagement
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         }
 
+        /// <summary>Totals plus Save, Add Another, and Clear.</summary>
         private CardPanel BuildFooter()
         {
             var card = new CardPanel { Height = 92, Padding = new Padding(16, 10, 16, 10) };
@@ -407,6 +434,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Reload customer, item, freight, and PO suggestions from live tables.</summary>
         private void RefreshLookups()
         {
             _customerRecords.Clear();
@@ -421,6 +449,7 @@ namespace CastRightCatchInvManagement
                     DataFiles.GetRecord(record, "Address"),
                     DataFiles.GetRecord(record, "Email"),
                     DataFiles.GetRecord(record, "Phone"));
+                // Skip customers that have neither a code nor a name to type.
                 if (choice.Code.Length == 0 && choice.Name.Length == 0)
                     continue;
                 _customerRecords.Add(choice);
@@ -433,6 +462,7 @@ namespace CastRightCatchInvManagement
                 string code = DataFiles.GetRecord(record, "Code").Trim();
                 string description = DataFiles.GetRecord(record, "Description").Trim();
                 string species = DataFiles.GetRecord(record, "Species").Trim();
+                // Description is optional in item codes; species is the fallback label.
                 if (description.Length == 0)
                     description = species;
                 if (code.Length == 0 && description.Length == 0)
@@ -444,6 +474,7 @@ namespace CastRightCatchInvManagement
                     species));
             }
 
+            // Freight combo is created with the header; skip if BuildUi has not run yet.
             if (_freightCo != null)
                 VendorChoice.Fill(_freightCo);
             foreach (var row in _lines)
@@ -451,6 +482,7 @@ namespace CastRightCatchInvManagement
             RefreshPoSuggestions();
         }
 
+        /// <summary>Limit Customer PO autocomplete to this customer’s unused sale POs.</summary>
         private void RefreshPoSuggestions()
         {
             _poSource = DataFiles.InvoicePoSuggestions(
@@ -461,10 +493,13 @@ namespace CastRightCatchInvManagement
             _customerPo.AutoCompleteCustomSource = _poSource;
         }
 
+        /// <summary>Customer code currently on the form.</summary>
         private string CurrentCustomerCode() => _customerCode.Text.Trim();
 
+        /// <summary>Customer name currently on the form.</summary>
         private string CurrentCustomerName() => _customer.Text.Trim();
 
+        /// <summary>True when the draft already has a customer or product lines.</summary>
         private bool OrderHasCustomer()
         {
             return CurrentCustomerCode().Length > 0 ||
@@ -472,11 +507,13 @@ namespace CastRightCatchInvManagement
                    _lines.Any(row => row.HasContent());
         }
 
+        /// <summary>Fill customer fields from a lookup pick, using the customer record when found.</summary>
         private void ApplyCustomerHit(LookupSuggest.Hit hit)
         {
             CustomerChoice? match = null;
             foreach (var record in _customerRecords)
             {
+                // Match by code first, then by name when the pick has one.
                 if (record.Code.Equals(hit.Code, StringComparison.OrdinalIgnoreCase) ||
                     (hit.Name.Length > 0 && record.Name.Equals(hit.Name, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -485,16 +522,19 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            // Known customers also fill contact, address, email, and phone.
             if (match != null)
                 FillCustomer(match, match.Terms, overwrite: true);
             else
                 FillCustomer(hit.Code, hit.Name, hit.Extra, "", "", "", "", overwrite: true);
         }
 
+        /// <summary>True when the incoming sale is the same customer as this draft, or the draft has none.</summary>
         private bool PrefillMatchesCustomer(InvoiceSalePrefill prefill)
         {
             string code = CurrentCustomerCode();
             string name = CurrentCustomerName();
+            // Codes are unique; prefer them over names.
             if (prefill.CustomerCode.Length > 0 && code.Length > 0)
                 return prefill.CustomerCode.Equals(code, StringComparison.OrdinalIgnoreCase);
             if (prefill.CustomerName.Length > 0 && name.Length > 0)
@@ -502,12 +542,14 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>Count already-added lines by PO/item/lot/qty so the same sale is not appended twice.</summary>
         private Dictionary<string, int> UsedLineCounts()
         {
             var used = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (var line in _lines.Select(row => row.GetLine()))
             {
                 string key = LineIdentity(line);
+                // Empty identity is an unfinished row, not a used sale line.
                 if (key.Length == 0)
                     continue;
                 used[key] = used.GetValueOrDefault(key) + 1;
@@ -516,11 +558,13 @@ namespace CastRightCatchInvManagement
             return used;
         }
 
+        /// <summary>Identity key for a draft line, used to skip duplicates while adding sales.</summary>
         private static string LineIdentity(SalesOrderLine line)
         {
             return LineIdentity(line.PoNumber, line.ItemCode, line.LotNumber, line.Cases, line.Volume);
         }
 
+        /// <summary>Identity key for a sales-table row, matching <see cref="LineIdentity(SalesOrderLine)"/>.</summary>
         private static string LineIdentity(Dictionary<string, string> record)
         {
             return LineIdentity(
@@ -531,10 +575,12 @@ namespace CastRightCatchInvManagement
                 DataFiles.GetRecord(record, "Volume"));
         }
 
+        /// <summary>Build a PO|item|lot|cases|volume key, or empty when both PO and item are blank.</summary>
         private static string LineIdentity(string? po, string? item, string? lot, string? cases, string? volume)
         {
             string poKey = DataFiles.NormalizePo(po);
             string itemKey = (item ?? "").Trim().ToUpperInvariant();
+            // A line with neither PO nor item cannot be matched later.
             if (poKey.Length == 0 && itemKey.Length == 0)
                 return "";
 
@@ -546,8 +592,10 @@ namespace CastRightCatchInvManagement
                 (volume ?? "").Trim());
         }
 
+        /// <summary>When Customer PO leaves focus, append unused sale lines for that PO.</summary>
         private void RequestPoFill()
         {
+            // ApplySaleHeader writes the PO without wanting a recursive lookup.
             if (_fillingPo)
                 return;
 
@@ -561,6 +609,7 @@ namespace CastRightCatchInvManagement
                 CurrentCustomerName(),
                 error =>
                 {
+                    // Null error means unused sale lines were appended.
                     if (error != null)
                         ToastAlert.Error(this, error);
                     else
@@ -574,12 +623,14 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void StartAddItems(string? key, string customerCode, string customerName, Action<string?> done)
         {
+            // Lookup is keyed by customer PO or SO #.
             if (string.IsNullOrWhiteSpace(key))
             {
                 done("This sale has no PO or SO number.");
                 return;
             }
 
+            // A second add would race the first background lookup.
             if (_busyAdding)
             {
                 done("Still adding lines to the sales order.");
@@ -595,6 +646,7 @@ namespace CastRightCatchInvManagement
                 try
                 {
                     var sources = DataFiles.FindSalesOrderSourcesForKey(key, customerCode, customerName);
+                    // No customer was chosen yet: lock onto the first matching sale's customer.
                     if (string.IsNullOrWhiteSpace(customerCode) &&
                         string.IsNullOrWhiteSpace(customerName) &&
                         sources.Count > 0)
@@ -619,6 +671,7 @@ namespace CastRightCatchInvManagement
                     foreach (var record in available)
                     {
                         string identity = LineIdentity(record);
+                        // Already on the ticket: consume one copy so duplicate sale rows can still add extras.
                         if (identity.Length > 0 &&
                             used.TryGetValue(identity, out int count) &&
                             count > 0)
@@ -636,6 +689,7 @@ namespace CastRightCatchInvManagement
 
                     BeginInvoke(new Action(() =>
                     {
+                        // The form may have closed while the lookup ran.
                         if (IsDisposed)
                         {
                             _busyAdding = false;
@@ -650,6 +704,7 @@ namespace CastRightCatchInvManagement
                             return;
                         }
 
+                        // Every matching sale already belongs to a different SO.
                         if (available.Count == 0)
                         {
                             _busyAdding = false;
@@ -671,6 +726,7 @@ namespace CastRightCatchInvManagement
                 }
                 catch (Exception ex)
                 {
+                    // Store lookup errors must surface on the UI thread.
                     BeginInvoke(new Action(() =>
                     {
                         _busyAdding = false;
@@ -680,6 +736,7 @@ namespace CastRightCatchInvManagement
             });
         }
 
+        /// <summary>Fill product rows in batches so a large PO does not freeze the form.</summary>
         private void AddRecordsInBatches(
             List<Dictionary<string, string>> sources,
             int index,
@@ -694,6 +751,7 @@ namespace CastRightCatchInvManagement
                 {
                     var row = GetOpenLine();
                     row.FillFromRecord(sources[i]);
+                    // Header (customer, ship-to, SO) comes from the first remaining sale.
                     if (i == 0)
                         ApplySaleHeader(sources[i]);
                 }
@@ -708,12 +766,14 @@ namespace CastRightCatchInvManagement
             LayoutLines();
             UpdateTotals();
 
+            // Yield so the UI can paint before the next batch.
             if (index < sources.Count)
             {
                 BeginInvoke(new Action(() => AddRecordsInBatches(sources, index, done)));
                 return;
             }
 
+            // Leave a blank row after the last filled line.
             if (_lines.Count == 0 || _lines[^1].HasContent())
                 AddLine();
             RefreshPoSuggestions();
@@ -721,6 +781,7 @@ namespace CastRightCatchInvManagement
             done(null);
         }
 
+        /// <summary>Clear the draft, optionally keeping the customer for Add Another.</summary>
         private void ResetDraft(bool keepCustomer = false)
         {
             string customerName = keepCustomer ? _customer.Text : "";
@@ -739,6 +800,7 @@ namespace CastRightCatchInvManagement
             _contact.Text = keepCustomer ? _contact.Text : "";
             _email.Text = keepCustomer ? _email.Text : "";
             _contactPhone.Text = keepCustomer ? _contactPhone.Text : "";
+            // A full clear also drops ship-to, contact, and freight.
             if (!keepCustomer)
             {
                 _address.Text = "";
@@ -763,6 +825,7 @@ namespace CastRightCatchInvManagement
             UpdateTotals();
         }
 
+        /// <summary>Fill customer, PO, SO, ship date, and freight from the first matching sale.</summary>
         private void ApplySaleHeader(Dictionary<string, string> record)
         {
             string code = DataFiles.GetRecordAny(record, "Customer Code", "Cust ID");
@@ -782,11 +845,13 @@ namespace CastRightCatchInvManagement
                 break;
             }
 
+            // Known customers also fill contact and address; unknown sales still get code/name.
             if (match != null)
                 FillCustomer(match, terms, overwrite: false);
             else
                 FillCustomer(code, name, terms, "", "", "", "", overwrite: false);
 
+            // Do not overwrite a PO the user already typed.
             if (po.Length > 0 && _customerPo.Text.Trim().Length == 0)
             {
                 _fillingPo = true;
@@ -804,6 +869,7 @@ namespace CastRightCatchInvManagement
             if (_warehouse.Text.Trim().Length == 0)
                 _warehouse.Text = DataFiles.GetRecordAny(record, "Location");
 
+            // Keep a freight company already chosen on this ticket.
             if (VendorChoice.TextOf(_freightCo).Length == 0)
             {
                 string freight = DataFiles.GetRecordAny(
@@ -818,6 +884,7 @@ namespace CastRightCatchInvManagement
                 _freightTerms.Text = terms;
         }
 
+        /// <summary>Fill customer fields from a known customer record.</summary>
         private void FillCustomer(CustomerChoice choice, string terms, bool overwrite)
         {
             FillCustomer(
@@ -831,6 +898,7 @@ namespace CastRightCatchInvManagement
                 overwrite);
         }
 
+        /// <summary>Write customer identity and ship-to, optionally overwriting fields the user already typed.</summary>
         private void FillCustomer(
             string code,
             string name,
@@ -845,6 +913,7 @@ namespace CastRightCatchInvManagement
             {
                 if (value.Length == 0)
                     return;
+                // Lookup picks replace; sale prefill only fills blanks.
                 if (overwrite || box.Text.Trim().Length == 0)
                     box.Text = value;
             }
@@ -852,6 +921,7 @@ namespace CastRightCatchInvManagement
             if (code.Length > 0)
                 _customerCode.Text = code;
             Put(_contact, contact);
+            // Lookup should replace a stale ship-to; sale prefill should not.
             if (overwrite)
                 _address.Text = address;
             else
@@ -867,6 +937,7 @@ namespace CastRightCatchInvManagement
             RefreshPoSuggestions();
         }
 
+        /// <summary>Snapshot header fields and product lines for save and PDF output.</summary>
         private SalesOrderDraft CollectDraft()
         {
             return new SalesOrderDraft
@@ -891,6 +962,7 @@ namespace CastRightCatchInvManagement
                 Lines = _lines.Select(row =>
                 {
                     var line = row.GetLine();
+                    // Lines typed by hand inherit the header customer PO.
                     if (line.PoNumber.Length == 0)
                         line.PoNumber = _customerPo.Text.Trim();
                     return line;
@@ -898,6 +970,7 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Sum line cases, volume, and amount for the footer.</summary>
         private void UpdateTotals()
         {
             decimal cases = 0;
@@ -922,6 +995,7 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void CreateSalesOrder(bool keepCustomer = false)
         {
+            // Sales are stored in the chosen data folder.
             if (!AppLock.HasFolder())
             {
                 ToastAlert.Error(this, "Select a data folder in Settings first.");
@@ -929,6 +1003,7 @@ namespace CastRightCatchInvManagement
             }
 
             var draft = CollectDraft();
+            // Customer PO is the sale-row key.
             if (string.IsNullOrWhiteSpace(draft.CustomerPo))
             {
                 ToastAlert.Error(this, "Enter a customer PO #.");
@@ -950,6 +1025,7 @@ namespace CastRightCatchInvManagement
             var lines = draft.Lines
                 .Where(line => line.ItemCode.Length > 0 || line.Description.Length > 0)
                 .ToList();
+            // Blank rows are only placeholders for typing.
             if (lines.Count == 0)
             {
                 ToastAlert.Error(this, "Add at least one product line.");
@@ -971,6 +1047,7 @@ namespace CastRightCatchInvManagement
                 {
                     var values = BuildSaleValues(draft, line);
                     string item = line.ItemCode;
+                    // Same PO + item already exists: update that row instead of inserting a duplicate.
                     bool exists = _editing &&
                                   _loadedItems.Contains(item) &&
                                   po.Equals(_editPo, StringComparison.OrdinalIgnoreCase);
@@ -986,6 +1063,7 @@ namespace CastRightCatchInvManagement
                                     .Equals(_editCustomer, StringComparison.OrdinalIgnoreCase),
                             values)
                         : DataFiles.MutateInsert(DataFiles.Sales, values);
+                    // Stop so remaining lines are not written after a failed mutate.
                     if (last is not { Ok: true })
                     {
                         ToastAlert.Error(this, last?.Message ?? "Could not save that line.");
@@ -996,10 +1074,12 @@ namespace CastRightCatchInvManagement
                         savedItems.Add(item);
                 }
 
+                // Lines dropped in the editor must be deleted from the original PO.
                 if (_editing)
                 {
                     foreach (string oldItem in _loadedItems)
                     {
+                        // Still on this PO, so keep the row.
                         if (savedItems.Contains(oldItem) &&
                             po.Equals(_editPo, StringComparison.OrdinalIgnoreCase))
                             continue;
@@ -1020,6 +1100,7 @@ namespace CastRightCatchInvManagement
             }
             catch (Exception ex)
             {
+                // Mutate can throw when the store is locked or the row is missing.
                 ToastAlert.Error(this, ex.Message);
                 return;
             }
@@ -1042,6 +1123,7 @@ namespace CastRightCatchInvManagement
                     pos,
                     draft.CustomerCode,
                     draft.CustomerName);
+                // Reuse a sales-order number already assigned to this PO instead of minting a second one.
                 if (!string.IsNullOrWhiteSpace(existingSo) && !_editing)
                     soNumber = existingSo;
                 draft.SoNumber = soNumber;
@@ -1057,6 +1139,7 @@ namespace CastRightCatchInvManagement
             }
             catch (Exception ex)
             {
+                // PDF/store failures should not leave the form looking saved.
                 ToastAlert.Error(this, ex.Message);
                 return;
             }
@@ -1065,12 +1148,14 @@ namespace CastRightCatchInvManagement
                 ? last.Value.Message
                 : _editing ? "The sales order was updated." : "The sales order was saved.");
 
+            // Add Another starts a new ticket with the same customer.
             if (keepCustomer)
             {
                 ResetDraft(keepCustomer: true);
                 return;
             }
 
+            // Stay in edit mode so a second save still updates these items.
             if (_editing)
             {
                 _editPo = po;
@@ -1084,6 +1169,7 @@ namespace CastRightCatchInvManagement
             ResetDraft(keepCustomer: false);
         }
 
+        /// <summary>Map header fields plus one product line onto a sales-table row.</summary>
         private Dictionary<string, string> BuildSaleValues(SalesOrderDraft draft, SalesOrderLine line)
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -1109,10 +1195,12 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Load every product on this customer PO into the form for edit.</summary>
         private void LoadOrder(Dictionary<string, string> record)
         {
             string po = DataFiles.SalePo(record);
             var rows = DataFiles.FindSalesByPo(po);
+            // The clicked row is enough to edit even if the PO lookup returned nothing.
             if (rows.Count == 0)
                 rows.Add(record);
 
@@ -1123,6 +1211,7 @@ namespace CastRightCatchInvManagement
             ApplySaleHeader(rows[0]);
             _customerPo.Text = po;
             string so = DataFiles.GetRecord(rows[0], "SO #");
+            // Keep the generated SO # when the sale has not been assigned one yet.
             if (so.Length > 0)
                 _soNo.Text = so;
             string due = DataFiles.GetRecord(rows[0], "Due Date");
@@ -1137,6 +1226,7 @@ namespace CastRightCatchInvManagement
                 var line = _lines[^1];
                 line.FillFromRecord(row);
                 string item = DataFiles.GetRecord(row, "Item Code").Trim();
+                // Remember loaded items so a later save can delete ones the user removed.
                 if (item.Length > 0)
                     _loadedItems.Add(item);
             }
@@ -1145,9 +1235,11 @@ namespace CastRightCatchInvManagement
             UpdateTotals();
         }
 
+        /// <summary>Switch captions and hide Add Another while editing an existing sales order.</summary>
         private void SetMode(bool editing)
         {
             _editing = editing;
+            // Controls are created in BuildUi; skip if HighlightCurrentPage ran first.
             if (_modeLabel != null)
                 _modeLabel.Text = editing ? "Edit Sales Order" : "Sales Order";
             if (_save != null)
@@ -1156,8 +1248,10 @@ namespace CastRightCatchInvManagement
                 _another.Visible = !editing;
         }
 
+        /// <summary>Select a status, adding unknown values so older rows still display.</summary>
         private static void SelectStatus(ComboBox box, string? value)
         {
+            // Fill the list once; the designer does not own these items.
             if (box.Items.Count == 0)
                 box.Items.AddRange(new object[] { "Open", "Pending", "Shipped", "Invoiced", "Paid", "Complete" });
 
@@ -1165,6 +1259,7 @@ namespace CastRightCatchInvManagement
             if (pick.Length == 0)
                 pick = "Open";
             box.SelectedItem = pick;
+            // Keep statuses that are no longer in the default list.
             if (box.SelectedIndex < 0)
             {
                 box.Items.Add(pick);
@@ -1172,6 +1267,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Labeled combo placed at a fixed header coordinate.</summary>
         private ComboBox AddCombo(Control parent, string caption, int x, int y, int width)
         {
             var label = new Label { Text = caption };
@@ -1189,6 +1285,7 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Labeled text box placed at a fixed header coordinate.</summary>
         private TextBox AddField(Control parent, string caption, int x, int y, int width)
         {
             var label = new Label { Text = caption };
@@ -1203,6 +1300,7 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Date picker placed at a fixed header coordinate.</summary>
         private DateTimePicker AddDate(Control parent, string caption, int x, int y, int width)
         {
             var label = new Label { Text = caption };
@@ -1220,6 +1318,7 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Labeled multiline box used for Ship To.</summary>
         private TextBox AddMultiline(Control parent, string caption, int x, int y, int width, int height)
         {
             var label = new Label { Text = caption };
@@ -1238,6 +1337,7 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Caption plus value label used for footer totals.</summary>
         private static Label TotalLabel(Control parent, string caption, int x, int y)
         {
             var label = new Label { Text = caption };
@@ -1256,6 +1356,7 @@ namespace CastRightCatchInvManagement
             return value;
         }
 
+        /// <summary>Customer lookup row used to fill code, name, terms, and ship-to.</summary>
         private sealed class CustomerChoice
         {
             public string Code { get; }
@@ -1266,6 +1367,7 @@ namespace CastRightCatchInvManagement
             public string Email { get; }
             public string Phone { get; }
 
+            /// <summary>Store one visible customer record for lookup matching.</summary>
             public CustomerChoice(
                 string code,
                 string name,
@@ -1284,6 +1386,7 @@ namespace CastRightCatchInvManagement
                 Phone = phone;
             }
 
+            /// <summary>Display name with code, or code alone when the name is blank.</summary>
             public override string ToString() => string.IsNullOrWhiteSpace(Name) ? Code : $"{Name} ({Code})";
         }
     }

@@ -4,17 +4,21 @@ using CrcInventory.Protocol;
 
 namespace CrcInventory.Server;
 
+/// <summary>Loads crc-server.pfx from the data folder, or creates a self-signed TLS certificate there.</summary>
 internal static class ServerCert
 {
+    /// <summary>Returns the host certificate and its SHA-256 pin, creating crc-server.pfx on first run.</summary>
     public static X509Certificate2 LoadOrCreate(string dataFolder, out string fingerprint)
     {
         Directory.CreateDirectory(dataFolder);
         string path = Path.Combine(dataFolder, Schema.CertificateFileName);
         X509Certificate2 cert;
+        // Reuse the existing PFX so clients keep the same pin across restarts.
         if (File.Exists(path))
         {
             cert = new X509Certificate2(path, "", X509KeyStorageFlags.Exportable);
         }
+        // First run: mint a self-signed cert and persist it next to the database.
         else
         {
             cert = Create();
@@ -25,6 +29,7 @@ internal static class ServerCert
         return cert;
     }
 
+    /// <summary>Builds a 10-year self-signed server cert with localhost SANs for the TLS listener.</summary>
     private static X509Certificate2 Create()
     {
         using var rsa = RSA.Create(2048);

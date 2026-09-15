@@ -2,6 +2,7 @@ using System.Globalization;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>The six Reports-page tables.</summary>
     internal enum ReportKind
     {
         Aging,
@@ -25,6 +26,7 @@ namespace CastRightCatchInvManagement
         public string Empty { get; init; } = "No rows for this report in the current view.";
     }
 
+    /// <summary>One Aging (or similar) tab: columns, rows, and chips.</summary>
     internal sealed class ReportTab
     {
         public required string Name { get; init; }
@@ -34,6 +36,7 @@ namespace CastRightCatchInvManagement
         public string Empty { get; init; } = "No rows for this report in the current view.";
     }
 
+    /// <summary>Expandable parent row plus child item-code rows.</summary>
     internal sealed class ReportGroup
     {
         public required string Key { get; init; }
@@ -47,11 +50,13 @@ namespace CastRightCatchInvManagement
     /// </summary>
     internal static class ReportData
     {
+        /// <summary>Live-only vs archive-plus-live, matching the sidebar toggle.</summary>
         public static string ScopeHint() =>
             AppState.ViewingOldInventory
                 ? "All inventory (archive and live)"
                 : "This term (live database)";
 
+        /// <summary>Dispatch to the matching builder.</summary>
         public static ReportResult Build(ReportKind kind) =>
             kind switch
             {
@@ -64,6 +69,7 @@ namespace CastRightCatchInvManagement
                 _ => Aging()
             };
 
+        /// <summary>Customers and vendors aging tabs.</summary>
         private static ReportResult Aging()
         {
             var customers = AgingCustomers();
@@ -78,6 +84,7 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Open invoices bucketed by days past due.</summary>
         private static ReportTab AgingCustomers()
         {
             var tab = new ReportTab
@@ -91,6 +98,7 @@ namespace CastRightCatchInvManagement
                     ? "No open invoices in this view."
                     : "You do not have access to invoices."
             };
+            // Hidden invoice tables must not leak into aging or risk.
             if (!TableAccess.Can(TableAccess.Invoices))
                 return tab;
 
@@ -98,11 +106,13 @@ namespace CastRightCatchInvManagement
             var rows = new List<(int sort, string[] cells)>();
             foreach (var invoice in DataFiles.VisibleRecords(DataFiles.Invoices))
             {
+                // Queued adds are not yet live totals.
                 if (DataFiles.IsWaitingAdd(invoice) ||
                     DataFiles.IsReceivedInvoice(invoice) ||
                     DataFiles.InvoiceIsClosed(invoice))
                     continue;
                 decimal due = DataFiles.InvoiceOutstanding(invoice);
+                // Not-due invoices stay out of past-due buckets.
                 if (due <= 0)
                     continue;
 
@@ -128,6 +138,7 @@ namespace CastRightCatchInvManagement
             return tab;
         }
 
+        /// <summary>Open purchases bucketed by days past due.</summary>
         private static ReportTab AgingVendors()
         {
             var tab = new ReportTab
@@ -141,6 +152,7 @@ namespace CastRightCatchInvManagement
                     ? "No open purchases in this view."
                     : "You do not have access to purchases."
             };
+            // Hidden purchase tables must not leak into vendor aging.
             if (!TableAccess.Can(TableAccess.Purchases))
                 return tab;
 
@@ -148,14 +160,17 @@ namespace CastRightCatchInvManagement
             var rows = new List<(int sort, string[] cells)>();
             foreach (var purchase in DataFiles.VisibleRecords(DataFiles.PurchaseSales))
             {
+                // Queued purchases are not vendor performance yet.
                 if (DataFiles.IsWaitingAdd(purchase))
                     continue;
                 string status = DataFiles.GetRecord(purchase, "Status").Trim();
+                // Completed purchases are not open payables.
                 if (status.Equals("Complete", StringComparison.OrdinalIgnoreCase) ||
                     status.Equals("Paid", StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 decimal due = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Total Cost"));
+                // Not-due invoices stay out of past-due buckets.
                 if (due <= 0)
                     continue;
 
@@ -184,6 +199,7 @@ namespace CastRightCatchInvManagement
             return tab;
         }
 
+        /// <summary>Append one aging row and accumulate bucket totals.</summary>
         private static void AddAging(
             string bucket,
             decimal due,
@@ -205,6 +221,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Current / 1–30 / 31–60 / 61+ chips.</summary>
         private static void AddAgingStats(
             ReportTab tab,
             decimal total,
@@ -220,10 +237,12 @@ namespace CastRightCatchInvManagement
             tab.Stats.Add(("31–60 / 61–90 / 90+", $"{Money(d60)}  ·  {Money(d90)}  ·  {Money(older)}"));
         }
 
+        /// <summary>First parseable date among alternate column names.</summary>
         private static string FirstDate(params string[] values)
         {
             foreach (var value in values)
             {
+                // Skip empty alternate date columns.
                 if (!string.IsNullOrWhiteSpace(value))
                     return value.Trim();
             }
@@ -231,9 +250,11 @@ namespace CastRightCatchInvManagement
             return "";
         }
 
+        /// <summary>Human days-past-due label.</summary>
         private static string DaysText(int days) =>
             days == int.MinValue ? "—" : days.ToString(CultureInfo.InvariantCulture);
 
+        /// <summary>Deals by PO/SO with sale volume (no commission rate stored).</summary>
         private static ReportResult Commission()
         {
             var result = new ReportResult
@@ -245,17 +266,20 @@ namespace CastRightCatchInvManagement
                     ? "No sales in this view."
                     : "You do not have access to sales."
             };
+            // Hidden sales must not appear on commission or P&L.
             if (!TableAccess.Can(TableAccess.Sales))
                 return result;
 
             var deals = new Dictionary<string, Deal>(StringComparer.OrdinalIgnoreCase);
             foreach (var sale in DataFiles.VisibleRecords(DataFiles.Sales))
             {
+                // Queued sales are left out of report totals.
                 if (DataFiles.IsWaitingAdd(sale))
                     continue;
                 string po = DataFiles.SalePo(sale);
                 string so = DataFiles.GetRecord(sale, "SO #").Trim();
                 string key = po.Length > 0 ? po : (so.Length > 0 ? so : "row:" + deals.Count);
+                // First line on a PO/SO starts a new commission deal.
                 if (!deals.TryGetValue(key, out var deal))
                 {
                     deal = new Deal { Key = po.Length > 0 ? po : so };
@@ -264,11 +288,14 @@ namespace CastRightCatchInvManagement
 
                 deal.Lines++;
                 deal.Amount += DataFiles.ParseMoney(DataFiles.GetRecord(sale, "Amount"));
+                // Fill customer from a later line if the first was blank.
                 if (deal.Customer.Length == 0)
                     deal.Customer = DataFiles.GetRecordAny(sale, "Customer", "Customer Code");
+                // Fill SO # from a later line if the first was blank.
                 if (deal.So.Length == 0)
                     deal.So = so;
                 string ship = DataFiles.GetRecord(sale, "Ship Date");
+                // Keep the latest ship date on the deal.
                 if (DateTime.TryParse(ship, out var date) && date > deal.Ship)
                     deal.Ship = date;
             }
@@ -295,6 +322,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Revenue vs lot cost by ship month.</summary>
         private static ReportResult ProfitLoss()
         {
             var result = new ReportResult
@@ -306,6 +334,7 @@ namespace CastRightCatchInvManagement
                     ? "No sales in this view."
                     : "You do not have access to sales."
             };
+            // Hidden sales must not appear on commission or P&L.
             if (!TableAccess.Can(TableAccess.Sales))
                 return result;
 
@@ -313,9 +342,11 @@ namespace CastRightCatchInvManagement
             var months = new Dictionary<string, Month>(StringComparer.OrdinalIgnoreCase);
             foreach (var sale in DataFiles.VisibleRecords(DataFiles.Sales))
             {
+                // Queued sales are left out of report totals.
                 if (DataFiles.IsWaitingAdd(sale))
                     continue;
                 string month = MonthKey(DataFiles.GetRecord(sale, "Ship Date"));
+                // First sale in a month starts a P&L row.
                 if (!months.TryGetValue(month, out var row))
                 {
                     row = new Month { Key = month };
@@ -352,6 +383,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Purchase volume and cost by vendor.</summary>
         private static ReportResult Suppliers()
         {
             var result = new ReportResult
@@ -363,17 +395,21 @@ namespace CastRightCatchInvManagement
                     ? "No purchases in this view."
                     : "You do not have access to purchases."
             };
+            // Hidden purchase tables must not leak into vendor aging.
             if (!TableAccess.Can(TableAccess.Purchases))
                 return result;
 
             var vendors = new Dictionary<string, Supplier>(StringComparer.OrdinalIgnoreCase);
             foreach (var purchase in DataFiles.VisibleRecords(DataFiles.PurchaseSales))
             {
+                // Queued purchases are not vendor performance yet.
                 if (DataFiles.IsWaitingAdd(purchase))
                     continue;
                 string name = DataFiles.GetRecordAny(purchase, "Vendor", "Vendor Code");
+                // Purchases without a vendor name cannot group.
                 if (name.Length == 0)
                     name = "Unknown";
+                // First PO for a vendor starts a performance row.
                 if (!vendors.TryGetValue(name, out var row))
                 {
                     row = new Supplier { Name = name };
@@ -381,6 +417,7 @@ namespace CastRightCatchInvManagement
                 }
 
                 string po = DataFiles.GetRecord(purchase, "PO #").Trim();
+                // Count distinct POs, not line rows.
                 if (po.Length > 0)
                     row.Pos.Add(po);
                 row.Volume += DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Volume"));
@@ -410,6 +447,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Credit limit, open invoices, and overdue amounts.</summary>
         private static ReportResult CustomerRisk()
         {
             var result = new ReportResult
@@ -424,17 +462,20 @@ namespace CastRightCatchInvManagement
                     ? "No customers with invoice activity in this view."
                     : "You do not have access to invoices."
             };
+            // Hidden invoice tables must not leak into aging or risk.
             if (!TableAccess.Can(TableAccess.Invoices))
                 return result;
 
             var customers = new Dictionary<string, Risk>(StringComparer.OrdinalIgnoreCase);
             foreach (var customer in DataFiles.VisibleRecords(DataFiles.Customers))
             {
+                // Queued customer adds are not risk rows yet.
                 if (DataFiles.IsWaitingAdd(customer))
                     continue;
                 string code = DataFiles.GetRecord(customer, "Code").Trim();
                 string name = DataFiles.GetRecord(customer, "Name").Trim();
                 string key = code.Length > 0 ? code : name;
+                // Need a code or name to attach open invoices.
                 if (key.Length == 0)
                     continue;
                 customers[key] = new Risk
@@ -448,19 +489,23 @@ namespace CastRightCatchInvManagement
 
             foreach (var invoice in DataFiles.VisibleRecords(DataFiles.Invoices))
             {
+                // Queued adds are not yet live totals.
                 if (DataFiles.IsWaitingAdd(invoice) ||
                     DataFiles.IsReceivedInvoice(invoice) ||
                     DataFiles.InvoiceIsClosed(invoice))
                     continue;
                 decimal due = DataFiles.InvoiceOutstanding(invoice);
+                // Not-due invoices stay out of past-due buckets.
                 if (due <= 0)
                     continue;
 
                 string code = DataFiles.GetRecordAny(invoice, "Customer Code", "Cust ID");
                 string name = DataFiles.GetRecord(invoice, "Customer");
                 string key = code.Length > 0 && customers.ContainsKey(code) ? code : name;
+                // Need a code or name to attach open invoices.
                 if (key.Length == 0)
                     key = "Unknown";
+                // Open invoices can create a risk row even without a customer card.
                 if (!customers.TryGetValue(key, out var risk))
                 {
                     risk = new Risk { Name = name.Length > 0 ? name : key };
@@ -469,6 +514,7 @@ namespace CastRightCatchInvManagement
 
                 risk.OpenInvoices++;
                 risk.Outstanding += due;
+                // Overdue flag drives the risk chip.
                 if (DataFiles.InvoiceIsPastDue(invoice))
                     risk.Overdue += due;
             }
@@ -486,6 +532,7 @@ namespace CastRightCatchInvManagement
                 overdue += risk.Overdue;
                 bool over = risk.Limit > 0 &&
                             Math.Max(risk.OnFile, risk.Outstanding) > risk.Limit;
+                // Past-due customers sort and highlight first.
                 if (over)
                     overLimit++;
                 result.Rows.Add(new[]
@@ -508,6 +555,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Profit per species with expandable item codes.</summary>
         private static ReportResult Species()
         {
             var result = new ReportResult
@@ -522,6 +570,7 @@ namespace CastRightCatchInvManagement
                     ? "No sales in this view."
                     : "You do not have access to sales."
             };
+            // Hidden sales must not appear on commission or P&L.
             if (!TableAccess.Can(TableAccess.Sales))
                 return result;
 
@@ -529,6 +578,7 @@ namespace CastRightCatchInvManagement
             foreach (var item in DataFiles.VisibleRecords(DataFiles.ItemCodes))
             {
                 string code = DataFiles.GetRecord(item, "Code").Trim();
+                // Sales without an item code cannot roll into species.
                 if (code.Length == 0)
                     continue;
                 string species = DataFiles.GetRecord(item, "Species").Trim();
@@ -539,14 +589,17 @@ namespace CastRightCatchInvManagement
             var groups = new Dictionary<string, SpeciesRow>(StringComparer.OrdinalIgnoreCase);
             foreach (var sale in DataFiles.VisibleRecords(DataFiles.Sales))
             {
+                // Queued sales are left out of report totals.
                 if (DataFiles.IsWaitingAdd(sale))
                     continue;
                 string item = DataFiles.GetRecord(sale, "Item Code").Trim();
+                // Need an item code for the expandable child row.
                 if (item.Length == 0)
                     item = "(no item code)";
                 string species = speciesOf.TryGetValue(item, out var named)
                     ? named
                     : (item == "(no item code)" ? "Unspecified" : item);
+                // First sale of a species starts the parent total.
                 if (!groups.TryGetValue(species, out var row))
                 {
                     row = new SpeciesRow { Name = species };
@@ -557,6 +610,7 @@ namespace CastRightCatchInvManagement
                 decimal revenue = DataFiles.ParseMoney(DataFiles.GetRecord(sale, "Amount"));
                 decimal cogs = SaleCogs(sale, purchases);
                 row.Add(volume, revenue, cogs);
+                // First sale of an item code starts the child total.
                 if (!row.Items.TryGetValue(item, out var child))
                 {
                     child = new SpeciesRow { Name = item };
@@ -590,6 +644,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Volume, revenue, COGS, and margin cells.</summary>
         private static string[] ProfitCells(string name, SpeciesRow row)
         {
             decimal profit = row.Revenue - row.Cogs;
@@ -605,17 +660,21 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Live purchases keyed by PO # for lot cost.</summary>
         private static Dictionary<string, Dictionary<string, string>> PurchaseIndex()
         {
             var map = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+            // Hidden purchase tables must not leak into vendor aging.
             if (!TableAccess.Can(TableAccess.Purchases))
                 return map;
 
             foreach (var purchase in DataFiles.VisibleRecords(DataFiles.PurchaseSales))
             {
+                // Queued purchases are not vendor performance yet.
                 if (DataFiles.IsWaitingAdd(purchase))
                     continue;
                 string po = DataFiles.NormalizePo(DataFiles.GetRecord(purchase, "PO #"));
+                // Count distinct POs, not line rows.
                 if (po.Length > 0)
                     map[po] = purchase;
             }
@@ -623,19 +682,23 @@ namespace CastRightCatchInvManagement
             return map;
         }
 
+        /// <summary>Purchase cost/lb × pounds sold for one sale line.</summary>
         private static decimal SaleCogs(
             Dictionary<string, string> sale,
             Dictionary<string, Dictionary<string, string>> purchases)
         {
             string lot = DataFiles.NormalizePo(DataFiles.SaleLot(sale));
+            // No matching PO means COGS cannot be computed.
             if (lot.Length == 0 || !purchases.TryGetValue(lot, out var purchase))
                 return 0;
 
             decimal perLb = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Total Cost / LB"));
+            // Zero cost/lb would report false zero COGS as if costed.
             if (perLb == 0)
             {
                 decimal total = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Total Cost"));
                 decimal lbs = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Volume"));
+                // Prefer pounds sold; fall back to cases when weight is blank.
                 if (lbs > 0)
                     perLb = total / lbs;
             }
@@ -644,44 +707,58 @@ namespace CastRightCatchInvManagement
             return perLb * volume;
         }
 
+        /// <summary>Whole days after the due date, or 0 if not overdue.</summary>
         private static int DaysPastDue(string dueText)
         {
+            // Unparseable due dates are not overdue.
             if (!DateTime.TryParse(dueText, out var due))
                 return int.MinValue;
             return (DateTime.Today - due.Date).Days;
         }
 
+        /// <summary>Current / 1–30 / 31–60 / 61+ label.</summary>
         private static string AgingBucket(int days)
         {
+            // Missing due date stays out of buckets.
             if (days == int.MinValue)
                 return "No due date";
+            // Not yet due stays in Current.
             if (days <= 0)
                 return "Current";
+            // 1–30 bucket.
             if (days <= 30)
                 return "1–30";
+            // 31–60 bucket.
             if (days <= 60)
                 return "31–60";
+            // 61–90 sits in 61+ with a distinct label.
             if (days <= 90)
                 return "61–90";
             return "90+";
         }
 
+        /// <summary>yyyy-MM from a date, or blank if unparseable.</summary>
         private static string MonthKey(string text)
         {
+            // Unparseable ship dates are omitted from monthly P&L.
             if (DateTime.TryParse(text, out var date))
                 return date.ToString("yyyy-MM");
             return "No ship date";
         }
 
+        /// <summary>Currency for chips and table cells.</summary>
         private static string Money(decimal amount) => amount.ToString("C");
 
+        /// <summary>Margin percent, or em dash when whole is zero.</summary>
         private static string Percent(decimal part, decimal whole)
         {
+            // Avoid divide-by-zero on empty species totals.
             if (whole == 0)
                 return "—";
             return (part / whole).ToString("P1");
         }
 
+        /// <summary>One PO/SO deal on the commission tracker.</summary>
         private sealed class Deal
         {
             public string Key = "";
@@ -692,6 +769,7 @@ namespace CastRightCatchInvManagement
             public decimal Amount;
         }
 
+        /// <summary>One ship-month row on Monthly P&L.</summary>
         private sealed class Month
         {
             public string Key = "";
@@ -700,6 +778,7 @@ namespace CastRightCatchInvManagement
             public decimal Cogs;
         }
 
+        /// <summary>Purchase volume and cost rolled up by vendor.</summary>
         private sealed class Supplier
         {
             public string Name = "";
@@ -708,6 +787,7 @@ namespace CastRightCatchInvManagement
             public decimal Cost;
         }
 
+        /// <summary>Credit, open invoices, and overdue totals for one customer.</summary>
         private sealed class Risk
         {
             public string Name = "";
@@ -719,6 +799,7 @@ namespace CastRightCatchInvManagement
             public decimal Overdue;
         }
 
+        /// <summary>Volume, revenue, and COGS for a species or item code.</summary>
         private sealed class SpeciesRow
         {
             public string Name = "";
@@ -728,6 +809,7 @@ namespace CastRightCatchInvManagement
             public decimal Cogs;
             public Dictionary<string, SpeciesRow> Items { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+            /// <summary>Accumulate one sale into a species or item total.</summary>
             public void Add(decimal volume, decimal revenue, decimal cogs)
             {
                 Lines++;

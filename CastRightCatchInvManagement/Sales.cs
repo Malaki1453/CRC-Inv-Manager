@@ -10,6 +10,7 @@ namespace CastRightCatchInvManagement
     /// </summary>
     public partial class Sales : Form, INavigationPage
     {
+        /// <summary>Wire the sales grid, New Sale, row edit, PDF, and invoice/sales-order shortcuts.</summary>
         public Sales()
         {
             InitializeComponent();
@@ -37,8 +38,10 @@ namespace CastRightCatchInvManagement
         /// <summary>Called when this page is shown or the Current/Old view changes. Reloads the grid.</summary>
         public void HighlightCurrentPage() => LoadTable();
 
+        /// <summary>Fill the grid from sales (live only, or archive + live when Old is on).</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.Sales);
 
+        /// <summary>Open the stored sale PDF, or build one from the customer PO if it is missing.</summary>
         private void ShowSalePdf(Dictionary<string, string> record)
         {
             string po = DataFiles.SalePo(record);
@@ -49,6 +52,7 @@ namespace CastRightCatchInvManagement
                 () =>
                 {
                     string? path = SaleDocument.SaveFromPo(po);
+                    // No matching sale lines, so there is nothing to draw.
                     if (path == null)
                     {
                         ToastAlert.Error(this, "Could not create a PDF for this sale.");
@@ -65,8 +69,10 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void dataGridView1_CellMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
         {
+            // Ignore header clicks and non-left buttons.
             if (e.Button != MouseButtons.Left || e.RowIndex < 0)
                 return;
+            // Plain left-click is selection only; Shift+click adds to the invoice.
             if ((ModifierKeys & Keys.Shift) != Keys.Shift)
                 return;
 
@@ -80,6 +86,7 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void dataGridView1_CellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
         {
+            // Middle-click is the sales-order shortcut; other buttons are handled elsewhere.
             if (e.Button != MouseButtons.Middle || e.RowIndex < 0)
                 return;
 
@@ -96,6 +103,7 @@ namespace CastRightCatchInvManagement
         {
             string po = DataFiles.SalePo(record);
             string so = DataFiles.GetRecord(record, "SO #");
+            // Prefill looks up sale lines by customer PO or SO #.
             if (po.Length == 0 && so.Length == 0)
                 return;
 
@@ -111,6 +119,7 @@ namespace CastRightCatchInvManagement
             var form = Navigator.Ensure<InvoicePdf>(AppPage.InvoicePdf);
             form.TryAddSale(prefill, error =>
             {
+                // Errors stay on this page; stayOnPage is Shift+click so the user can add more sales.
                 if (error != null || stayOnPage)
                 {
                     ShowAddResultSafe(error);
@@ -121,11 +130,13 @@ namespace CastRightCatchInvManagement
             });
         }
 
+        /// <summary>Add this grid row to Create Invoice or Create Sales Order, or open an existing SO PDF.</summary>
         private void AddSaleToDocument(int rowIndex, bool invoice, bool stayOnPage = false)
         {
             var record = DataFiles.GridRowToRecord(dataGridView1, rowIndex);
             string po = DataFiles.SalePo(record);
             string so = DataFiles.GetRecord(record, "SO #");
+            // Cannot look up matching lines without a PO or SO.
             if (po.Length == 0 && so.Length == 0)
                 return;
 
@@ -133,6 +144,7 @@ namespace CastRightCatchInvManagement
             if (!invoice && so.Length > 0)
             {
                 string? existing = DataFiles.FindStoredSalesOrder(so);
+                // Reopen the stored pick ticket instead of filling a new draft.
                 if (existing != null)
                 {
                     DataFiles.OpenPdf(existing, DataFiles.PdfKindSalesOrder, so);
@@ -149,11 +161,13 @@ namespace CastRightCatchInvManagement
                 CustomerName = DataFiles.GetRecord(record, "Customer")
             };
 
+            // Right-click / Shift+click path: Create Invoice.
             if (invoice)
             {
                 var form = Navigator.Ensure<InvoicePdf>(AppPage.InvoicePdf);
                 form.TryAddSale(prefill, error =>
                 {
+                    // Stay on Sales after Shift+click, or when the add failed.
                     if (error != null || stayOnPage)
                     {
                         ShowAddResultSafe(error);
@@ -168,6 +182,7 @@ namespace CastRightCatchInvManagement
             var order = Navigator.Ensure<SalesOrder>(AppPage.SalesOrder);
             order.TryAddSale(prefill, error =>
             {
+                // A customer mismatch should not jump away from this grid.
                 if (error != null)
                 {
                     ShowAddResultSafe(error);
@@ -184,8 +199,10 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void ShowAddResultSafe(string? error)
         {
+            // TryAddSale can finish after this page was closed.
             if (IsDisposed)
                 return;
+            // Callbacks may arrive off the UI thread.
             if (InvokeRequired)
             {
                 BeginInvoke(() => ShowAddResult(error));
@@ -198,6 +215,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Toast on this page: error text, or a short success if the lines were added.</summary>
         private void ShowAddResult(string? error)
         {
+            // Null error means the sale lines were added.
             if (error != null)
                 ToastAlert.Error(this, error);
             else
@@ -210,6 +228,7 @@ namespace CastRightCatchInvManagement
             DataGridViewColumn? col = dataGridView1.Columns
                 .Cast<DataGridViewColumn>()
                 .FirstOrDefault(c => c.HeaderText.Equals(header, StringComparison.OrdinalIgnoreCase));
+            // Hidden or renamed columns should not throw from a helper.
             if (col == null)
                 return "";
 

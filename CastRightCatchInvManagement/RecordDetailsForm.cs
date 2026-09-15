@@ -20,31 +20,47 @@ namespace CastRightCatchInvManagement
         private readonly Dictionary<string, int> _lotRows = new(StringComparer.OrdinalIgnoreCase);
         private int _lotsPaintedAt;
         private bool _lotsDone;
+        /// <summary>Open the matching details view: customer/vendor history, item lots, or a field popup.</summary>
         public static void ShowRecord(
             IWin32Window? owner,
             string title,
             Dictionary<string, string> record,
             string? table = null)
         {
+            // Customers have identity plus invoice/sale history, not a field list.
             if (IsCustomer(title, table))
             {
                 CustomerHistoryForm.ShowFor(owner, record);
                 return;
             }
 
+            // Vendors use the same history view, filtered to purchases.
             if (IsVendor(title, table))
             {
                 CustomerHistoryForm.ShowVendor(owner, record);
                 return;
             }
 
-            using var form = new RecordDetailsForm(title, record, table);
-            if (owner != null)
-                form.ShowDialog(owner);
-            else
-                form.ShowDialog();
+            var form = new RecordDetailsForm(title, record, table);
+            // Lots scan in the background, so inventory stays modeless.
+            if (IsItem(title, table))
+            {
+                form.FormClosed += (_, _) => form.Dispose();
+                form.Show();
+                form.Activate();
+                return;
+            }
+
+            using (form)
+            {
+                if (owner != null)
+                    form.ShowDialog(owner);
+                else
+                    form.ShowDialog();
+            }
         }
 
+        /// <summary>Build header, body, and footer for an order, inventory item, or generic field list.</summary>
         private RecordDetailsForm(string title, Dictionary<string, string> record, string? table)
         {
             string heading = string.IsNullOrWhiteSpace(title) ? "Details" : title;
@@ -56,6 +72,7 @@ namespace CastRightCatchInvManagement
                 : sale
                     ? DataFiles.FindSalesByPo(DataFiles.SalePo(record))
                     : new List<Dictionary<string, string>>();
+            // The clicked row is enough to show details even if the PO lookup returned nothing.
             if ((purchase || sale) && lines.Count == 0)
                 lines.Add(record);
 
@@ -72,7 +89,7 @@ namespace CastRightCatchInvManagement
             FormBorderStyle = FormBorderStyle.Sizable;
             MinimizeBox = true;
             MaximizeBox = true;
-            ShowInTaskbar = false;
+            ShowInTaskbar = item;
             AutoScaleMode = AutoScaleMode.Font;
             AutoScaleDimensions = new SizeF(7F, 15F);
             ClientSize = purchase || sale || item ? new Size(980, 720) : new Size(640, 640);
@@ -110,12 +127,14 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Cancel the lots scan so closing the window does not keep the background work running.</summary>
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _lotsLoad?.Cancel();
             base.OnFormClosing(e);
         }
 
+        /// <summary>Dispose the lots-scan cancellation source with this form.</summary>
         protected override void Dispose(bool disposing)
         {
             if (disposing)
@@ -123,6 +142,7 @@ namespace CastRightCatchInvManagement
             base.Dispose(disposing);
         }
 
+        /// <summary>Party card, order header card, and the items grid for a purchase or sale.</summary>
         private Control BuildOrderBody(
             bool purchase,
             Dictionary<string, string> header,
@@ -216,6 +236,7 @@ namespace CastRightCatchInvManagement
             _lotsSpinner.BringToFront();
             void CenterSpinner()
             {
+                // Resize can fire after the spinner was disposed with the form.
                 if (_lotsSpinner == null)
                     return;
                 _lotsSpinner.Location = new Point(
@@ -230,12 +251,14 @@ namespace CastRightCatchInvManagement
             foreach (var key in new[] { "Code", "Description", "Species", "COO", "Pack Size", "Scientific Name" })
             {
                 string value = DataFiles.GetRecord(item, key).Trim();
+                // Skip empty item fields so the header card only shows what is filled.
                 if (value.Length == 0)
                     continue;
                 fields.Add(new KeyValuePair<string, string>(key, value));
             }
 
             wrap.Controls.Add(host);
+            // Skip the item card when every header field is blank.
             if (fields.Count > 0)
             {
                 int rows = Math.Max(1, (fields.Count + 2) / 3);
@@ -259,19 +282,20 @@ namespace CastRightCatchInvManagement
 
         /// <summary>
         /// Fold matching purchase and sale lines into lots. Match on Item Code, or Description if code is empty.
-        /// Skip waiting-to-add rows only. Purchased uses purchase Volume grouped by PO #.
-        /// Sold uses sale Volume grouped by <see cref="DataFiles.SaleLot"/>, then sale PO # if that is empty.
-        /// Remaining is purchased minus sold.
+        /// Skip waiting-to-add rows only. Lots come from purchase PO #. A sale counts against a lot only when
+        /// its Lot # or PO # matches that purchase PO. Remaining is purchased minus sold.
         /// </summary>
         private void LoadLots(string code, string description, CancellationToken token)
         {
             try
             {
+                // Prefer Item Code. Description is only used when the inventory row has no code.
                 string column = code.Length > 0 ? "Item Code" : "Description";
                 string needle = code.Length > 0 ? code : description;
                 if (needle.Length == 0)
                     return;
 
+                // Purchases create lots. Skip this table if the user cannot see Purchases.
                 if (TableAccess.Can(TableAccess.Purchases))
                 {
                     SqliteInventory.ForEachWhere(
@@ -280,6 +304,7 @@ namespace CastRightCatchInvManagement
                         needle,
                         purchase =>
                         {
+                            // Unconfirmed adds are not stock yet.
                             if (DataFiles.IsWaitingAdd(purchase))
                                 return;
                             string lot = DataFiles.GetRecord(purchase, "PO #").Trim();
@@ -290,6 +315,7 @@ namespace CastRightCatchInvManagement
                         token);
                 }
 
+                // Sales only reduce lots that already exist from purchases.
                 if (TableAccess.Can(TableAccess.Sales))
                 {
                     SqliteInventory.ForEachWhere(
@@ -300,18 +326,17 @@ namespace CastRightCatchInvManagement
                         {
                             if (DataFiles.IsWaitingAdd(sale))
                                 return;
-                            // SaleLot prefers Lot #; if that is blank it may return the sale PO # (often the customer PO).
-                            string lot = DataFiles.SaleLot(sale);
-                            if (lot.Length == 0)
-                                lot = DataFiles.GetRecord(sale, "PO #").Trim();
                             decimal volume = DataFiles.ParseMoney(DataFiles.GetRecord(sale, "Volume"));
-                            AddSale(lot, volume);
+                            // Lot # is the purchase PO. If it does not match a purchase lot, try sale PO #.
+                            if (!AddSale(DataFiles.GetRecord(sale, "Lot #"), volume))
+                                AddSale(DataFiles.GetRecord(sale, "PO #"), volume);
                         },
                         token);
                 }
             }
             catch (OperationCanceledException)
             {
+                // Form closed while the scan was running.
                 return;
             }
             finally
@@ -323,12 +348,13 @@ namespace CastRightCatchInvManagement
         /// <summary>Add purchase Volume onto the PO lot. Vendor is kept from the first purchase on that lot.</summary>
         private void AddPurchase(string lot, string vendor, decimal volume)
         {
-            // Blank PO / lot numbers share one bucket so they still show on the grid.
+            // Blank PO numbers share one bucket so they still show on the grid.
             string key = lot.Length > 0 ? DataFiles.NormalizePo(lot) : "(no lot)";
             bool isNew;
             lock (_lots)
             {
                 isNew = !_lots.ContainsKey(key);
+                // First purchase line on this PO creates the lot row.
                 if (!_lots.TryGetValue(key, out var snap))
                 {
                     snap = new LotSnap
@@ -340,6 +366,7 @@ namespace CastRightCatchInvManagement
                 }
 
                 snap.Purchased += volume;
+                // Keep the vendor from the first purchase on this PO.
                 if (snap.Vendor.Length == 0)
                     snap.Vendor = vendor;
             }
@@ -347,28 +374,33 @@ namespace CastRightCatchInvManagement
             QueueLotsPaint(immediate: isNew, done: false);
         }
 
-        /// <summary>Add sale Volume onto the lot. Creates a lot row if sales exist with no matching purchase.</summary>
-        private void AddSale(string lot, decimal volume)
+        /// <summary>
+        /// Add sale Volume onto an existing purchase lot. Returns false if this number is not a purchase PO for the item.
+        /// </summary>
+        private bool AddSale(string lot, decimal volume)
         {
-            string key = lot.Length > 0 ? DataFiles.NormalizePo(lot) : "(no lot)";
-            bool isNew;
+            lot = (lot ?? "").Trim();
+            // No lot/PO on the sale, so it cannot match a purchase PO.
+            if (lot.Length == 0)
+                return false;
+
+            string key = DataFiles.NormalizePo(lot);
+            if (key.Length == 0)
+                return false;
+
+            bool firstSale;
             lock (_lots)
             {
-                isNew = !_lots.ContainsKey(key);
+                // Only count the sale if this number is already a purchase PO for the item.
                 if (!_lots.TryGetValue(key, out var snap))
-                {
-                    snap = new LotSnap
-                    {
-                        Key = key,
-                        Lot = lot.Length > 0 ? lot : "(no lot)"
-                    };
-                    _lots[key] = snap;
-                }
+                    return false;
 
+                firstSale = snap.Sold == 0;
                 snap.Sold += volume;
             }
 
-            QueueLotsPaint(immediate: isNew, done: false);
+            QueueLotsPaint(immediate: firstSale, done: false);
+            return true;
         }
 
         /// <summary>
@@ -379,6 +411,7 @@ namespace CastRightCatchInvManagement
             if (done)
                 _lotsDone = true;
             int now = Environment.TickCount;
+            // Skip extra paints unless this is a new lot, the scan finished, or 50ms have passed.
             if (!immediate && !done && now - _lotsPaintedAt < 50)
                 return;
             _lotsPaintedAt = now;
@@ -399,6 +432,7 @@ namespace CastRightCatchInvManagement
 
             if (IsDisposed)
                 return;
+            // Background thread must marshal to the UI thread.
             if (InvokeRequired)
                 BeginInvoke(Paint);
             else
@@ -412,6 +446,7 @@ namespace CastRightCatchInvManagement
                 return;
             string key = snap.Key.Length > 0 ? snap.Key : "(no lot)";
             decimal remain = snap.Purchased - snap.Sold;
+            // Remaining > 0 still on hand; negative means sold more than purchased; zero is sold out.
             string note = remain > 0
                 ? Lbs(remain) + " lb remaining"
                 : remain < 0
@@ -426,6 +461,7 @@ namespace CastRightCatchInvManagement
                 Lbs(remain),
                 note
             };
+            // Update the existing grid row when this lot was already drawn.
             if (_lotRows.TryGetValue(key, out int index) && index < _lotsGrid.Rows.Count)
             {
                 var row = _lotsGrid.Rows[index];
@@ -454,6 +490,7 @@ namespace CastRightCatchInvManagement
             if (_lotsGrid == null)
                 return;
             _lotsGrid.EnableHeadersVisualStyles = false;
+            // Faded while loading so arriving rows are visible but the grid is not the finished look.
             if (fade)
             {
                 _lotsGrid.BackgroundColor = Theme.Cream;
@@ -476,6 +513,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Format pounds for the lots grid, keeping trailing zeros off.</summary>
         private static string Lbs(decimal value) =>
             value.ToString("0.###", CultureInfo.InvariantCulture);
 
@@ -489,6 +527,7 @@ namespace CastRightCatchInvManagement
             public decimal Sold { get; set; }
         }
 
+        /// <summary>Navy section bar plus a compact labeled field table, docked to the top.</summary>
         private static CardPanel LabeledFieldsCard(
             string title,
             List<KeyValuePair<string, string>> fields,
@@ -515,6 +554,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Navy caption bar used above order, party, and item cards.</summary>
         private static Panel SectionBar(string title)
         {
             var bar = new Panel
@@ -535,6 +575,7 @@ namespace CastRightCatchInvManagement
             return bar;
         }
 
+        /// <summary>Scrollable two-column field list for invoices and other non-order rows.</summary>
         private Control BuildFieldBody(string title, Dictionary<string, string> record)
         {
             var scroller = new Panel
@@ -559,6 +600,7 @@ namespace CastRightCatchInvManagement
             return scroller;
         }
 
+        /// <summary>Read-only items grid for a PO, highlighting the row that was clicked.</summary>
         private static DataGridView MakeItemsGrid(
             bool purchase,
             List<Dictionary<string, string>> lines,
@@ -580,6 +622,7 @@ namespace CastRightCatchInvManagement
             grid.ColumnHeadersHeight = 32;
             grid.RowTemplate.Height = 30;
 
+            // Purchases show cost columns; sales show lot, sell price, and amount.
             if (purchase)
             {
                 AddCol(grid, "Item Code", 90);
@@ -627,6 +670,7 @@ namespace CastRightCatchInvManagement
                 bool sameLot = !purchase &&
                     (clickedLot.Length == 0 ||
                      DataFiles.SaleLot(line).Equals(clickedLot, StringComparison.OrdinalIgnoreCase));
+                // Highlight the clicked product so the user can see which line they opened.
                 if (sameItem && (purchase || sameLot) && select < 0)
                     select = index;
             }
@@ -640,6 +684,7 @@ namespace CastRightCatchInvManagement
             return grid;
         }
 
+        /// <summary>Add a fill-weighted, non-sortable text column to a details grid.</summary>
         private static void AddCol(DataGridView grid, string name, int width, int fill = 0)
         {
             grid.Columns.Add(new DataGridViewTextBoxColumn
@@ -653,6 +698,7 @@ namespace CastRightCatchInvManagement
             });
         }
 
+        /// <summary>Order-header fields for a purchase or sale, including record status.</summary>
         private static List<KeyValuePair<string, string>> HeaderFields(
             bool purchase,
             Dictionary<string, string> record)
@@ -679,6 +725,7 @@ namespace CastRightCatchInvManagement
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var key in keys)
             {
+                // Skip duplicate headings if the preferred list repeats a column.
                 if (!used.Add(key))
                     continue;
                 string value = key.Equals(DataFiles.RecordStatus, StringComparison.OrdinalIgnoreCase)
@@ -690,6 +737,7 @@ namespace CastRightCatchInvManagement
             return list;
         }
 
+        /// <summary>Vendor or customer identity fields, filled from the party table when found.</summary>
         private static List<KeyValuePair<string, string>> PartyFields(
             bool purchase,
             Dictionary<string, string> order)
@@ -724,6 +772,7 @@ namespace CastRightCatchInvManagement
             foreach (var key in keys)
             {
                 string value = DataFiles.GetRecord(party, key);
+                // Party table may be missing; fall back to the order row for code, name, and terms.
                 if (value.Length == 0)
                 {
                     if (key.Equals("Code", StringComparison.OrdinalIgnoreCase))
@@ -742,6 +791,7 @@ namespace CastRightCatchInvManagement
             return list;
         }
 
+        /// <summary>Find a customer or vendor by code first, then by name.</summary>
         private static Dictionary<string, string>? FindParty(string table, string code, string name)
         {
             code = (code ?? "").Trim();
@@ -754,9 +804,11 @@ namespace CastRightCatchInvManagement
             {
                 string recCode = DataFiles.GetRecord(record, "Code").Trim();
                 string recName = DataFiles.GetRecordAny(record, "Name", "Company").Trim();
+                // Codes are unique; return immediately on a code hit.
                 if (code.Length > 0 &&
                     recCode.Equals(code, StringComparison.OrdinalIgnoreCase))
                     return record;
+                // Keep the first name match in case no code matches.
                 if (byName == null &&
                     name.Length > 0 &&
                     recName.Equals(name, StringComparison.OrdinalIgnoreCase))
@@ -766,6 +818,7 @@ namespace CastRightCatchInvManagement
             return byName;
         }
 
+        /// <summary>Lay out labeled cells in columns, giving wide fields such as Address a full row.</summary>
         private static TableLayoutPanel FieldTable(
             List<KeyValuePair<string, string>> fields,
             string title,
@@ -790,6 +843,7 @@ namespace CastRightCatchInvManagement
             foreach (var pair in fields)
             {
                 bool wide = !compact && IsWide(pair.Key);
+                // Wide fields start on their own row so Address/Notes are not squeezed.
                 if (wide && col != 0)
                 {
                     col = 0;
@@ -815,6 +869,7 @@ namespace CastRightCatchInvManagement
                 else
                 {
                     col++;
+                    // Wrap to the next row after the last column.
                     if (col >= columns)
                     {
                         col = 0;
@@ -826,6 +881,7 @@ namespace CastRightCatchInvManagement
             return grid;
         }
 
+        /// <summary>Top title bar with gold accent used by every details popup.</summary>
         private Panel Chrome(string title, string subtitleText)
         {
             var header = new Panel
@@ -865,6 +921,7 @@ namespace CastRightCatchInvManagement
             return header;
         }
 
+        /// <summary>Close button docked at the bottom of the popup.</summary>
         private Panel Footer()
         {
             var close = new Button
@@ -895,6 +952,7 @@ namespace CastRightCatchInvManagement
             return footer;
         }
 
+        /// <summary>Purchase Description is labeled Species so it matches the inventory wording.</summary>
         private static string DisplayCaption(string title, string key)
         {
             if (title.Equals("Purchase", StringComparison.OrdinalIgnoreCase) &&
@@ -903,6 +961,7 @@ namespace CastRightCatchInvManagement
             return key;
         }
 
+        /// <summary>One caption-plus-value cell; blank values show an em dash.</summary>
         private static Panel FieldCell(string caption, string value, bool compact = false)
         {
             var cell = new Panel
@@ -930,6 +989,7 @@ namespace CastRightCatchInvManagement
             return cell;
         }
 
+        /// <summary>True for long text fields that should span every column.</summary>
         private static bool IsWide(string name)
         {
             return name.Equals("Notes", StringComparison.OrdinalIgnoreCase) ||
@@ -940,6 +1000,7 @@ namespace CastRightCatchInvManagement
                    name.Equals(DataFiles.InvoiceLinesColumn, StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>Status first, then preferred customer/vendor keys, then remaining record fields.</summary>
         private static List<KeyValuePair<string, string>> OrderedFields(
             string title,
             Dictionary<string, string> record)
@@ -962,6 +1023,7 @@ namespace CastRightCatchInvManagement
 
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var list = new List<KeyValuePair<string, string>>();
+            // Show status whenever the row has it, or when this is a customer/vendor card.
             if (TryGet(record, DataFiles.RecordStatus, out _) || prefer.Length > 0)
             {
                 used.Add(DataFiles.RecordStatus);
@@ -972,6 +1034,7 @@ namespace CastRightCatchInvManagement
 
             foreach (var key in prefer)
             {
+                // Preferred keys that are missing or already listed are skipped.
                 if (used.Contains(key) || !TryGet(record, key, out var value))
                     continue;
                 used.Add(key);
@@ -981,6 +1044,7 @@ namespace CastRightCatchInvManagement
             foreach (var pair in record)
             {
                 string key = pair.Key.Trim();
+                // Skip unnamed or already-listed keys so the card does not repeat columns.
                 if (key.Length == 0 || !used.Add(key))
                     continue;
                 list.Add(new KeyValuePair<string, string>(key, DisplayField(key, pair.Value ?? "")));
@@ -989,6 +1053,7 @@ namespace CastRightCatchInvManagement
             return list;
         }
 
+        /// <summary>Mask bank account numbers; other fields pass through.</summary>
         private static string DisplayField(string key, string value)
         {
             if (key.Equals(DataFiles.AccountNumber, StringComparison.OrdinalIgnoreCase))
@@ -996,6 +1061,7 @@ namespace CastRightCatchInvManagement
             return value ?? "";
         }
 
+        /// <summary>Case-insensitive lookup of one record field.</summary>
         private static bool TryGet(Dictionary<string, string> record, string key, out string value)
         {
             foreach (var pair in record)
@@ -1011,11 +1077,13 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        /// <summary>First non-blank field among the given keys, used for the window title.</summary>
         private static string First(Dictionary<string, string> record, params string[] keys)
         {
             foreach (var key in keys)
             {
                 string value = DataFiles.GetRecord(record, key).Trim();
+                // Title uses the first identity field that is actually filled.
                 if (value.Length > 0)
                     return value;
             }
@@ -1023,21 +1091,25 @@ namespace CastRightCatchInvManagement
             return "";
         }
 
+        /// <summary>True when this details popup is a purchases-table row.</summary>
         private static bool IsPurchase(string title, string? table) =>
             (table != null && table.Equals(DataFiles.PurchaseSales, StringComparison.OrdinalIgnoreCase)) ||
             title.Equals("Purchases", StringComparison.OrdinalIgnoreCase) ||
             title.Equals("Purchase", StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>True when this details popup is a sales-table row.</summary>
         private static bool IsSale(string title, string? table) =>
             (table != null && table.Equals(DataFiles.Sales, StringComparison.OrdinalIgnoreCase)) ||
             title.Equals("Sales", StringComparison.OrdinalIgnoreCase) ||
             title.Equals("Sale", StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>True when this details popup should open customer history instead of a field list.</summary>
         private static bool IsCustomer(string title, string? table) =>
             (table != null && table.Equals(DataFiles.Customers, StringComparison.OrdinalIgnoreCase)) ||
             title.Equals("Customers", StringComparison.OrdinalIgnoreCase) ||
             title.Equals("Customer", StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>True when this details popup should open vendor history instead of a field list.</summary>
         private static bool IsVendor(string title, string? table) =>
             (table != null && table.Equals(DataFiles.Vendors, StringComparison.OrdinalIgnoreCase)) ||
             title.Equals("Vendors", StringComparison.OrdinalIgnoreCase) ||

@@ -3,6 +3,7 @@ namespace CastRightCatchInvManagement
     /// <summary>Home splash: a full-area brand image with no controls.</summary>
     public partial class Dashboard : Form, INavigationPage
     {
+        /// <summary>Register this splash as the home page and paint the brand image.</summary>
         public Dashboard()
         {
             InitializeComponent();
@@ -10,8 +11,10 @@ namespace CastRightCatchInvManagement
             BuildUi();
         }
 
+        /// <summary>Home has no live data; the brand image is already in place.</summary>
         public void HighlightCurrentPage() { }
 
+        /// <summary>Fill the page with the home hero so the splash has no extra chrome.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);

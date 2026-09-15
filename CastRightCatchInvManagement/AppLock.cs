@@ -15,8 +15,10 @@ namespace CastRightCatchInvManagement
 
         private static bool _loadingShared;
 
+        /// <summary>True when a shared folder exists locally or this PC is connected to the server.</summary>
         public static bool HasFolder()
         {
+            // Remote clients have no local inventory folder; the server is the lock.
             if (DataLink.IsRemote)
                 return true;
 
@@ -24,17 +26,21 @@ namespace CastRightCatchInvManagement
                    Directory.Exists(AppState.InventoryFolder);
         }
 
+        /// <summary>Read this PC's last folder or server host from the local JSON file.</summary>
         public static void LoadSavedFolder()
         {
+            // First run on this PC has nothing to restore.
             if (!File.Exists(SettingsPath))
                 return;
 
             try
             {
                 var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath));
+                // Empty or invalid JSON deserializes to null.
                 if (settings == null)
                     return;
 
+                // Only restore a folder that still exists on disk.
                 if (!string.IsNullOrWhiteSpace(settings.InventoryFolder) &&
                     Directory.Exists(settings.InventoryFolder))
                 {
@@ -42,6 +48,7 @@ namespace CastRightCatchInvManagement
                 }
 
                 AppState.ServerHost = settings.ServerHost ?? "";
+                // Ignore out-of-range ports left by a hand-edited file.
                 if (settings.ServerPort > 0 && settings.ServerPort <= 65535)
                     AppState.ServerPort = settings.ServerPort;
                 AppState.ServerFingerprint = settings.ServerFingerprint ?? "";
@@ -55,8 +62,10 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Load company, SMTP, and session policy from the shared database.</summary>
         public static void LoadSharedSettings()
         {
+            // Nothing to read until a folder or server is available.
             if (!HasFolder())
                 return;
 
@@ -65,6 +74,7 @@ namespace CastRightCatchInvManagement
                 _loadingShared = true;
                 SqliteInventory.EnsureCreated();
                 var shared = SqliteInventory.ReadPublicSettings();
+                // Empty DB: seed it from whatever this PC already has in memory.
                 if (shared.Count == 0)
                 {
                     _loadingShared = false;
@@ -73,14 +83,17 @@ namespace CastRightCatchInvManagement
                 }
 
                 ApplyShared(shared);
+                // Admins also get SMTP/Plaid secrets that public reads omit.
                 if (AppState.IsAdmin)
                     ApplyShared(SqliteInventory.ReadSettings());
                 SqliteInventory.ApplyAdminSmtp();
 
                 string? email = SqliteInventory.ReadUserEmail(Environment.UserName);
+                // Prefer the shared email for this Windows user.
                 if (email != null)
                     AppState.UserEmail = email;
                 else if (!string.IsNullOrWhiteSpace(AppState.UserEmail))
+                    // Seed the shared row from this PC's last-known address.
                     SqliteInventory.WriteUserEmail(Environment.UserName, AppState.UserEmail);
             }
             catch
@@ -95,6 +108,7 @@ namespace CastRightCatchInvManagement
 
         public static event Action? Changed;
 
+        /// <summary>Point this PC at a shared folder and drop any server connection.</summary>
         public static void SaveFolder(string folder)
         {
             AppState.UseServer = false;
@@ -103,6 +117,7 @@ namespace CastRightCatchInvManagement
             SaveSettings();
         }
 
+        /// <summary>Remember the inventory server endpoint on this PC only.</summary>
         public static void SaveServer(string host, int port, string fingerprint)
         {
             AppState.UseServer = true;
@@ -112,6 +127,7 @@ namespace CastRightCatchInvManagement
             WriteLocalJson();
         }
 
+        /// <summary>Write local JSON and, when allowed, company settings to the shared database.</summary>
         public static bool SaveSettings()
         {
             bool ok = true;
@@ -121,21 +137,26 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Local JSON may be locked or the folder read-only; still try the shared write.
                 ok = false;
             }
 
+            // Skip the shared write while LoadSharedSettings is applying rows (avoids a loop).
             if (!_loadingShared && (HasFolder() || DataLink.IsRemote))
             {
                 try
                 {
+                    // Remote non-admins cannot overwrite company-wide settings.
                     if (AppState.IsAdmin || !DataLink.IsRemote)
                         SqliteInventory.WriteSettings(CurrentShared());
                     SqliteInventory.WriteUserEmail(Environment.UserName, AppState.UserEmail);
+                    // Keep the signed-in account row in sync with Settings.
                     if (!string.IsNullOrWhiteSpace(AppState.CurrentUsername))
                         SqliteInventory.UpdateAccountEmail(AppState.CurrentUsername, AppState.UserEmail);
                 }
                 catch
                 {
+                    // Shared write can fail while the local path still saved.
                     ok = false;
                 }
             }
@@ -168,18 +189,22 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Shared DB unavailable; caller should keep the SMTP form open.
                 return false;
             }
         }
 
+        /// <summary>Tell open windows that folder or company settings changed.</summary>
         public static void NotifyChanged() => Changed?.Invoke();
 
+        /// <summary>Disable nav buttons until a data folder or server is available; Settings stays enabled.</summary>
         public static void ApplyNavLock(params Button[] buttons)
         {
             bool unlocked = HasFolder();
 
             foreach (var btn in buttons)
             {
+                // Settings must stay clickable so a folder can still be chosen.
                 if (btn.Name == "btnSettings")
                     continue;
 
@@ -187,6 +212,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Persist this PC's folder or server endpoint next to the exe.</summary>
         private static void WriteLocalJson()
         {
             var settings = new AppSettings
@@ -206,6 +232,7 @@ namespace CastRightCatchInvManagement
             File.WriteAllText(SettingsPath, json);
         }
 
+        /// <summary>Company, numbering, SMTP, Plaid, and stay-signed-in policy for the shared database.</summary>
         private static Dictionary<string, string> CurrentShared()
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -240,8 +267,10 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Copy shared-database keys into AppState, keeping current values when a key is missing.</summary>
         private static void ApplyShared(Dictionary<string, string> shared)
         {
+            // Ignore a blank or unparsable term_start rather than clearing a good in-memory date.
             if (shared.TryGetValue("term_start", out var term) &&
                 DateTime.TryParse(term, out var start))
                 AppState.TermStartDate = start;
@@ -260,6 +289,7 @@ namespace CastRightCatchInvManagement
                 Get(shared, "reuse_missing_numbers", AppState.ReuseMissingNumbers ? "1" : "0") != "0";
             string smtpHost = Get(shared, "smtp_host", AppState.SmtpHost);
             AppState.SmtpHost = string.IsNullOrWhiteSpace(smtpHost) ? Mailer.DefaultHost : smtpHost.Trim();
+            // Invalid or missing port would break Mailer; fall back to the default.
             if (int.TryParse(Get(shared, "smtp_port", AppState.SmtpPort.ToString()), out int port) && port > 0)
                 AppState.SmtpPort = port;
             else
@@ -270,6 +300,7 @@ namespace CastRightCatchInvManagement
             AppState.PlaidClientId = Get(shared, "plaid_client_id", AppState.PlaidClientId);
             AppState.PlaidSecret = Get(shared, "plaid_secret", AppState.PlaidSecret);
             AppState.PlaidEnv = Get(shared, "plaid_env", AppState.PlaidEnv);
+            // Only 0 (off), 1, or 3 hours are valid auto-sync choices.
             if (int.TryParse(Get(shared, "plaid_sync_hours", AppState.PlaidSyncHours.ToString()), out int hours) &&
                 (hours == 0 || hours == 1 || hours == 3))
                 AppState.PlaidSyncHours = hours;
@@ -277,16 +308,20 @@ namespace CastRightCatchInvManagement
                 AppState.PlaidLastSync = lastSync;
             AppState.StaySignedInEnabled =
                 Get(shared, "stay_signed_in_enabled", AppState.StaySignedInEnabled ? "1" : "0") != "0";
+            // Zero or junk would disable stay-signed-in immediately.
             if (int.TryParse(Get(shared, "stay_signed_in_days", AppState.StaySignedInDays.ToString()), out int days) &&
                 days > 0)
                 AppState.StaySignedInDays = days;
+            // Zero would close the app on the next idle tick.
             if (int.TryParse(Get(shared, "idle_close_hours", AppState.IdleCloseHours.ToString()), out int idle) &&
                 idle > 0)
                 AppState.IdleCloseHours = idle;
         }
 
+        /// <summary>Apply company fields from the old local JSON when the shared DB is not available yet.</summary>
         private static void ApplyLocalFallback(AppSettings settings)
         {
+            // Older local JSON stored the term date before it moved to the shared DB.
             if (DateTime.TryParse(settings.TermStartDate, out var start))
                 AppState.TermStartDate = start;
 
@@ -303,11 +338,13 @@ namespace CastRightCatchInvManagement
             AppState.ProductNumberStart = settings.ProductNumberStart ?? AppState.ProductNumberStart;
         }
 
+        /// <summary>Read a shared-settings key, or keep the in-memory fallback when it is missing.</summary>
         private static string Get(Dictionary<string, string> map, string key, string fallback)
         {
             return map.TryGetValue(key, out var value) ? value ?? "" : fallback;
         }
 
+        /// <summary>Make the Windows user name safe as a settings file name.</summary>
         private static string SanitizeUserName(string userName)
         {
             foreach (var c in Path.GetInvalidFileNameChars())
@@ -391,6 +428,7 @@ namespace CastRightCatchInvManagement
 
         public static bool SignedIn => !string.IsNullOrWhiteSpace(CurrentUsername);
 
+        /// <summary>Clear the signed-in user, roles, and table denials for this session.</summary>
         public static void SignOut()
         {
             CurrentUsername = "";

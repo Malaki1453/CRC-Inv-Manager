@@ -30,17 +30,20 @@ namespace CastRightCatchInvManagement
         public static Image? Footer => FooterLazy.Value;
         public static Icon? AppIcon => AppIconLazy.Value;
 
+        /// <summary>Walk up from the exe until Assets or the source brand-assests folder is found.</summary>
         private static string ResolveDirectory()
         {
             var start = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
             for (var dir = start; dir != null; dir = dir.Parent)
             {
                 var assets = Path.Combine(dir.FullName, "Assets");
+                // Prefer the packaged Assets copy used at runtime.
                 if (File.Exists(Path.Combine(assets, "logo-seal.png")) ||
                     File.Exists(Path.Combine(assets, "app.ico")))
                     return assets;
 
                 var branded = Path.Combine(dir.FullName, "brand-assests");
+                // Dev-tree fallback: original brand files next to the solution.
                 if (Directory.Exists(branded))
                     return branded;
             }
@@ -48,11 +51,13 @@ namespace CastRightCatchInvManagement
             return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets");
         }
 
+        /// <summary>Load the first readable image among the given file names.</summary>
         private static Image? Load(params string[] names)
         {
             foreach (var name in names)
             {
                 var path = Path.Combine(DirectoryPath, name);
+                // Try the next candidate name when this file is missing.
                 if (!File.Exists(path))
                     continue;
 
@@ -71,8 +76,10 @@ namespace CastRightCatchInvManagement
             return null;
         }
 
+        /// <summary>Make near-black pixels transparent so a dark wordmark works on navy.</summary>
         private static Image? KnockoutDark(Image? source, int threshold = 36)
         {
+            // Optional overlay; missing wordmark should not crash paint.
             if (source == null)
                 return null;
 
@@ -94,6 +101,7 @@ namespace CastRightCatchInvManagement
                 int r = (argb >> 16) & 255;
                 int g = (argb >> 8) & 255;
                 int b = argb & 255;
+                // Wordmark PNGs ship on a black field; drop that so navy shows through.
                 if (r <= threshold && g <= threshold && b <= threshold)
                     pixels[i] = 0;
             }
@@ -103,8 +111,10 @@ namespace CastRightCatchInvManagement
             return bmp;
         }
 
+        /// <summary>Trim fully transparent padding so the wordmark sits tight in the hero.</summary>
         private static Image? CropOpaque(Image? source)
         {
+            // Non-bitmap images cannot be scanned pixel-by-pixel.
             if (source is not Bitmap bmp)
                 return source;
 
@@ -113,6 +123,7 @@ namespace CastRightCatchInvManagement
             {
                 for (int x = 0; x < bmp.Width; x++)
                 {
+                    // Ignore near-clear pixels left by the knockout.
                     if (bmp.GetPixel(x, y).A < 16)
                         continue;
                     if (x < minX) minX = x;
@@ -122,6 +133,7 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            // Entire image was transparent; keep the original bitmap.
             if (maxX <= minX || maxY <= minY)
                 return bmp;
 
@@ -135,6 +147,7 @@ namespace CastRightCatchInvManagement
             return bmp.Clone(rect, PixelFormat.Format32bppArgb);
         }
 
+        /// <summary>Prefer app.ico; otherwise convert the seal bitmap to an icon.</summary>
         private static Icon? LoadIcon()
         {
             var icoPath = Path.Combine(DirectoryPath, "app.ico");
@@ -159,6 +172,7 @@ namespace CastRightCatchInvManagement
                 }
                 catch
                 {
+                    // HICON conversion can fail on some bitmaps; windows keep the default icon.
                     return null;
                 }
             }

@@ -3,12 +3,16 @@ using CrcInventory.Protocol;
 
 namespace CrcInventory.Server;
 
+/// <summary>
+/// Hosted inventory database: SQLite files or Postgres schemas, plus accounts, settings, PDFs, and bank links.
+/// </summary>
 internal sealed partial class InventoryStore
 {
     private readonly string _folder;
     private readonly StoreEngine _engine;
     private readonly object _gate = new();
 
+    /// <summary>Creates the data folder, picks SQLite or Postgres, loads roles, and ensures schema.</summary>
     public InventoryStore(string dataFolder, string? postgres = null)
     {
         _folder = Path.GetFullPath(dataFolder);
@@ -22,18 +26,25 @@ internal sealed partial class InventoryStore
         EnsureCreated();
     }
 
+    /// <summary>admins.json wrapper for administrator and IT usernames.</summary>
     public RolesFile Roles { get; }
 
+    /// <summary>Resolved data folder (SQLite files, PFX, admins.json, crc.key).</summary>
     public string Folder => _folder;
 
+    /// <summary>Human-readable engine name for the host log.</summary>
     public string EngineName => _engine.Name;
 
+    /// <summary>True when this store is Postgres rather than local SQLite files.</summary>
     public bool UsesPostgres => _engine.IsPostgres;
 
+    /// <summary>Path of crc_inventory.db (unused on Postgres except for logging).</summary>
     public string LivePath => Path.Combine(_folder, Schema.LiveFileName);
 
+    /// <summary>Path of old_inventory.db (unused on Postgres except for logging).</summary>
     public string ArchivePath => Path.Combine(_folder, Schema.ArchiveFileName);
 
+    /// <summary>Creates live and archive tables, app tables, and upgrades plaintext secrets.</summary>
     public void EnsureCreated()
     {
         lock (_gate)
@@ -43,10 +54,12 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Creates tables for one side (live or archive) and, on live, the app/account/PDF tables.</summary>
     private void EnsureCreated(bool archive)
     {
         using var db = Open(archive);
         using var cmd = db.CreateCommand();
+        // WAL is a SQLite pragma; Postgres does not accept it.
         if (!_engine.IsPostgres)
         {
             cmd.CommandText = "PRAGMA journal_mode=WAL;";
@@ -68,15 +81,18 @@ internal sealed partial class InventoryStore
             foreach (var column in columns)
                 EnsureTextColumn(table, column, archive);
             BackfillLiveStatus(table, archive);
+            // Drop purchase columns the desktop schema no longer uses so hosted files stay in sync.
             if (table.Equals(Schema.PurchaseSales, StringComparison.OrdinalIgnoreCase))
             {
                 DropTextColumn(table, "Vendor Invoice #", archive);
                 DropTextColumn(table, "Volume Received", archive);
             }
+            // PDF Created was removed from invoices; drop it if an older file still has it.
             if (table.Equals(Schema.Invoices, StringComparison.OrdinalIgnoreCase))
                 DropTextColumn(table, "PDF Created", archive);
         }
 
+        // Archive databases only hold process tables; skip live-only app tables.
         if (archive)
             return;
 
@@ -205,6 +221,7 @@ internal sealed partial class InventoryStore
         UpgradeSecrets();
     }
 
+    /// <summary>Ensures the built-in Admin (deny-all tables) and IT (empty policy) access groups exist.</summary>
     private void SeedAccessGroups(DbCommand cmd)
     {
         cmd.Parameters.Clear();
@@ -229,10 +246,12 @@ internal sealed partial class InventoryStore
         cmd.Exec(_engine);
     }
 
+    /// <summary>True when admins.json or app_accounts already has an IT user (bootstrap is done).</summary>
     public bool HasItUser()
     {
         lock (_gate)
         {
+            // Roles file is the source of truth after bootstrap; skip the table scan when it already lists IT.
             if (Roles.HasItUser())
                 return true;
             using var db = Open();
@@ -242,6 +261,7 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Reads app_settings; secrets are revealed for admins or omitted for everyone else.</summary>
     public Dictionary<string, string> ReadSettings(bool revealSecrets = false)
     {
         lock (_gate)
@@ -253,8 +273,10 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Public settings with secret keys omitted.</summary>
     public Dictionary<string, string> ReadPublicSettings() => ReadSettings(revealSecrets: false);
 
+    /// <summary>Upserts settings; empty secret values are skipped so a blank field does not wipe the stored secret.</summary>
     public void WriteSettings(Dictionary<string, string> values)
     {
         lock (_gate)
@@ -263,6 +285,7 @@ internal sealed partial class InventoryStore
             using var tx = db.BeginTransaction();
             foreach (var pair in values)
             {
+                // An empty secret field means "leave the stored secret alone", not "clear it".
                 if (SecretProtect.IsSecretSetting(pair.Key) && string.IsNullOrEmpty(pair.Value))
                     continue;
                 using var cmd = db.CreateCommand();
@@ -282,10 +305,12 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Reads UI preferences for <paramref name="username"/>; empty name returns an empty map.</summary>
     public Dictionary<string, string> ReadPrefs(string username)
     {
         username = (username ?? "").Trim();
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Prefs are per account; a blank name has none.
         if (username.Length == 0)
             return map;
         lock (_gate)
@@ -301,9 +326,11 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Upserts UI preferences for <paramref name="username"/>; no-ops on a blank name or empty map.</summary>
     public void WritePrefs(string username, Dictionary<string, string> values)
     {
         username = (username ?? "").Trim();
+        // Nothing to store without a user or a map.
         if (username.Length == 0 || values.Count == 0)
             return;
         lock (_gate)
@@ -330,9 +357,11 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Looks up the email stored for a Windows user name, or null when missing.</summary>
     public string? ReadUserEmail(string windowsUser)
     {
         windowsUser = (windowsUser ?? "").Trim();
+        // Blank Windows names are not stored.
         if (windowsUser.Length == 0)
             return null;
         lock (_gate)
@@ -345,9 +374,11 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Upserts the email for a Windows user name; no-ops on a blank name.</summary>
     public void WriteUserEmail(string windowsUser, string? email)
     {
         windowsUser = (windowsUser ?? "").Trim();
+        // Blank Windows names are not stored.
         if (windowsUser.Length == 0)
             return;
         lock (_gate)
@@ -369,40 +400,49 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Current term start from settings, or today when unset/invalid.</summary>
     public DateTime TermStart()
     {
         var settings = ReadSettings();
+        // Use the stored term when it parses; otherwise default to today.
         if (settings.TryGetValue("term_start", out var text) && DateTime.TryParse(text, out var date))
             return date;
         return DateTime.Today;
     }
 
+    /// <summary>Stay-signed-in lifetime in days from settings, or 30 when unset/invalid.</summary>
     public int StaySignedInDays()
     {
         var settings = ReadSettings();
+        // Reject zero/negative so a bad setting cannot issue a zero-length token.
         if (settings.TryGetValue("stay_signed_in_days", out var text) &&
             int.TryParse(text, out int days) && days > 0)
             return days;
         return 30;
     }
 
+    /// <summary>Idle-close hours from settings, or 5 when unset/invalid.</summary>
     public int IdleCloseHours()
     {
         var settings = ReadSettings();
+        // Reject zero/negative so a bad setting cannot disable idle close.
         if (settings.TryGetValue("idle_close_hours", out var text) &&
             int.TryParse(text, out int hours) && hours > 0)
             return hours;
         return 5;
     }
 
+    /// <summary>Whether stay-signed-in is offered; missing setting means enabled.</summary>
     public bool StaySignedInEnabled()
     {
         var settings = ReadSettings();
+        // Only an explicit "0" turns the feature off; missing means on.
         if (settings.TryGetValue("stay_signed_in_enabled", out var text))
             return text != "0";
         return true;
     }
 
+    /// <summary>Reads all app_settings rows without revealing or stripping secrets.</summary>
     private Dictionary<string, string> ReadSettingsUnlocked()
     {
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -415,6 +455,7 @@ internal sealed partial class InventoryStore
         return map;
     }
 
+    /// <summary>Seals any leftover plaintext secrets in settings, SMTP, bank tokens, and routing/account columns.</summary>
     private void UpgradeSecrets()
     {
         UpgradeSetting("smtp_password");
@@ -427,6 +468,7 @@ internal sealed partial class InventoryStore
         UpgradeColumn(Schema.Vendors, "Account Number", archive: false);
     }
 
+    /// <summary>Seals one app_settings value when it is still plaintext.</summary>
     private void UpgradeSetting(string key)
     {
         using var db = Open();
@@ -434,6 +476,7 @@ internal sealed partial class InventoryStore
         read.CommandText = "SELECT value FROM app_settings WHERE key = $key;";
         read.AddParam("$key", key);
         string? value = read.Scalar(_engine)?.ToString();
+        // Missing or already-sealed values need no rewrite.
         if (string.IsNullOrEmpty(value) || SecretProtect.IsSealed(value))
             return;
         using var write = db.CreateCommand();
@@ -443,12 +486,14 @@ internal sealed partial class InventoryStore
         write.Exec(_engine);
     }
 
+    /// <summary>Seals admin_smtp.password when it is still plaintext.</summary>
     private void UpgradeSmtpPassword()
     {
         using var db = Open();
         using var read = db.CreateCommand();
         read.CommandText = "SELECT password FROM admin_smtp WHERE id = 1;";
         string? value = read.Scalar(_engine)?.ToString();
+        // Missing or already-sealed values need no rewrite.
         if (string.IsNullOrEmpty(value) || SecretProtect.IsSealed(value))
             return;
         using var write = db.CreateCommand();
@@ -457,9 +502,11 @@ internal sealed partial class InventoryStore
         write.Exec(_engine);
     }
 
+    /// <summary>Seals plaintext cells in one secret column, skipping empty and already-sealed values.</summary>
     private void UpgradeColumn(string table, string column, bool archive)
     {
         var columns = new HashSet<string>(TableColumnsFrom(table, archive), StringComparer.OrdinalIgnoreCase);
+        // Older files may not have this column yet.
         if (!columns.Contains(column))
             return;
         using var db = Open(archive);
@@ -471,6 +518,7 @@ internal sealed partial class InventoryStore
             while (reader.Read())
             {
                 string value = reader.IsDBNull(1) ? "" : reader.GetValue(1)?.ToString() ?? "";
+                // Empty and already-sealed cells stay as-is.
                 if (value.Length == 0 || SecretProtect.IsSealed(value))
                     continue;
                 updates.Add((reader.GetValue(0)!, SecretProtect.Seal(value)));
@@ -487,11 +535,14 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Opens live (default) or archive through the current engine.</summary>
     private DbConnection Open(bool archive = false) => _engine.Open(archive);
 
+    /// <summary>Adds a missing TEXT column, and backfills Record Status when that column is new.</summary>
     private void EnsureTextColumn(string table, string column, bool archive)
     {
         var existing = new HashSet<string>(TableColumnsFrom(table, archive), StringComparer.OrdinalIgnoreCase);
+        // Column already exists; ALTER would fail.
         if (existing.Contains(column))
             return;
 
@@ -499,13 +550,16 @@ internal sealed partial class InventoryStore
         using var cmd = db.CreateCommand();
         cmd.CommandText = $"ALTER TABLE {Quote(table)} ADD COLUMN {Quote(column)} TEXT;";
         cmd.Exec(_engine);
+        // New Record Status columns should mark existing rows Live.
         if (column.Equals(Schema.RecordStatus, StringComparison.OrdinalIgnoreCase))
             BackfillLiveStatus(table, archive);
     }
 
+    /// <summary>Sets blank Record Status cells to Live so older rows display consistently.</summary>
     private void BackfillLiveStatus(string table, bool archive)
     {
         var existing = new HashSet<string>(TableColumnsFrom(table, archive), StringComparer.OrdinalIgnoreCase);
+        // Nothing to backfill until the column exists.
         if (!existing.Contains(Schema.RecordStatus))
             return;
 
@@ -518,9 +572,11 @@ internal sealed partial class InventoryStore
         cmd.Exec(_engine);
     }
 
+    /// <summary>Drops a leftover TEXT column that the current desktop schema no longer uses.</summary>
     private void DropTextColumn(string table, string column, bool archive)
     {
         var existing = new HashSet<string>(TableColumnsFrom(table, archive), StringComparer.OrdinalIgnoreCase);
+        // Column already gone; DROP would fail.
         if (!existing.Contains(column))
             return;
 
@@ -530,9 +586,11 @@ internal sealed partial class InventoryStore
         cmd.Exec(_engine);
     }
 
+    /// <summary>Adds a missing column with the given SQL definition on the live database.</summary>
     private void EnsureColumn(string table, string column, string definition)
     {
         var existing = new HashSet<string>(TableColumnsFrom(table, archive: false), StringComparer.OrdinalIgnoreCase);
+        // Column already exists; ALTER would fail.
         if (existing.Contains(column))
             return;
 
@@ -542,14 +600,17 @@ internal sealed partial class InventoryStore
         cmd.Exec(_engine);
     }
 
+    /// <summary>Live columns, or live+archive union when viewing old process tables.</summary>
     private List<string> TableColumns(string table, bool viewOld)
     {
+        // Archive process tables may have extra columns; merge them for "view old".
         if (viewOld && Schema.IsProcessTable(table))
         {
             var combined = new List<string>();
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var column in TableColumnsFrom(table, false).Concat(TableColumnsFrom(table, true)))
             {
+                // Keep first-seen casing; skip duplicates from the other file/schema.
                 if (!used.Add(column))
                     continue;
                 combined.Add(column);
@@ -561,15 +622,19 @@ internal sealed partial class InventoryStore
         return TableColumnsFrom(table, archive: false);
     }
 
+    /// <summary>Column names on one side (live or archive) of <paramref name="table"/>.</summary>
     private List<string> TableColumnsFrom(string table, bool archive)
     {
         using var db = Open(archive);
         return _engine.ListColumns(db, table).ToList();
     }
 
+    /// <summary>Double-quote identifier for the current engine.</summary>
     private static string Quote(string name) => StoreEngine.Quote(name);
 
+    /// <summary>Local timestamp used for created_at / stored_at / updated_at.</summary>
     private static string NowStamp() => DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
+    /// <summary>yyyy-MM-dd term key, defaulting to today when <paramref name="term"/> is null.</summary>
     private static string TermKey(DateTime? term) => (term ?? DateTime.Today).ToString("yyyy-MM-dd");
 }

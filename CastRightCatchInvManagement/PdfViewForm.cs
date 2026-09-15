@@ -29,12 +29,14 @@ namespace CastRightCatchInvManagement
         private string? _kind;
         private string? _key;
 
+        /// <summary>Open the PDF, reusing an existing window for the same stored document.</summary>
         public static void ShowDocument(
             string path,
             string? title = null,
             string? kind = null,
             string? key = null)
         {
+            // Temp files can vanish after a failed save; do not open an empty viewer.
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             {
                 MessageBox.Show(
@@ -46,6 +48,7 @@ namespace CastRightCatchInvManagement
             }
 
             string id = DocumentId(path, kind, key);
+            // One window per invoice/SO so Save/Replace does not fork copies.
             if (OpenDocs.TryGetValue(id, out var existing) &&
                 existing != null &&
                 !existing.IsDisposed)
@@ -63,6 +66,7 @@ namespace CastRightCatchInvManagement
             OpenDocs[form._id] = form;
             form.FormClosed += (_, _) =>
             {
+                // Drop the map entry only if this instance still owns it.
                 if (OpenDocs.TryGetValue(form._id, out var mapped) && mapped == form)
                     OpenDocs.Remove(form._id);
             };
@@ -70,13 +74,16 @@ namespace CastRightCatchInvManagement
             form.RaiseAboveOthers();
         }
 
+        /// <summary>Stable id: stored kind+key when present, otherwise the full file path.</summary>
         private static string DocumentId(string path, string? kind, string? key)
         {
+            // Database-backed PDFs keep one window even if the temp path changes after Save.
             if (!string.IsNullOrWhiteSpace(kind) && !string.IsNullOrWhiteSpace(key))
                 return kind.Trim() + ":" + key.Trim();
             return Path.GetFullPath(path);
         }
 
+        /// <summary>Build the PDF chrome, toolbar, WebView2 host, and fallback panel.</summary>
         private PdfViewForm(string path, string? title, string? kind, string? key)
         {
             _path = Path.GetFullPath(path);
@@ -97,6 +104,7 @@ namespace CastRightCatchInvManagement
             BackColor = Theme.Cream;
             Font = Theme.Body;
             ForeColor = Theme.Ink;
+            // Match other CRC windows when the brand icon is present.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
 
@@ -216,6 +224,7 @@ namespace CastRightCatchInvManagement
             {
                 RaiseAboveOthers();
                 await InitViewer();
+                // WebView init can dispose the form if the runtime is missing.
                 if (!IsDisposed)
                     RaiseAboveOthers();
             };
@@ -227,9 +236,11 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void RaiseAboveOthers()
         {
+            // Closed during init should not try to activate.
             if (IsDisposed)
                 return;
 
+            // A minimized viewer would stay in the taskbar after Show PDF.
             if (WindowState == FormWindowState.Minimized)
                 WindowState = FormWindowState.Normal;
 
@@ -240,6 +251,7 @@ namespace CastRightCatchInvManagement
             TopMost = false;
         }
 
+        /// <summary>Toolbar button with a fixed width so LayoutToolbar can pack them.</summary>
         private static Button ToolButton(string text, int width)
         {
             return new Button
@@ -250,12 +262,14 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Pack visible toolbar buttons left to right after chrome changes.</summary>
         private void LayoutToolbar()
         {
             int x = 16;
             int y = 8;
             foreach (var button in new[] { _save, _saveAs, _print, _replace, _edit })
             {
+                // Hidden actions (Save/Edit on ad-hoc files) should not leave a gap.
                 if (!button.Visible)
                     continue;
                 button.Location = new Point(x, y);
@@ -263,6 +277,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Title, subtitle, and Edit/Save labels based on stored PDF kind.</summary>
         private void ApplyChrome(string? title)
         {
             string heading = string.IsNullOrWhiteSpace(title)
@@ -275,6 +290,7 @@ namespace CastRightCatchInvManagement
             _save.Visible = stored;
             _save.Enabled = stored;
 
+            // Issued/received invoices open Create Invoice for edits.
             if (_kind == DataFiles.PdfKindInvoice)
             {
                 _edit.Text = "Edit invoice";
@@ -284,6 +300,7 @@ namespace CastRightCatchInvManagement
                     ? "Mark up in this window, then Save to database. Edit invoice opens Create Invoice."
                     : "Mark up, print, or replace this PDF.";
             }
+            // Sales-order PDFs edit on Create Sales Order, not New Sale.
             else if (_kind == DataFiles.PdfKindSalesOrder)
             {
                 _edit.Text = "Edit sales order";
@@ -293,6 +310,7 @@ namespace CastRightCatchInvManagement
                     ? "Mark up in this window, then Save to database. Edit sales order opens Create Sales Order."
                     : "Mark up, print, or replace this PDF.";
             }
+            // Both CRC purchase PDFs and stored vendor invoices edit on New Purchase.
             else if (_kind == DataFiles.PdfKindPurchase ||
                      _kind == DataFiles.PdfKindPurchaseInvoice)
             {
@@ -305,6 +323,7 @@ namespace CastRightCatchInvManagement
                         : "Mark up in this window, then Save to database. Edit purchase opens New Purchase."
                     : "Mark up, print, or replace this PDF.";
             }
+            // Sale PDFs are per-PO product lines, edited as a sales order.
             else if (_kind == DataFiles.PdfKindSale)
             {
                 _edit.Text = "Edit sale";
@@ -314,6 +333,7 @@ namespace CastRightCatchInvManagement
                     ? "Mark up in this window, then Save to database. Edit sale opens New Sale."
                     : "Mark up, print, or replace this PDF.";
             }
+            // Ad-hoc files have no source form to jump to.
             else
             {
                 _edit.Visible = false;
@@ -324,6 +344,7 @@ namespace CastRightCatchInvManagement
             LayoutToolbar();
         }
 
+        /// <summary>Create the WebView2 environment and navigate to the PDF.</summary>
         private async Task InitViewer()
         {
             try
@@ -337,14 +358,17 @@ namespace CastRightCatchInvManagement
             }
             catch (Exception ex)
             {
+                // WebView2 runtime is optional; offer Open in default app instead of crashing.
                 ShowFallback(
                     "This computer needs the Microsoft Edge WebView2 Runtime to show PDFs in the app.\n" +
                     ex.Message);
             }
         }
 
+        /// <summary>Load the current file path into WebView2 once the core is ready.</summary>
         private void NavigatePdf()
         {
+            // InitViewer has not finished yet; Shown will navigate after EnsureCoreWebView2.
             if (_web.CoreWebView2 == null)
                 return;
 
@@ -352,20 +376,25 @@ namespace CastRightCatchInvManagement
             _web.CoreWebView2.Navigate(uri);
         }
 
+        /// <summary>Hide WebView2 and explain how to open the PDF outside the app.</summary>
         private void ShowFallback(string message)
         {
             _web.Visible = false;
             _fallback.Visible = true;
             _fallback.BringToFront();
+            // The fallback label is looked up by name so markup can stay in the constructor.
             if (_fallback.Controls["fallbackText"] is Label label)
                 label.Text = message;
             _print.Enabled = false;
         }
 
+        /// <summary>Write the current file bytes back into the stored PDF for this kind/key.</summary>
         private void SaveToDatabase()
         {
+            // Ad-hoc files are not in crc_inventory; use Save as instead.
             if (string.IsNullOrWhiteSpace(_kind) || string.IsNullOrWhiteSpace(_key))
                 return;
+            // Markup tools can leave a missing temp path after a failed replace.
             if (!File.Exists(_path))
             {
                 ToastAlert.Error(this, "The PDF file is missing.");
@@ -381,10 +410,12 @@ namespace CastRightCatchInvManagement
             }
             catch (Exception ex)
             {
+                // Disk/DB write failures should keep the viewer on the last good file.
                 ToastAlert.Error(this, ex.Message);
             }
         }
 
+        /// <summary>Copy the PDF to a user-chosen path without changing the stored original.</summary>
         private void SaveAs()
         {
             using var dialog = new SaveFileDialog
@@ -394,6 +425,7 @@ namespace CastRightCatchInvManagement
                 FileName = Path.GetFileName(_path),
                 OverwritePrompt = true
             };
+            // Cancel leaves the viewer unchanged.
             if (dialog.ShowDialog(this) != DialogResult.OK)
                 return;
 
@@ -404,12 +436,15 @@ namespace CastRightCatchInvManagement
             }
             catch (Exception ex)
             {
+                // Destination locked in Excel/Adobe is the usual failure.
                 ToastAlert.Error(this, ex.Message);
             }
         }
 
+        /// <summary>Print via WebView2, or the default app when the runtime is missing.</summary>
         private async Task PrintPdf()
         {
+            // Fallback path when InitViewer showed the Edge-runtime message.
             if (_web.CoreWebView2 == null)
             {
                 OpenInDefaultApp();
@@ -422,10 +457,12 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Script print can fail on some runtimes; the OS viewer still prints.
                 OpenInDefaultApp();
             }
         }
 
+        /// <summary>Swap in another PDF file, storing it when this document is database-backed.</summary>
         private void ReplacePdf()
         {
             using var dialog = new OpenFileDialog
@@ -434,6 +471,7 @@ namespace CastRightCatchInvManagement
                 Filter = "PDF files (*.pdf)|*.pdf|All files (*.*)|*.*",
                 CheckFileExists = true
             };
+            // Cancel keeps the currently shown PDF.
             if (dialog.ShowDialog(this) != DialogResult.OK)
                 return;
 
@@ -441,12 +479,14 @@ namespace CastRightCatchInvManagement
             {
                 byte[] bytes = File.ReadAllBytes(dialog.FileName);
                 string name = Path.GetFileName(dialog.FileName);
+                // Stored documents must update the database so other PCs see the replacement.
                 if (!string.IsNullOrWhiteSpace(_kind) && !string.IsNullOrWhiteSpace(_key))
                 {
                     _path = Path.GetFullPath(DataFiles.SaveStoredPdf(_kind, _key, name, bytes));
                 }
                 else
                 {
+                    // Loose files are overwritten in place.
                     File.WriteAllBytes(_path, bytes);
                 }
 
@@ -456,22 +496,29 @@ namespace CastRightCatchInvManagement
             }
             catch (Exception ex)
             {
+                // Leave the previous PDF on screen if the new file cannot be written.
                 ToastAlert.Error(this, ex.Message);
             }
         }
 
+        /// <summary>Jump to the form that created this stored PDF so they can change the data.</summary>
         private void EditSource()
         {
+            // Invoice PDFs are edited on Create Invoice.
             if (_kind == DataFiles.PdfKindInvoice)
                 Navigator.GoTo(AppPage.InvoicePdf);
+            // Sales-order PDFs open Create Sales Order.
             else if (_kind == DataFiles.PdfKindSalesOrder)
                 Navigator.GoTo(AppPage.SalesOrder);
+            // Purchase and stored vendor-invoice PDFs open New Purchase.
             else if (_kind == DataFiles.PdfKindPurchase ||
                      _kind == DataFiles.PdfKindPurchaseInvoice)
                 Navigator.GoTo(AppPage.AddPurchase);
+            // Sale PDFs try to reopen the matching PO lines.
             else if (_kind == DataFiles.PdfKindSale)
             {
                 var rows = DataFiles.FindSalesByPo(_key);
+                // Prefer editing the existing sale lines when the PO is still live.
                 if (rows.Count > 0)
                     SalesOrder.OpenEdit(rows[0]);
                 else
@@ -479,8 +526,10 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Shell-open the file when WebView2 cannot display or print it.</summary>
         private void OpenInDefaultApp()
         {
+            // Missing temp path would only flash a Windows error dialog.
             if (!File.Exists(_path))
                 return;
 

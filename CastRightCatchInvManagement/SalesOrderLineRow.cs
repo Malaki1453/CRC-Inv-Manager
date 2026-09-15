@@ -26,6 +26,7 @@ namespace CastRightCatchInvManagement
         public event EventHandler? Changed;
         public event EventHandler? RemoveRequested;
 
+        /// <summary>Build the sales-order line editors and wire volume/amount recalculation.</summary>
         public SalesOrderLineRow()
         {
             SetStyle(
@@ -82,8 +83,10 @@ namespace CastRightCatchInvManagement
 
         public string ItemCode => _item.Text.Trim();
 
+        /// <summary>Put the caret on Item Code so the user can type the next product.</summary>
         public void FocusItem() => _item.Focus();
 
+        /// <summary>Bind item-code and description lookups so picking a hit fills the rest of the line.</summary>
         public void AttachLookups(Func<IReadOnlyList<LookupSuggest.Hit>> items)
         {
             _itemSuggest?.Dispose();
@@ -92,22 +95,27 @@ namespace CastRightCatchInvManagement
             _descSuggest = new LookupSuggest(_description, items, codeFirst: false, ApplyHit);
         }
 
+        /// <summary>Remember the customer PO this line came from.</summary>
         public void SetPo(string po) => _po = (po ?? "").Trim();
 
+        /// <summary>Fill code, description, and COO from a lookup pick without firing mid-fill recalcs.</summary>
         private void ApplyHit(LookupSuggest.Hit hit)
         {
             _filling = true;
             try
             {
+                // Keep whatever the user typed when the hit has no code.
                 if (hit.Code.Length > 0)
                     _item.Text = hit.Code;
                 if (hit.Name.Length > 0)
                     _description.Text = hit.Name;
+                // Extra on item hits is country of origin.
                 if (hit.Extra.Length > 0)
                     _coo.Text = hit.Extra;
             }
             finally
             {
+                // TextChanged must run again after the lookup write finishes.
                 _filling = false;
             }
 
@@ -115,9 +123,11 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Load this line from a sales-table row, including its customer PO.</summary>
         public void FillFromRecord(Dictionary<string, string> record)
         {
             string po = DataFiles.SalePo(record);
+            // Keep the sale PO so later identity checks can skip duplicates.
             if (po.Length > 0)
                 _po = po;
             Fill(
@@ -131,6 +141,7 @@ namespace CastRightCatchInvManagement
                 DataFiles.GetRecord(record, "Sell Price / LB"));
         }
 
+        /// <summary>Load this line from a draft product line.</summary>
         public void FillFromLine(SalesOrderLine line)
         {
             if (line.PoNumber.Length > 0)
@@ -146,6 +157,7 @@ namespace CastRightCatchInvManagement
                 line.Price);
         }
 
+        /// <summary>Write every editor at once, then recalc amount after the fill flag drops.</summary>
         private void Fill(
             string item,
             string lot,
@@ -170,6 +182,7 @@ namespace CastRightCatchInvManagement
             }
             finally
             {
+                // Recalc once after all fields are set, not on each TextChanged.
                 _filling = false;
             }
 
@@ -177,6 +190,7 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Snapshot the current editors, including computed amount.</summary>
         public SalesOrderLine GetLine()
         {
             RecalcAmount();
@@ -195,11 +209,14 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>True when any editor on this line has text.</summary>
         public bool HasContent() =>
             Fields().Any(box => !string.IsNullOrWhiteSpace(box.Text));
 
+        /// <summary>Dispose lookup popups with this row.</summary>
         protected override void Dispose(bool disposing)
         {
+            // Managed lookup windows must be closed with this row.
             if (disposing)
             {
                 _itemSuggest?.Dispose();
@@ -209,6 +226,7 @@ namespace CastRightCatchInvManagement
             base.Dispose(disposing);
         }
 
+        /// <summary>Draw the row border and gold accent used by sales-order lines.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
@@ -220,21 +238,26 @@ namespace CastRightCatchInvManagement
             e.Graphics.FillRectangle(gold, 0, 0, 3, Height);
         }
 
+        /// <summary>Recalc amount when the user edits a field, but not during programmatic fills.</summary>
         private void OnFieldChanged()
         {
+            // Fill/ApplyHit writes several boxes; wait until that batch finishes.
             if (_filling)
                 return;
             RecalcAmount();
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Derive volume from pack size × cases when volume is still blank.</summary>
         private void RecalcVolume()
         {
+            // Skip while Fill is writing pack/cases/volume together.
             if (_filling)
                 return;
 
             decimal pack = ParseNumber(_unitSize.Text);
             decimal cs = ParseNumber(_cases.Text);
+            // Incomplete qty should not overwrite a volume the user already typed.
             if (pack <= 0 || cs <= 0)
             {
                 RecalcAmount();
@@ -242,6 +265,7 @@ namespace CastRightCatchInvManagement
             }
 
             _filling = true;
+            // Keep a volume the user entered by hand.
             if (string.IsNullOrWhiteSpace(_volume.Text))
                 _volume.Text = (pack * cs).ToString("0.##", CultureInfo.InvariantCulture);
             _filling = false;
@@ -249,12 +273,14 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Amount is volume times sell price / lb.</summary>
         private void RecalcAmount()
         {
             decimal amount = ParseNumber(_volume.Text) * ParseNumber(_price.Text);
             _amount.Text = amount.ToString("0.00", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>Place editors in the shared sales-order line column slots.</summary>
         private void LayoutFields()
         {
             var slots = SalesOrderLineLayout.Slots(Width);
@@ -270,6 +296,7 @@ namespace CastRightCatchInvManagement
             _remove.Bounds = slots.Remove;
         }
 
+        /// <summary>Editable boxes that participate in HasContent and change events.</summary>
         private IEnumerable<TextBox> Fields()
         {
             yield return _item;
@@ -282,6 +309,7 @@ namespace CastRightCatchInvManagement
             yield return _price;
         }
 
+        /// <summary>Themed single-line editor used by every product field.</summary>
         private static TextBox MakeBox()
         {
             var box = new TextBox();
@@ -290,6 +318,7 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Read-only amount cell styled like a grid total.</summary>
         private static Label MakeTotal()
         {
             return new Label
@@ -303,11 +332,14 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Parse a money or quantity cell, treating blank or junk as zero.</summary>
         public static decimal ParseNumber(string? text) => PurchaseLineRow.ParseNumber(text);
     }
 
+    /// <summary>Column rectangles for a sales-order product line at a given width.</summary>
     internal static class SalesOrderLineLayout
     {
+        /// <summary>Compute editor bounds, giving leftover width to Description.</summary>
         public static SalesOrderLineSlots Slots(int width)
         {
             int pad = 10;
@@ -342,6 +374,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Pixel bounds for each editor on a sales-order line.</summary>
     internal readonly record struct SalesOrderLineSlots(
         Rectangle Item,
         Rectangle Lot,
@@ -354,6 +387,7 @@ namespace CastRightCatchInvManagement
         Rectangle Amount,
         Rectangle Remove);
 
+    /// <summary>One product line as saved on a sales order.</summary>
     internal sealed class SalesOrderLine
     {
         public string ItemCode { get; set; } = "";
@@ -368,6 +402,7 @@ namespace CastRightCatchInvManagement
         public string PoNumber { get; set; } = "";
     }
 
+    /// <summary>Full sales-order payload used to save rows and draw the pick-ticket PDF.</summary>
     internal sealed class SalesOrderDraft
     {
         public string SoNumber { get; set; } = "";

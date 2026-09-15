@@ -6,14 +6,17 @@ namespace CastRightCatchInvManagement
         private readonly Dictionary<string, Control> _sections = new(StringComparer.OrdinalIgnoreCase);
         private Panel _scroller = null!;
 
+        /// <summary>Build the Controls page with jump chips and help sections.</summary>
         public Help()
         {
             InitializeComponent();
             BuildUi();
         }
 
+        /// <summary>Controls is static text; nothing to refresh when the page is shown.</summary>
         public void HighlightCurrentPage() { }
 
+        /// <summary>Lay out the section menu and help cards for each workspace topic.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
@@ -203,6 +206,7 @@ namespace CastRightCatchInvManagement
             _sections[key] = card;
         }
 
+        /// <summary>Stack cards vertically and size each body to the wrapped text height.</summary>
         private static void LayoutStack(Panel stack)
         {
             int y = 0;
@@ -212,6 +216,7 @@ namespace CastRightCatchInvManagement
                 card.Left = 0;
                 card.Top = y;
                 card.Width = width;
+                // Each card stores its body label so height can follow wrapped text.
                 if (card.Tag is Label body)
                 {
                     body.MaximumSize = new Size(Math.Max(200, width - 48), 0);
@@ -233,6 +238,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Scroll the Controls page so the named section is at the top.</summary>
         private void Jump(string key)
         {
+            // Unknown chip keys are ignored so a renamed section cannot crash jump.
             if (!_sections.TryGetValue(key, out var section))
                 return;
 
@@ -252,6 +258,7 @@ namespace CastRightCatchInvManagement
         private bool _expanded;
         private int _offset;
 
+        /// <summary>Build the Controls heading, expand toggle, and scrollable section chips.</summary>
         public HorizontalSectionMenu((string Key, string Text)[] items, Action<string> jump)
         {
             Height = 64;
@@ -355,11 +362,13 @@ namespace CastRightCatchInvManagement
             _right.Visible = false;
         }
 
+        /// <summary>Show or hide the chip strip; collapse also resets horizontal scroll.</summary>
         private void SetExpanded(bool expanded)
         {
             _expanded = expanded;
             _toggle.Text = _expanded ? "Sections   ‹" : "Sections   ›";
             _strip.Visible = _expanded;
+            // Start at the first chip when they collapse and reopen.
             if (!_expanded)
                 _offset = 0;
             CenterChips();
@@ -367,6 +376,7 @@ namespace CastRightCatchInvManagement
             UpdateArrows();
         }
 
+        /// <summary>Shift chips left or right, then clamp to the strip width.</summary>
         private void ScrollBy(int delta)
         {
             _offset += delta;
@@ -374,6 +384,7 @@ namespace CastRightCatchInvManagement
             UpdateArrows();
         }
 
+        /// <summary>Keep chip scroll within the overflow range so arrows do not overshoot.</summary>
         private void ClampOffset()
         {
             int view = Math.Max(0, _strip.ClientSize.Width - _strip.Padding.Horizontal);
@@ -382,21 +393,26 @@ namespace CastRightCatchInvManagement
             _chips.Left = _strip.Padding.Left - _offset;
         }
 
+        /// <summary>Vertically center chips in the strip.</summary>
         private void CenterChips()
         {
             int y = Math.Max(0, (_strip.ClientSize.Height - _chips.Height) / 2);
             _chips.Top = y;
         }
 
+        /// <summary>Horizontal-scroll chips with the mouse wheel while the strip is open.</summary>
         private void StripWheel(object? sender, MouseEventArgs e)
         {
+            // Wheel should not steal scroll from the help body when chips are hidden.
             if (!_expanded)
                 return;
             ScrollBy(-Math.Sign(e.Delta) * 80);
+            // Stop the parent scroller from moving when the chip strip handled the wheel.
             if (e is HandledMouseEventArgs handled)
                 handled.Handled = true;
         }
 
+        /// <summary>Show overflow arrows only when expanded chips do not fit.</summary>
         private void UpdateArrows()
         {
             int view = Math.Max(0, _strip.ClientSize.Width - _strip.Padding.Horizontal);
@@ -405,6 +421,7 @@ namespace CastRightCatchInvManagement
             _right.Visible = overflow;
         }
 
+        /// <summary>Borderless chip-strip arrow used for left/right overflow.</summary>
         private static Button MakeArrow(string text)
         {
             var btn = new Button

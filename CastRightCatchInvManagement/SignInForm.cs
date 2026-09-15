@@ -23,6 +23,7 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _password;
         private readonly CheckBox _staySignedIn;
 
+        /// <summary>Build the branded login window; Shown picks server vs folder vs first-IT setup.</summary>
         public SignInForm()
         {
             Text = "Cast Right Catch Inventory";
@@ -37,6 +38,7 @@ namespace CastRightCatchInvManagement
             BackColor = Theme.Cream;
             Font = Theme.Body;
             ForeColor = Theme.Ink;
+            // Use the packaged seal icon when the asset pack is present.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
             WindowChrome.Apply(this);
@@ -53,6 +55,7 @@ namespace CastRightCatchInvManagement
                 Height = 3,
                 BackColor = Theme.Gold
             };
+            // Header still reads without the seal if the PNG is missing.
             if (BrandAssets.Seal != null)
             {
                 header.Controls.Add(new PictureBox
@@ -268,6 +271,7 @@ namespace CastRightCatchInvManagement
             {
                 _host.Text = AppState.ServerHost;
                 _port.Text = AppState.ServerPort > 0 ? AppState.ServerPort.ToString() : DataLink.DefaultPort.ToString();
+                // This PC last used a local folder, not the server.
                 if (!DataLink.UseInventoryServer ||
                     (!AppState.UseServer &&
                      !string.IsNullOrWhiteSpace(AppState.InventoryFolder) &&
@@ -290,8 +294,10 @@ namespace CastRightCatchInvManagement
                 UseDescriptionForTitle = true,
                 ShowNewFolderButton = true
             };
+            // User cancelled the folder picker.
             if (dialog.ShowDialog(this) != DialogResult.OK)
                 return;
+            // Path can disappear between OK and use (network share dropped).
             if (!Directory.Exists(dialog.SelectedPath))
                 return;
 
@@ -302,8 +308,10 @@ namespace CastRightCatchInvManagement
             RefreshMode();
         }
 
+        /// <summary>Toggle between server IP connect and a shared local folder.</summary>
         private void ToggleLocalFolder()
         {
+            // Folder card is showing: switch back to the server IP fields.
             if (_folderCard.Visible)
             {
                 ShowServerUi();
@@ -317,8 +325,10 @@ namespace CastRightCatchInvManagement
             RefreshMode();
         }
 
+        /// <summary>Show host/port and hide the folder picker when the server build is enabled.</summary>
         private void ShowServerUi()
         {
+            // Folder-only builds never expose a server IP card.
             if (!DataLink.UseInventoryServer)
                 return;
             _folderCard.Visible = false;
@@ -328,6 +338,7 @@ namespace CastRightCatchInvManagement
             _switchMode.Parent = _serverCard;
         }
 
+        /// <summary>Show the shared-folder picker and offer a link back to the server.</summary>
         private void ShowLocalFolderUi()
         {
             _serverCard.Visible = false;
@@ -338,6 +349,7 @@ namespace CastRightCatchInvManagement
             _switchMode.Visible = DataLink.UseInventoryServer;
         }
 
+        /// <summary>Connect to the inventory server, prompting if the certificate fingerprint changed.</summary>
         private void ConnectServer()
         {
             DataLink.ParseEndpoint(_host.Text, out string host, out int parsedFromHost);
@@ -348,6 +360,7 @@ namespace CastRightCatchInvManagement
             }
 
             int port = parsedFromHost;
+            // Typed port overrides a port that was pasted into the host box.
             if (int.TryParse(_port.Text.Trim(), out int typed) && typed > 0 && typed <= 65535)
                 port = typed;
 
@@ -364,6 +377,7 @@ namespace CastRightCatchInvManagement
                     "Inventory server",
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Warning);
+                // User declined to trust a new certificate (possible MITM).
                 if (retry != DialogResult.Yes)
                 {
                     ShowError("Not connected.");
@@ -408,6 +422,7 @@ namespace CastRightCatchInvManagement
             if (serverUi)
             {
                 _connect.Text = DataLink.IsRemote ? "Connected" : "Connect";
+                // Still need a live TLS session before accounts can be listed.
                 if (!DataLink.IsRemote)
                 {
                     _setupPanel.Visible = false;
@@ -419,6 +434,7 @@ namespace CastRightCatchInvManagement
                     return;
                 }
 
+                // First IT user is created on the server host, not from a client.
                 if (!Accounts.HasItUser())
                 {
                     _setupPanel.Visible = false;
@@ -440,6 +456,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Local folder mode cannot list users until a path exists.
             if (!ready)
             {
                 _setupPanel.Visible = false;
@@ -455,6 +472,7 @@ namespace CastRightCatchInvManagement
             _setupPanel.Visible = first;
             _signInPanel.Visible = !first;
             _status.Text = "";
+            // Empty local accounts file: this PC bootstraps the first IT user.
             if (first)
             {
                 AcceptButton = _setupPanel.Controls.OfType<Button>().FirstOrDefault();
@@ -485,6 +503,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Account exists but sign-in failed (rare: hash write lag or validation).
             if (!Accounts.TrySignIn(_setupUser.Text, _setupPassword.Text, out var account, out error) ||
                 account == null)
             {
@@ -511,6 +530,7 @@ namespace CastRightCatchInvManagement
             }
 
             Accounts.Apply(account);
+            // IT-issued temp passwords must be replaced before any workspace page opens.
             if (account.MustChangePassword)
             {
                 using var change = new ChangePasswordForm(account.Username, requireCurrent: false);
@@ -536,22 +556,26 @@ namespace CastRightCatchInvManagement
                         _staySignedIn.Checked;
             account.StaySignedIn = stay;
             Accounts.Apply(account);
+            // Remembered sessions follow Admin policy; otherwise drop any old cookie on this PC.
             if (stay)
                 Accounts.RememberSignIn(account);
             else
                 Accounts.ForgetThisPc();
+            // Remote clients load company settings only after they have a token.
             if (DataLink.IsRemote)
                 AppLock.LoadSharedSettings();
             DialogResult = DialogResult.OK;
             Close();
         }
 
+        /// <summary>Show a red status line under the sign-in card.</summary>
         private void ShowError(string message)
         {
             _status.ForeColor = Theme.Danger;
             _status.Text = message;
         }
 
+        /// <summary>Caption plus text box added to a parent card.</summary>
         private static TextBox AddBox(Control parent, string caption, int x, int y, int width)
         {
             var label = new Label { Text = caption, Location = new Point(x, y), AutoSize = true };

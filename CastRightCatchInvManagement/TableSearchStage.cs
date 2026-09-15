@@ -34,6 +34,7 @@ namespace CastRightCatchInvManagement
         private int _heightFrom;
         private int _heightTo;
 
+        /// <summary>Build the idle search overlay; the grid stays hidden until the user types or picks dates.</summary>
         public TableSearchStage(string title, Panel toolbar, ColumnSearch columnSearch)
         {
             _toolbar = toolbar;
@@ -109,6 +110,7 @@ namespace CastRightCatchInvManagement
             _box.TextChanged += (_, _) =>
             {
                 bool on = HasQuery();
+                // Clearing the box must filter immediately so the table hides again.
                 if (_box.Text.Trim().Length == 0)
                 {
                     _debounce.Stop();
@@ -116,6 +118,7 @@ namespace CastRightCatchInvManagement
                 }
                 else
                 {
+                    // Debounce while typing so every keystroke does not rescan the grid.
                     _debounce.Start();
                 }
 
@@ -123,6 +126,7 @@ namespace CastRightCatchInvManagement
             };
             _box.KeyDown += (_, e) =>
             {
+                // Enter applies the query without waiting for the debounce timer.
                 if (e.KeyCode != Keys.Enter)
                     return;
                 e.SuppressKeyPress = true;
@@ -150,6 +154,7 @@ namespace CastRightCatchInvManagement
             _toolbar.Visible = false;
             Resize += (_, _) =>
             {
+                // Skip layout while the box is sliding so the animation owns the bounds.
                 if (!_animating)
                     ApplyLayout();
             };
@@ -160,6 +165,7 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Draw the bottom rule that separates search from the table.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
@@ -168,12 +174,14 @@ namespace CastRightCatchInvManagement
             e.Graphics.DrawLine(line, 0, Height - 1, Width, Height - 1);
         }
 
+        /// <summary>Relayout after this panel is parented so idle bounds use the page size.</summary>
         protected override void OnParentChanged(EventArgs e)
         {
             base.OnParentChanged(e);
             Post(ApplyLayout);
         }
 
+        /// <summary>Apply idle layout and focus the box once the native handle exists.</summary>
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
@@ -181,6 +189,7 @@ namespace CastRightCatchInvManagement
             Post(FocusBox);
         }
 
+        /// <summary>Run on the UI thread after the handle exists; otherwise run immediately.</summary>
         private void Post(Action action)
         {
             if (IsDisposed)
@@ -191,8 +200,10 @@ namespace CastRightCatchInvManagement
                 action();
         }
 
+        /// <summary>Start the idle↔compact animation when the search/date state actually changes.</summary>
         private void SetActive(bool active)
         {
+            // Ignore duplicate "on" while already compact, or "off" while already idle.
             if (_toActive == active && (_animating || _active == active))
                 return;
 
@@ -200,6 +211,7 @@ namespace CastRightCatchInvManagement
             StartAnim();
         }
 
+        /// <summary>Capture start bounds and dock so the timer can lerp toward compact or idle.</summary>
         private void StartAnim()
         {
             var parent = Parent;
@@ -211,6 +223,7 @@ namespace CastRightCatchInvManagement
             if (_toActive)
             {
                 int startHeight = Dock == DockStyle.Fill ? parentH : Height;
+                // A collapsed leftover height would animate from a sliver instead of the full page.
                 if (startHeight < 80)
                     startHeight = parentH;
                 Dock = DockStyle.Top;
@@ -222,6 +235,7 @@ namespace CastRightCatchInvManagement
             }
             else
             {
+                // Leaving compact without a date filter must hide the table again.
                 if (!HasDates())
                     _columnSearch.SetGlobalQuery("");
                 _toolbar.Visible = false;
@@ -233,6 +247,7 @@ namespace CastRightCatchInvManagement
             _anim.Start();
         }
 
+        /// <summary>Ease the box and height toward compact (searching) or idle (empty).</summary>
         private void TickAnim()
         {
             double elapsed = (DateTime.UtcNow - _animStarted).TotalMilliseconds;
@@ -244,6 +259,7 @@ namespace CastRightCatchInvManagement
             if (_toActive)
             {
                 Height = Lerp(_heightFrom, _heightTo, t);
+                // Date fields only fit after the bar is mostly compact.
                 if (ShowDates() && t > 0.55f)
                     LayoutCompact(parentW);
                 else
@@ -258,6 +274,7 @@ namespace CastRightCatchInvManagement
                 ShowChrome(t > 0.45f);
             }
 
+            // Keep interpolating until the ease reaches 1.
             if (t < 1f)
                 return;
 
@@ -273,6 +290,7 @@ namespace CastRightCatchInvManagement
             FocusBox();
         }
 
+        /// <summary>Place title, search box, and optional date fields for idle or compact mode.</summary>
         private void ApplyLayout()
         {
             bool can = CanDates();
@@ -306,6 +324,7 @@ namespace CastRightCatchInvManagement
                 _hint.Bounds = new Rectangle(idle.X, idle.Bottom + 12, idle.Width, 22);
         }
 
+        /// <summary>Show page title and hint when idle; show the SEARCH label when compact.</summary>
         private void ShowChrome(bool idle)
         {
             _title.Visible = idle;
@@ -316,6 +335,7 @@ namespace CastRightCatchInvManagement
                 _searchLabel.Bounds = new Rectangle(16, 16, 78, 22);
         }
 
+        /// <summary>Centered search box used before any query is typed.</summary>
         private static Rectangle IdleBoxBounds(int width, int height)
         {
             int w = Math.Max(280, Math.Min(560, width - 80));
@@ -325,6 +345,7 @@ namespace CastRightCatchInvManagement
             return new Rectangle(x, y, w, h);
         }
 
+        /// <summary>Compact search box along the top bar after the overlay collapses.</summary>
         private static Rectangle CompactBoxBounds(int width) =>
             new(96, 12, Math.Max(120, width - 116), 28);
 
@@ -336,12 +357,14 @@ namespace CastRightCatchInvManagement
 
         private bool HasQuery() => _box.Text.Trim().Length > 0 || HasDates();
 
+        /// <summary>Push the from/to range into column search and expand if a date is set.</summary>
         private void ApplyDates()
         {
             _columnSearch.SetDateRange(_from.Value, _to.Value);
             SetActive(HasQuery());
         }
 
+        /// <summary>Relayout when columns finish building so the Dates button appears only on date tables.</summary>
         private void SyncDateVisible()
         {
             if (IsDisposed)
@@ -355,8 +378,10 @@ namespace CastRightCatchInvManagement
             ApplyLayout();
         }
 
+        /// <summary>Show or hide from/to fields; closing them also clears the date filter.</summary>
         private void ToggleDates()
         {
+            // Tables without date columns have no range to filter.
             if (!CanDates())
                 return;
             _datesOpen = !_datesOpen;
@@ -373,6 +398,7 @@ namespace CastRightCatchInvManagement
                 _from.Focus();
         }
 
+        /// <summary>Gold fill while date fields are open; outline when they are hidden.</summary>
         private void StyleDatesButton()
         {
             if (_datesOpen)
@@ -382,6 +408,7 @@ namespace CastRightCatchInvManagement
             _datesToggle.Text = "Dates";
         }
 
+        /// <summary>Lay out search, Dates, and from/to along the compact top bar.</summary>
         private void LayoutCompact(int width)
         {
             bool dates = ShowDates();
@@ -407,6 +434,7 @@ namespace CastRightCatchInvManagement
                 _box.Bounds = CompactBoxBounds(width);
         }
 
+        /// <summary>Align the Dates button with the search box vertically.</summary>
         private void PlaceDatesToggle(int x)
         {
             int h = 28;
@@ -414,6 +442,7 @@ namespace CastRightCatchInvManagement
             _datesToggle.Bounds = new Rectangle(x, y, 64, h);
         }
 
+        /// <summary>Place from/to under the idle search box when dates are expanded before typing.</summary>
         private void LayoutIdleDates(Rectangle idle)
         {
             int dateW = Math.Max(110, (idle.Width - 56) / 2);
@@ -423,6 +452,7 @@ namespace CastRightCatchInvManagement
             _to.Bounds = new Rectangle(idle.X + dateW + 16, idle.Bottom + 28, dateW, 28);
         }
 
+        /// <summary>Put keyboard focus in the search box when the page is shown.</summary>
         private void FocusBox()
         {
             if (!IsDisposed && _box.CanFocus)
@@ -432,6 +462,7 @@ namespace CastRightCatchInvManagement
         private static int Lerp(int from, int to, float t) =>
             from + (int)Math.Round((to - from) * t);
 
+        /// <summary>Interpolate rectangle bounds for the search-box slide.</summary>
         private static Rectangle Lerp(Rectangle from, Rectangle to, float t) =>
             new(
                 Lerp(from.X, to.X, t),

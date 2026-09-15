@@ -9,6 +9,9 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _next;
         private readonly TextBox _confirm;
 
+        /// <summary>
+        /// requireCurrent is true for a signed-in change; false for first-login (no close box so it cannot be skipped).
+        /// </summary>
         public ChangePasswordForm(string username, bool requireCurrent)
         {
             _username = username;
@@ -23,6 +26,7 @@ namespace CastRightCatchInvManagement
             ClientSize = new Size(420, requireCurrent ? 280 : 240);
             BackColor = Theme.Cream;
             Font = Theme.Body;
+            // Use the packaged seal icon when the asset pack is present.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
 
@@ -39,6 +43,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(hint);
 
             int y = 58;
+            // Voluntary change must prove the current password; first-login has none yet.
             if (requireCurrent)
             {
                 _current = Field("CURRENT PASSWORD", 24, y, 370);
@@ -65,6 +70,7 @@ namespace CastRightCatchInvManagement
             Theme.StyleGoldButton(save);
             save.Click += (_, _) =>
             {
+                // Leave the dialog open when validation or persist fails.
                 if (Save())
                     DialogResult = DialogResult.OK;
             };
@@ -82,8 +88,10 @@ namespace CastRightCatchInvManagement
             Controls.Add(cancel);
         }
 
+        /// <summary>Validate match and complexity, then persist via Accounts.</summary>
         private bool Save()
         {
+            // Confirm field is a typed copy, not a second stored secret.
             if (_next.Text != _confirm.Text)
             {
                 MessageBox.Show("The passwords do not match.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -93,6 +101,7 @@ namespace CastRightCatchInvManagement
             bool ok = _requireCurrent
                 ? Accounts.ChangeOwnPassword(_username, _current.Text, _next.Text, out string error)
                 : Accounts.SetPassword(_username, _next.Text, out error, mustChange: false);
+            // Keep the dialog open so the user can fix a weak or wrong password.
             if (!ok)
             {
                 MessageBox.Show(error, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -102,6 +111,7 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>Caption plus password box at a fixed location on this dialog.</summary>
         private TextBox Field(string caption, int x, int y, int width)
         {
             var label = new Label { Text = caption, Location = new Point(x, y), AutoSize = true };

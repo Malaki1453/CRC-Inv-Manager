@@ -46,9 +46,12 @@ namespace CastRightCatchInvManagement
         private bool _editing;
         private string _editPo = "";
 
+        /// <summary>Purchases row queued by OpenEdit until this page is shown.</summary>
         internal static Dictionary<string, string>? PendingEdit { get; set; }
+        /// <summary>True when OpenNew should wipe the last draft on the next show.</summary>
         internal static bool StartNew { get; set; }
 
+        /// <summary>Build the New Purchase page and start on a blank PO.</summary>
         public AddPurchase()
         {
             InitializeComponent();
@@ -58,6 +61,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Open this page as a blank purchase. Assigns the next PO #.</summary>
         public static void OpenNew()
         {
+            // View-only accounts cannot insert purchase rows.
             if (!DataAccess.CanMutate(DataFiles.PurchaseSales))
             {
                 MessageBox.Show("This account can only view purchases.", "New Purchase",
@@ -73,6 +77,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Open this page with every product on that PO loaded for edit.</summary>
         public static void OpenEdit(Dictionary<string, string> record)
         {
+            // View-only accounts cannot update purchase rows.
             if (!DataAccess.CanMutate(DataFiles.PurchaseSales))
             {
                 MessageBox.Show("This account can only view purchases.", "Edit Product",
@@ -85,9 +90,11 @@ namespace CastRightCatchInvManagement
             Navigator.GoTo(AppPage.AddPurchase);
         }
 
+        /// <summary>Apply a queued new/edit request, or keep a blank PO ready to type.</summary>
         public void HighlightCurrentPage()
         {
             LoadLookups();
+            // OpenEdit queued a purchases row to load.
             if (PendingEdit != null)
             {
                 var record = PendingEdit;
@@ -97,6 +104,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // OpenNew asked for a fresh PO instead of the last draft.
             if (StartNew)
             {
                 StartNew = false;
@@ -104,12 +112,15 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // A blank PO field on a new draft still needs the next number.
             if (!_editing && string.IsNullOrWhiteSpace(_po.Text))
                 _po.Text = DataFiles.NextPurchasePo();
+            // Always keep one empty product line to type into.
             if (_lines.Count == 0)
                 AddLine();
         }
 
+        /// <summary>Assemble header, product lines, and footer cards for this page.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
@@ -133,6 +144,7 @@ namespace CastRightCatchInvManagement
             ResetForm(keepVendor: false);
         }
 
+        /// <summary>PO header: vendor, dates, freight, and per-lb costs shared by every line.</summary>
         private CardPanel BuildHeader()
         {
             var card = new CardPanel { Height = 268, Padding = new Padding(16, 10, 16, 10) };
@@ -181,6 +193,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Scrollable product table with column headers and an add-line bar.</summary>
         private CardPanel BuildLinesCard()
         {
             var card = new CardPanel { Padding = new Padding(1) };
@@ -248,6 +261,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Append a blank product line and give it focus.</summary>
         private void AddLine()
         {
             var row = new PurchaseLineRow();
@@ -262,17 +276,20 @@ namespace CastRightCatchInvManagement
             UpdateTotals();
         }
 
+        /// <summary>Drop a product line, keeping at least one empty row so the PO can still be typed.</summary>
         private void RemoveLine(PurchaseLineRow row)
         {
             _lines.Remove(row);
             _lineHost.Controls.Remove(row);
             row.Dispose();
+            // A PO with zero lines cannot be saved; leave a blank row instead.
             if (_lines.Count == 0)
                 AddLine();
             LayoutLines();
             UpdateTotals();
         }
 
+        /// <summary>Stack product rows in the host and size the scrollbar to the last line.</summary>
         private void LayoutLines()
         {
             int y = _lineHost.Padding.Top;
@@ -286,6 +303,7 @@ namespace CastRightCatchInvManagement
             _lineHost.AutoScrollMinSize = new Size(0, y + 8);
         }
 
+        /// <summary>Totals plus Save, Add Another, and Clear.</summary>
         private CardPanel BuildFooter()
         {
             var card = new CardPanel { Height = 78, Padding = new Padding(16, 10, 16, 10) };
@@ -335,6 +353,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Reload vendor, forwarder, logistics, freight, and item lookups from live tables.</summary>
         private void LoadLookups()
         {
             _vendorHits.Clear();
@@ -344,10 +363,12 @@ namespace CastRightCatchInvManagement
             {
                 string code = DataFiles.GetRecord(record, "Code").Trim();
                 string name = DataFiles.GetRecordAny(record, "Name", "Company").Trim();
+                // Skip vendors that have neither a code nor a name to type.
                 if (code.Length == 0 && name.Length == 0)
                     continue;
                 var hit = new LookupSuggest.Hit(code, name, DataFiles.GetRecord(record, "Terms"));
                 _vendorHits.Add(hit);
+                // Forwarder slot is a subset of vendors, not a separate table.
                 if (VendorTypes.MatchesSlot(record, VendorTypes.SlotPurchaseForwarder))
                     _forwarderHits.Add(hit);
                 if (VendorTypes.MatchesSlot(record, VendorTypes.SlotPurchaseLogistics))
@@ -360,8 +381,10 @@ namespace CastRightCatchInvManagement
                 string code = DataFiles.GetRecord(record, "Code").Trim();
                 string description = DataFiles.GetRecord(record, "Description").Trim();
                 string species = DataFiles.GetRecord(record, "Species").Trim();
+                // Description is optional in item codes; species is the fallback label.
                 if (description.Length == 0)
                     description = species;
+                // An item with no code and no name cannot be looked up.
                 if (code.Length == 0 && description.Length == 0)
                     continue;
                 _itemHits.Add(new LookupSuggest.Hit(
@@ -371,6 +394,7 @@ namespace CastRightCatchInvManagement
                     species));
             }
 
+            // Freight combo is created with the header; skip if BuildUi has not run yet.
             if (_freightCo != null)
                 VendorChoice.Fill(_freightCo);
 
@@ -378,19 +402,23 @@ namespace CastRightCatchInvManagement
                 row.AttachLookups(() => _itemHits);
         }
 
+        /// <summary>Fill vendor code, name, and terms from a lookup pick.</summary>
         private void ApplyVendorHit(LookupSuggest.Hit hit)
         {
             _vendor.Text = hit.Code;
             _vendorName.Text = hit.Name;
+            // Extra on vendor hits is payment terms.
             if (hit.Extra.Length > 0)
                 _vendorTerms.Text = hit.Extra;
         }
 
+        /// <summary>Write a lookup name (or code if the name is blank) into a free-text field.</summary>
         private static void ApplyNameHit(TextBox box, LookupSuggest.Hit hit)
         {
             box.Text = hit.Name.Length > 0 ? hit.Name : hit.Code;
         }
 
+        /// <summary>Push header per-lb costs onto every line and refresh PO totals.</summary>
         private void RecalcLines()
         {
             decimal overhead = SharedOverhead();
@@ -402,6 +430,7 @@ namespace CastRightCatchInvManagement
             UpdateTotals();
         }
 
+        /// <summary>Sum line volume and cost for the footer.</summary>
         private void UpdateTotals()
         {
             decimal volume = 0;
@@ -417,8 +446,10 @@ namespace CastRightCatchInvManagement
             _totalCost.Text = cost.ToString("0.00", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>Insert or update one purchases row per product line, then refresh the PO PDF.</summary>
         private void SavePurchase(bool keepVendor = false)
         {
+            // Purchases are stored in the chosen data folder.
             if (!AppLock.HasFolder())
             {
                 ToastAlert.Error(this, "Select a data folder in Settings first.");
@@ -426,6 +457,7 @@ namespace CastRightCatchInvManagement
             }
 
             string po = _po.Text.Trim();
+            // PO # is the document key for every line on this order.
             if (po.Length == 0)
             {
                 ToastAlert.Error(this, "Enter a PO #.");
@@ -435,12 +467,14 @@ namespace CastRightCatchInvManagement
             var lines = _lines.Select(row => row.GetLine())
                 .Where(line => line.ItemCode.Length > 0 || line.Description.Length > 0)
                 .ToList();
+            // Blank rows are only placeholders for typing.
             if (lines.Count == 0)
             {
                 ToastAlert.Error(this, "Add at least one product line.");
                 return;
             }
 
+            // A purchase without a vendor cannot be posted.
             if (string.IsNullOrWhiteSpace(_vendor.Text) &&
                 string.IsNullOrWhiteSpace(_vendorName.Text))
             {
@@ -457,6 +491,7 @@ namespace CastRightCatchInvManagement
                 {
                     var values = BuildValues(po, line);
                     string item = line.ItemCode;
+                    // Same PO + item already exists: update that row instead of inserting a duplicate.
                     bool exists = _editing &&
                                   _loadedItems.Contains(item) &&
                                   po.Equals(_editPo, StringComparison.OrdinalIgnoreCase);
@@ -470,20 +505,24 @@ namespace CastRightCatchInvManagement
                                     .Equals(item, StringComparison.OrdinalIgnoreCase),
                             values)
                         : DataFiles.MutateInsert(DataFiles.PurchaseSales, values);
+                    // Stop so remaining lines are not written after a failed mutate.
                     if (last is not { Ok: true })
                     {
                         ToastAlert.Error(this, last?.Message ?? "Could not save that line.");
                         return;
                     }
 
+                    // Track saved items so removed lines can be deleted after the loop.
                     if (item.Length > 0)
                         savedItems.Add(item);
                 }
 
+                // Lines dropped in the editor must be deleted from the original PO.
                 if (_editing)
                 {
                     foreach (string oldItem in _loadedItems)
                     {
+                        // Still on this PO, so keep the row.
                         if (savedItems.Contains(oldItem) &&
                             po.Equals(_editPo, StringComparison.OrdinalIgnoreCase))
                             continue;
@@ -503,6 +542,7 @@ namespace CastRightCatchInvManagement
             }
             catch (Exception ex)
             {
+                // Mutate can throw when the store is locked or the row is missing.
                 ToastAlert.Error(this, ex.Message);
                 return;
             }
@@ -520,12 +560,14 @@ namespace CastRightCatchInvManagement
                 ? last.Value.Message
                 : _editing ? "The purchase was updated." : "The purchase was saved.");
 
+            // Add Another starts a new PO with the same vendor.
             if (keepVendor)
             {
                 ResetForm(keepVendor: true);
                 return;
             }
 
+            // Stay in edit mode so a second save still updates these items.
             if (_editing)
             {
                 _editPo = po;
@@ -538,6 +580,7 @@ namespace CastRightCatchInvManagement
             ResetForm(keepVendor: false);
         }
 
+        /// <summary>Map header fields plus one product line onto a purchases-table row.</summary>
         private Dictionary<string, string> BuildValues(string po, PurchaseLine line)
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -572,10 +615,12 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Load every product on this PO into the form for edit.</summary>
         private void LoadOrder(Dictionary<string, string> record)
         {
             string po = DataFiles.GetRecord(record, "PO #");
             var rows = DataFiles.FindPurchasesByPo(po);
+            // The clicked row is enough to edit even if the PO lookup returned nothing.
             if (rows.Count == 0)
                 rows.Add(record);
 
@@ -609,6 +654,7 @@ namespace CastRightCatchInvManagement
                 var line = _lines[^1];
                 line.FillFromRecord(row);
                 string item = DataFiles.GetRecord(row, "Item Code").Trim();
+                // Remember loaded items so a later save can delete ones the user removed.
                 if (item.Length > 0)
                     _loadedItems.Add(item);
             }
@@ -617,6 +663,7 @@ namespace CastRightCatchInvManagement
             SetMode(true);
         }
 
+        /// <summary>Clear the draft, optionally keeping the vendor for Add Another.</summary>
         private void ResetForm(bool keepVendor)
         {
             string vendorCode = keepVendor ? _vendor.Text.Trim() : "";
@@ -643,6 +690,7 @@ namespace CastRightCatchInvManagement
             SelectStatus(_status, "Pending");
             VendorChoice.Select(_freightCo, freightCo);
 
+            // Add Another reuses vendor/location; a full clear does not.
             if (keepVendor)
             {
                 _vendor.Text = vendorCode;
@@ -664,6 +712,7 @@ namespace CastRightCatchInvManagement
             UpdateTotals();
         }
 
+        /// <summary>Dispose every product row before loading or resetting the PO.</summary>
         private void ClearLines()
         {
             foreach (var row in _lines.ToList())
@@ -675,6 +724,7 @@ namespace CastRightCatchInvManagement
             _lines.Clear();
         }
 
+        /// <summary>Switch captions and hide Add Another while editing an existing PO.</summary>
         private void SetMode(bool editing)
         {
             _editing = editing;
@@ -683,11 +733,16 @@ namespace CastRightCatchInvManagement
             _another.Visible = !editing;
         }
 
+        /// <summary>Header overhead / lb applied to every product line.</summary>
         private decimal SharedOverhead() => PurchaseLineRow.ParseNumber(_overhead.Text);
+        /// <summary>Header freight / lb applied to every product line.</summary>
         private decimal SharedFreight() => PurchaseLineRow.ParseNumber(_freight.Text);
+        /// <summary>Header forwarder / lb applied to every product line.</summary>
         private decimal SharedForwarder() => PurchaseLineRow.ParseNumber(_forwarderLb.Text);
+        /// <summary>Header other / lb applied to every product line.</summary>
         private decimal SharedOther() => PurchaseLineRow.ParseNumber(_other.Text);
 
+        /// <summary>Paint a navy column caption into a line-header slot.</summary>
         private static void DrawHeader(Graphics g, string text, Rectangle slot)
         {
             TextRenderer.DrawText(
@@ -699,6 +754,7 @@ namespace CastRightCatchInvManagement
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         }
 
+        /// <summary>Caption plus value label used for footer totals.</summary>
         private static Label TotalLabel(Control parent, string caption, int x, int y)
         {
             var label = new Label { Text = caption };
@@ -717,6 +773,7 @@ namespace CastRightCatchInvManagement
             return value;
         }
 
+        /// <summary>Labeled text box placed at a fixed header coordinate.</summary>
         private static TextBox AddField(Control parent, string caption, int x, int y, int width)
         {
             var label = new Label { Text = caption };
@@ -733,6 +790,7 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Labeled combo placed at a fixed header coordinate.</summary>
         private static ComboBox AddCombo(Control parent, string caption, int x, int y, int width)
         {
             var label = new Label { Text = caption };
@@ -750,6 +808,7 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Optional date picker; unchecked dates are stored blank.</summary>
         private static DateTimePicker AddDate(Control parent, string caption, int x, int y, int width)
         {
             var label = new Label { Text = caption };
@@ -769,11 +828,14 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Store a checked date, or blank when the picker is unchecked.</summary>
         private static string DateText(DateTimePicker picker) =>
             picker.Checked ? CsvIO.Date(picker.Value.Date) : "";
 
+        /// <summary>Check the picker when the cell parses; leave it unchecked for blank/invalid text.</summary>
         private static void SetDate(DateTimePicker picker, string text)
         {
+            // Accept both the app date format and a general parse.
             if (NumericDateBox.TryParseCell(text, out var date) ||
                 DateTime.TryParse(text, out date))
             {
@@ -782,23 +844,29 @@ namespace CastRightCatchInvManagement
             }
             else
             {
+                // Blank or junk should not invent a date.
                 picker.Checked = false;
             }
         }
 
+        /// <summary>Clear an optional date so it is not saved.</summary>
         private static void Uncheck(DateTimePicker picker) => picker.Checked = false;
 
+        /// <summary>Map older status words onto the purchase combo values.</summary>
         private static void SelectStatus(ComboBox box, string? value)
         {
+            // Fill the list once; the designer does not own these items.
             if (box.Items.Count == 0)
                 box.Items.AddRange(new object[] { "Pending", "Sent", "Confirmed", "Complete" });
 
             string pick = (value ?? "").Trim();
+            // Older rows used Open/Paid; the combo only has Pending/Complete.
             if (pick.Equals("Open", StringComparison.OrdinalIgnoreCase))
                 pick = "Pending";
             if (pick.Equals("Paid", StringComparison.OrdinalIgnoreCase))
                 pick = "Complete";
             box.SelectedItem = pick.Length > 0 ? pick : "Pending";
+            // Unknown text would leave the combo empty.
             if (box.SelectedIndex < 0)
                 box.SelectedItem = "Pending";
         }

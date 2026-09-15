@@ -25,6 +25,7 @@ namespace CastRightCatchInvManagement
         public event EventHandler? RemoveRequested;
         public event EventHandler<string>? PoRequested;
 
+        /// <summary>Build the invoice-line editors and wire PO fill plus amount recalculation.</summary>
         public InvoiceLineRow()
         {
             SetStyle(
@@ -82,6 +83,7 @@ namespace CastRightCatchInvManagement
             _po.Leave += (_, _) => RequestPoFill();
             _po.KeyDown += (_, e) =>
             {
+                // Enter on PO # should fill the line, not beep.
                 if (e.KeyCode != Keys.Enter)
                     return;
                 e.SuppressKeyPress = true;
@@ -97,6 +99,7 @@ namespace CastRightCatchInvManagement
 
         public bool Locked => _locked;
 
+        /// <summary>Limit PO autocomplete to unused POs for the current customer or vendor.</summary>
         public void SetPoSuggestions(AutoCompleteStringCollection source)
         {
             _po.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
@@ -104,8 +107,10 @@ namespace CastRightCatchInvManagement
             _po.AutoCompleteCustomSource = source;
         }
 
+        /// <summary>Freeze a filled line so later PO lookups cannot overwrite it.</summary>
         public void Lock()
         {
+            // Lock is idempotent; already-frozen rows stay painted as text.
             if (_locked)
                 return;
 
@@ -125,14 +130,17 @@ namespace CastRightCatchInvManagement
             Refresh();
         }
 
+        /// <summary>Put the caret on PO # unless this line is already locked.</summary>
         public void FocusPo()
         {
             if (!_locked)
                 _po.Focus();
         }
 
+        /// <summary>Load this line from a sale or purchase row, then recalc amount.</summary>
         public void FillFromRecord(Dictionary<string, string> record)
         {
+            // Locked lines are finished; empty records would wipe typed values.
             if (_locked || record.Count == 0)
                 return;
 
@@ -143,6 +151,7 @@ namespace CastRightCatchInvManagement
             }
             finally
             {
+                // Recalc once after all fields are set, not on each TextChanged.
                 _filling = false;
             }
 
@@ -150,6 +159,7 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Snapshot the current editors, including computed amount.</summary>
         public InvoiceLine GetLine()
         {
             return new InvoiceLine
@@ -166,6 +176,7 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Load this line from a draft invoice line.</summary>
         public void FillFromLine(InvoiceLine line)
         {
             _filling = true;
@@ -189,13 +200,16 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>True when any editor on this line has text.</summary>
         public bool HasContent()
         {
             return Fields().Any(box => !string.IsNullOrWhiteSpace(box.Text));
         }
 
+        /// <summary>On a locked row, send clicks to Remove instead of hidden editors.</summary>
         protected override void OnMouseDown(MouseEventArgs e)
         {
+            // Editors are hidden after Lock; focus Remove so Delete still works.
             if (_locked)
             {
                 _remove.Focus();
@@ -205,6 +219,7 @@ namespace CastRightCatchInvManagement
             base.OnMouseDown(e);
         }
 
+        /// <summary>Draw the row border, gold accent, and locked-cell text when editors are hidden.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
@@ -215,6 +230,7 @@ namespace CastRightCatchInvManagement
             using var gold = new SolidBrush(_locked ? Theme.GoldLight : Theme.Gold);
             e.Graphics.FillRectangle(gold, 0, 0, 3, Height);
 
+            // Unlocked rows paint through the live text boxes.
             if (!_locked)
                 return;
 
@@ -230,6 +246,7 @@ namespace CastRightCatchInvManagement
             DrawLocked(e.Graphics, _amount.Text, slots.Amount);
         }
 
+        /// <summary>Paint one frozen cell so locked lines still show their values.</summary>
         private static void DrawLocked(Graphics g, string text, Rectangle slot)
         {
             TextRenderer.DrawText(
@@ -241,8 +258,10 @@ namespace CastRightCatchInvManagement
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         }
 
+        /// <summary>Ask the parent form to fill this PO when the user leaves the PO box.</summary>
         private void RequestPoFill()
         {
+            // Locked/filling writes should not trigger another lookup.
             if (_locked || _filling)
                 return;
 
@@ -253,6 +272,7 @@ namespace CastRightCatchInvManagement
             PoRequested?.Invoke(this, po);
         }
 
+        /// <summary>Copy sale/purchase fields onto this line, keeping blank cells when the source is empty.</summary>
         private void ApplyRecord(Dictionary<string, string> record)
         {
             string item = DataFiles.GetRecord(record, "Item Code");
@@ -262,6 +282,7 @@ namespace CastRightCatchInvManagement
             string cs = DataFiles.GetRecord(record, "CS");
             string volume = DataFiles.GetRecord(record, "Volume");
             string po = DataFiles.SalePo(record);
+            // Purchases store PO # directly; sales use the customer-PO helper first.
             if (po.Length == 0)
                 po = DataFiles.GetRecord(record, "PO #").Trim();
             string lot = DataFiles.SaleLot(record);
@@ -272,6 +293,7 @@ namespace CastRightCatchInvManagement
                 _product.Text = item;
             if (lot.Length > 0)
                 _lot.Text = lot;
+            // Ordered and shipped start equal; the user can change shipped later.
             if (cs.Length > 0)
             {
                 _ordered.Text = cs;
@@ -302,19 +324,23 @@ namespace CastRightCatchInvManagement
                 _price.Text = sell;
         }
 
+        /// <summary>Recalc amount when the user edits a field, but not during programmatic fills.</summary>
         private void OnFieldChanged()
         {
+            // Fill writes several boxes; wait until that batch finishes.
             if (_filling)
                 return;
             RecalcAmount();
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Amount is weight times price; skip the write when the text did not change.</summary>
         private void RecalcAmount()
         {
             decimal weight = ParseNumber(_weight.Text);
             decimal price = ParseNumber(_price.Text);
             string text = (weight * price).ToString("0.00", CultureInfo.InvariantCulture);
+            // Avoid a TextChanged loop when the formatted amount is already showing.
             if (_amount.Text == text)
                 return;
             _filling = true;
@@ -322,6 +348,7 @@ namespace CastRightCatchInvManagement
             _filling = false;
         }
 
+        /// <summary>Place editors in the shared invoice-line column slots.</summary>
         private void LayoutFields()
         {
             var slots = InvoiceLineLayout.Slots(Width);
@@ -337,6 +364,7 @@ namespace CastRightCatchInvManagement
             _remove.Bounds = slots.Remove;
         }
 
+        /// <summary>Editable boxes that participate in HasContent and change events.</summary>
         private IEnumerable<TextBox> Fields()
         {
             yield return _po;
@@ -349,6 +377,7 @@ namespace CastRightCatchInvManagement
             yield return _price;
         }
 
+        /// <summary>Borderless themed editor used by every invoice cell.</summary>
         private static TextBox MakeBox()
         {
             var box = new FlatTextBox();
@@ -358,8 +387,10 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Parse a money or quantity cell, treating blank or junk as zero.</summary>
         public static decimal ParseNumber(string? text)
         {
+            // Blank cells are zero so totals can sum mixed empty/filled lines.
             if (string.IsNullOrWhiteSpace(text))
                 return 0;
 
@@ -368,16 +399,21 @@ namespace CastRightCatchInvManagement
                 .Replace("lbs", "", StringComparison.OrdinalIgnoreCase)
                 .Trim();
 
+            // Prefer the user's locale (typed values).
             if (decimal.TryParse(cleaned, NumberStyles.Any, CultureInfo.CurrentCulture, out var value))
                 return value;
+            // CSV/PDF numbers often use invariant format.
             if (decimal.TryParse(cleaned, NumberStyles.Any, CultureInfo.InvariantCulture, out value))
                 return value;
+            // Unparseable text should not throw from a grid cell.
             return 0;
         }
     }
 
+    /// <summary>Text box without the default 3D client edge, for invoice line cells.</summary>
     internal sealed class FlatTextBox : TextBox
     {
+        /// <summary>Clear WS_EX_CLIENTEDGE and WS_BORDER so Theme.StyleField can draw the border.</summary>
         protected override CreateParams CreateParams
         {
             get
@@ -390,8 +426,10 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Column rectangles for an invoice product line at a given width.</summary>
     internal static class InvoiceLineLayout
     {
+        /// <summary>Compute editor bounds, giving leftover width to Description.</summary>
         public static InvoiceLineSlots Slots(int width)
         {
             int pad = 10;
@@ -425,6 +463,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Pixel bounds for each editor on an invoice line.</summary>
     internal readonly record struct InvoiceLineSlots(
         Rectangle Po,
         Rectangle Product,
@@ -485,8 +524,10 @@ namespace CastRightCatchInvManagement
         public bool TaxIsPercent { get; set; }
         public List<InvoiceLine> Lines { get; set; } = new();
 
+        /// <summary>Serialize this draft for storage on the invoices row.</summary>
         public string ToJson() => System.Text.Json.JsonSerializer.Serialize(this, JsonOptions);
 
+        /// <summary>Restore a stored invoice snapshot, or null when the JSON is missing or invalid.</summary>
         public static InvoiceDraft? FromJson(string? json)
         {
             if (string.IsNullOrWhiteSpace(json))
@@ -497,6 +538,7 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Corrupt snapshots should not prevent rebuilding from sales/purchases.
                 return null;
             }
         }
@@ -510,6 +552,7 @@ namespace CastRightCatchInvManagement
         {
             get
             {
+                // "#" mode stores a dollar amount in TaxRate; "%" computes from the taxable subtotal.
                 if (!TaxIsPercent)
                     return TaxRate;
 

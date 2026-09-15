@@ -16,6 +16,7 @@ namespace CastRightCatchInvManagement
         private Label _lblCurrentDb = null!;
         private Label _lblOldDb = null!;
 
+        /// <summary>Build brand, Current/Old switch, page list, Settings, and the signed-in user row.</summary>
         public NavSidebar(Workspace workspace)
         {
             _workspace = workspace;
@@ -103,18 +104,22 @@ namespace CastRightCatchInvManagement
             RefreshState();
         }
 
+        /// <summary>Unsubscribe from AppLock.Changed so a closed extra does not refresh.</summary>
         protected override void Dispose(bool disposing)
         {
+            // Drop the static event so closed extras do not refresh.
             if (disposing)
                 AppLock.Changed -= RefreshState;
             base.Dispose(disposing);
         }
 
+        /// <summary>Enable/hide buttons by folder lock, table access, and Admin/Review roles.</summary>
         public void RefreshState()
         {
             if (IsDisposed)
                 return;
 
+            // AppLock.Changed can fire from a background settings load.
             if (InvokeRequired)
             {
                 BeginInvoke(RefreshState);
@@ -131,6 +136,7 @@ namespace CastRightCatchInvManagement
                 bool isAdminPage = pair.Key == AppPage.Admin;
                 if (isAdminPage)
                 {
+                    // Admin is staff-only; hide it from regular users.
                     bool staff = AppState.IsAdmin || AppState.IsIt;
                     pair.Value.Visible = staff;
                     pair.Value.Enabled = unlocked && staff;
@@ -140,6 +146,7 @@ namespace CastRightCatchInvManagement
 
                 if (pair.Key == AppPage.PendingChanges)
                 {
+                    // Review is only for users who can approve queued edits.
                     bool review = DataAccess.CanReview();
                     pair.Value.Visible = review;
                     pair.Value.Enabled = unlocked && review;
@@ -150,6 +157,7 @@ namespace CastRightCatchInvManagement
                 bool allowed = TableAccess.CanPage(pair.Key);
                 pair.Value.Enabled = (unlocked || isSettings) && allowed;
                 ApplyOpenMark(pair.Key, pair.Value);
+                // Settings/Help stay listed so a folder can still be chosen.
                 if (!isSettings && pair.Key != AppPage.Help)
                     pair.Value.Visible = allowed;
             }
@@ -163,6 +171,7 @@ namespace CastRightCatchInvManagement
 
             LayoutNav(_navHost, _navItems);
 
+            // Role or denials changed while this page was open; bounce to Home.
             if (_workspace.CurrentPage is AppPage current && !TableAccess.CanPage(current))
             {
                 Navigator.GoTo(AppPage.Dashboard, _workspace, reuseOpenWindow: false);
@@ -182,12 +191,14 @@ namespace CastRightCatchInvManagement
             SyncDatabaseSwitch(unlocked);
         }
 
+        /// <summary>Stack visible nav items and size the custom scrollbar to the content.</summary>
         private static void LayoutNav(NavyScrollPanel host, List<Control> items)
         {
             int y = 4;
             int width = Math.Max(160, host.ContentWidth);
             foreach (var item in items)
             {
+                // Hidden by access; skip so remaining items pack upward.
                 if (!item.Visible)
                     continue;
                 item.Location = new Point(0, y);
@@ -198,6 +209,7 @@ namespace CastRightCatchInvManagement
             host.SetContentHeight(y);
         }
 
+        /// <summary>Seal and wordmark; click anywhere goes Home.</summary>
         private Panel BuildBrandHeader()
         {
             var brand = new Panel
@@ -213,6 +225,7 @@ namespace CastRightCatchInvManagement
                 e.Graphics.DrawLine(pen, 18, brand.Height - 1, brand.Width - 18, brand.Height - 1);
             };
 
+            // Header still reads without the seal if the PNG is missing.
             if (BrandAssets.Seal != null)
             {
                 var pic = new PictureBox
@@ -272,6 +285,7 @@ namespace CastRightCatchInvManagement
             return brand;
         }
 
+        /// <summary>Current / Old toggle at the top of the nav list.</summary>
         private Panel BuildDatabaseSwitch()
         {
             var host = new Panel
@@ -317,6 +331,7 @@ namespace CastRightCatchInvManagement
             return host;
         }
 
+        /// <summary>Center the switch and park Current/Old labels on either side.</summary>
         private void LayoutDatabaseSwitch(Control host)
         {
             int inner = Math.Max(80, host.ClientSize.Width - host.Padding.Horizontal);
@@ -332,6 +347,7 @@ namespace CastRightCatchInvManagement
                 y + (_dbToggle.Height - _lblOldDb.Height) / 2);
         }
 
+        /// <summary>Disable the switch until a folder exists; gold the selected Current/Old label.</summary>
         private void SyncDatabaseSwitch(bool unlocked)
         {
             if (_dbToggle == null)
@@ -346,6 +362,7 @@ namespace CastRightCatchInvManagement
             _lblOldDb.ForeColor = old ? Theme.GoldLight : Color.FromArgb(140, Theme.Cream);
         }
 
+        /// <summary>Recreate folder dropdowns and page buttons from the shared menu layout.</summary>
         private void RebuildMenu()
         {
             foreach (var item in _navItems)
@@ -373,11 +390,13 @@ namespace CastRightCatchInvManagement
 
             foreach (var node in layout.Root)
             {
+                // Admin turned this item off in the menu editor.
                 if (!node.On)
                     continue;
                 if (node.IsFolder)
                 {
                     var drop = BuildDrop(node, 0);
+                    // Folder had no visible children after access filtering.
                     if (drop == null)
                         continue;
                     drop.Width = 216;
@@ -389,6 +408,7 @@ namespace CastRightCatchInvManagement
                     continue;
                 }
 
+                // Stale key from an older catalog version.
                 if (!MenuLayout.TryPage(node.Key, out var page))
                     continue;
                 AddButton(page, node.Title);
@@ -398,15 +418,18 @@ namespace CastRightCatchInvManagement
             LayoutNav(_navHost, _navItems);
         }
 
+        /// <summary>Build one dropdown; nested folders stop at depth 2.</summary>
         private NavDropGroup? BuildDrop(MenuNode node, int depth)
         {
             var drop = new NavDropGroup(node.Title, _workspace, depth);
             foreach (var child in node.Children)
             {
+                // Admin turned this child off in the menu editor.
                 if (!child.On)
                     continue;
                 if (child.IsFolder)
                 {
+                    // Cap nesting so the navy rail stays readable.
                     if (depth >= 2)
                         continue;
                     var nested = BuildDrop(child, depth + 1);
@@ -429,6 +452,7 @@ namespace CastRightCatchInvManagement
             return drop.HasContent ? drop : null;
         }
 
+        /// <summary>Flatten nested dropdowns so RefreshState can update every group.</summary>
         private void CollectDrops(NavDropGroup drop)
         {
             _groups.Add(drop);
@@ -436,6 +460,7 @@ namespace CastRightCatchInvManagement
                 CollectDrops(nested);
         }
 
+        /// <summary>Plain sidebar button that navigates in this workspace.</summary>
         private CrcNavButton BuildButton(AppPage page, string text)
         {
             var btn = new CrcNavButton { Text = text, Height = 38 };
@@ -444,12 +469,14 @@ namespace CastRightCatchInvManagement
             return btn;
         }
 
+        /// <summary>Left-click navigates here; middle/right-click can open another window.</summary>
         private void BindPageButton(CrcNavButton btn, AppPage page)
         {
             BindOpenWindow(btn, page, _workspace);
             btn.Click += (_, _) => Navigator.GoTo(page, _workspace);
         }
 
+        /// <summary>Gold bar if this window shows the page; dim bar if another window does.</summary>
         private void ApplyOpenMark(AppPage page, CrcNavButton btn)
         {
             bool here = page == _workspace.CurrentPage;
@@ -458,6 +485,7 @@ namespace CastRightCatchInvManagement
             string tip = page == AppPage.Help ? "Controls" : "";
             if (btn.OpenElsewhere)
             {
+                // Tell the user a click will focus the other window, not duplicate it.
                 tip = tip.Length == 0
                     ? "Already open — click to show that window"
                     : tip + " — already open, click to show that window";
@@ -471,6 +499,7 @@ namespace CastRightCatchInvManagement
         {
             control.MouseDown += (_, e) =>
             {
+                // Middle-click is the browser-style "open in another window".
                 if (e.Button == MouseButtons.Middle)
                     Navigator.OpenDetached(page, workspace);
             };
@@ -481,6 +510,7 @@ namespace CastRightCatchInvManagement
                 (_, _) => Navigator.OpenDetached(page, workspace));
             menu.Opening += (_, e) =>
             {
+                // Locked pages (no folder / no access) cannot open extras.
                 if (!control.Enabled)
                 {
                     e.Cancel = true;
@@ -504,6 +534,7 @@ namespace CastRightCatchInvManagement
                 {
                     var target = openPage;
                     string title = UiStyle.PageTitle(target);
+                    // Mark the page already shown in the window that opened the menu.
                     if (workspace.CurrentPage == target)
                         title += " — this window";
                     menu.Items.Add(title, null, (_, _) => Navigator.TryFocus(target));
@@ -532,6 +563,7 @@ namespace CastRightCatchInvManagement
             BackColor = Theme.NavyDark
         };
 
+        /// <summary>Custom-paint a gold thumb instead of the system scrollbar.</summary>
         public NavyScrollPanel()
         {
             SetStyle(
@@ -545,10 +577,11 @@ namespace CastRightCatchInvManagement
             Theme.EnableDoubleBuffer(this);
             Theme.EnableDoubleBuffer(Strip);
             Controls.Add(Strip);
-            MouseEnter += (_, _) => TryFocus();
-            Strip.MouseEnter += (_, _) => TryFocus();
+            MouseDown += (_, _) => TryFocus();
+            Strip.MouseDown += (_, _) => TryFocus();
             Strip.ControlAdded += (_, e) =>
             {
+                // New nav buttons need wheel forwarding too.
                 if (e.Control != null)
                     Wire(e.Control);
             };
@@ -557,6 +590,7 @@ namespace CastRightCatchInvManagement
         public int ContentWidth =>
             Math.Max(1, ClientSize.Width - Padding.Left - Padding.Right - BarWidth - BarPad);
 
+        /// <summary>Tell the scroller how tall the stacked nav items are.</summary>
         public void SetContentHeight(int height)
         {
             _contentHeight = Math.Max(0, height);
@@ -565,6 +599,7 @@ namespace CastRightCatchInvManagement
             Invalidate();
         }
 
+        /// <summary>Reclamp scroll offset when the sidebar height changes.</summary>
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
@@ -573,15 +608,18 @@ namespace CastRightCatchInvManagement
             Invalidate();
         }
 
+        /// <summary>Scroll the navy list 48px per wheel notch.</summary>
         protected override void OnMouseWheel(MouseEventArgs e)
         {
             base.OnMouseWheel(e);
             ScrollBy(-Math.Sign(e.Delta) * 48);
         }
 
+        /// <summary>Start a thumb drag when the pointer is on the gold bar.</summary>
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
+            // Only drag when the pointer is on the thumb, not the track.
             if (e.Button != MouseButtons.Left || !ThumbBounds.Contains(e.Location))
                 return;
             _drag = true;
@@ -590,16 +628,19 @@ namespace CastRightCatchInvManagement
             Capture = true;
         }
 
+        /// <summary>Hover-highlight the thumb, or convert pointer travel into scroll offset while dragging.</summary>
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
             bool hover = ThumbBounds.Contains(e.Location) || TrackBounds.Contains(e.Location);
+            // Brighten the thumb only while the pointer is on the bar.
             if (hover != _hoverBar)
             {
                 _hoverBar = hover;
                 Invalidate();
             }
 
+            // Hover-only move should not scroll.
             if (!_drag)
                 return;
 
@@ -612,6 +653,7 @@ namespace CastRightCatchInvManagement
             Invalidate();
         }
 
+        /// <summary>End a thumb drag and release mouse capture.</summary>
         protected override void OnMouseUp(MouseEventArgs e)
         {
             base.OnMouseUp(e);
@@ -619,9 +661,11 @@ namespace CastRightCatchInvManagement
             Capture = false;
         }
 
+        /// <summary>Drop the hover gold unless a thumb drag is still captured.</summary>
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
+            // Keep the gold hover while the thumb is captured.
             if (_hoverBar && !_drag)
             {
                 _hoverBar = false;
@@ -629,9 +673,11 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Draw the dim track and gold thumb when content overflows.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
+            // Content fits; hide the custom bar.
             if (Overflow <= 0)
                 return;
 
@@ -668,6 +714,7 @@ namespace CastRightCatchInvManagement
             {
                 var track = TrackBounds;
                 int overflow = Overflow;
+                // No thumb when content fits the viewport.
                 if (overflow <= 0)
                     return Rectangle.Empty;
                 int thumbH = Math.Max(22, (int)(track.Height * (ViewHeight / (double)Math.Max(ViewHeight, _contentHeight))));
@@ -677,6 +724,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Nudge the list by delta pixels and clamp to the overflow range.</summary>
         private void ScrollBy(int delta)
         {
             _offset += delta;
@@ -685,25 +733,29 @@ namespace CastRightCatchInvManagement
             Invalidate();
         }
 
+        /// <summary>Keep the scroll offset between 0 and the overflow so the list cannot bounce.</summary>
         private void Clamp() =>
             _offset = Math.Max(0, Math.Min(_offset, Overflow));
 
+        /// <summary>Position the inner strip so _offset is the pixels scrolled off the top.</summary>
         private void LayoutStrip()
         {
             Strip.Location = new Point(Padding.Left, Padding.Top - _offset);
             Strip.Size = new Size(ContentWidth, Math.Max(ViewHeight, _contentHeight));
         }
 
+        /// <summary>Take focus so mouse-wheel messages reach this panel.</summary>
         private void TryFocus()
         {
             if (!ContainsFocus)
                 Focus();
         }
 
+        /// <summary>Forward child mouse-wheel and click so nested buttons still scroll the list.</summary>
         private void Wire(Control control)
         {
-            control.MouseEnter -= ChildEnter;
-            control.MouseEnter += ChildEnter;
+            control.MouseDown -= ChildDown;
+            control.MouseDown += ChildDown;
             control.MouseWheel -= ChildWheel;
             control.MouseWheel += ChildWheel;
             control.ControlAdded -= ChildAdded;
@@ -712,11 +764,14 @@ namespace CastRightCatchInvManagement
                 Wire(child);
         }
 
-        private void ChildEnter(object? sender, EventArgs e) => TryFocus();
+        /// <summary>Focus the scroller when a nested button is clicked so wheel still works.</summary>
+        private void ChildDown(object? sender, MouseEventArgs e) => TryFocus();
 
+        /// <summary>Buttons eat wheel messages; forward them to the navy list.</summary>
         private void ChildWheel(object? sender, MouseEventArgs e) =>
             ScrollBy(-Math.Sign(e.Delta) * 48);
 
+        /// <summary>Wire nested children added after the parent was already hooked.</summary>
         private void ChildAdded(object? sender, ControlEventArgs e)
         {
             if (e.Control != null)
@@ -724,12 +779,15 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Rounded gold thumb painter for the navy scrollbar.</summary>
     internal static class NavyScrollPaint
     {
+        /// <summary>Capsule fill: ellipse when short, rounded rect when tall.</summary>
         public static void FillRoundedBar(this Graphics g, Rectangle bounds, Brush? brush = null)
         {
             if (bounds.Width <= 0 || bounds.Height <= 0 || brush == null)
                 return;
+            // Thumb is circular at the minimum height.
             if (bounds.Height <= bounds.Width)
             {
                 g.FillEllipse(brush, bounds);
@@ -744,6 +802,7 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>One dropdown child: nested page, plus an optional standalone Open action.</summary>
     internal readonly struct NavMenuItem
     {
         public NavMenuItem(AppPage page, string text, Action? open)
@@ -780,6 +839,7 @@ namespace CastRightCatchInvManagement
 
         public bool HasContent => _pages.Count > 0 || _nested.Count > 0;
 
+        /// <summary>Header plus nested page buttons; nested folders indent by depth.</summary>
         public NavDropGroup(string headerText, Workspace workspace, int depth)
         {
             _workspace = workspace;
@@ -828,6 +888,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(_headerRow);
         }
 
+        /// <summary>Add a page button; New Purchase/Sale use OpenNew instead of nested GoTo.</summary>
         public void AddPage(NavMenuItem item)
         {
             var btn = new CrcNavButton
@@ -842,6 +903,7 @@ namespace CastRightCatchInvManagement
             btn.Click += (_, _) =>
             {
                 Navigator.Activate(_workspace);
+                // AddPurchase/SalesOrder open a dedicated window, not a nested page.
                 if (open != null)
                     open();
                 else
@@ -853,6 +915,7 @@ namespace CastRightCatchInvManagement
             _children.Controls.Add(btn);
         }
 
+        /// <summary>Nest another dropdown under this one.</summary>
         public void AddNested(NavDropGroup nested)
         {
             _nested.Add(nested);
@@ -860,6 +923,7 @@ namespace CastRightCatchInvManagement
             _children.Controls.Add(nested);
         }
 
+        /// <summary>Expose child page buttons to the sidebar so RefreshState can mark them.</summary>
         public void Register(Dictionary<AppPage, CrcNavButton> buttons)
         {
             for (int i = 0; i < _pages.Count; i++)
@@ -868,9 +932,11 @@ namespace CastRightCatchInvManagement
                 nested.Register(buttons);
         }
 
+        /// <summary>True when at least one child page is allowed for this user.</summary>
         public bool ShouldShow() =>
             _pages.Any(PageAllowed) || _nested.Any(group => group.ShouldShow());
 
+        /// <summary>Enable children by table access and hide empty folders.</summary>
         public void ApplyAccess(bool unlocked)
         {
             int visibleChildren = 0;
@@ -878,6 +944,7 @@ namespace CastRightCatchInvManagement
             {
                 bool allowed = PageAllowed(_pages[i]);
                 _pageButtons[i].Enabled = unlocked && allowed;
+                // Folder header stays disabled when every child is denied.
                 if (allowed)
                     visibleChildren++;
             }
@@ -885,6 +952,7 @@ namespace CastRightCatchInvManagement
             foreach (var nested in _nested)
             {
                 nested.ApplyAccess(unlocked);
+                // Nested folders with no allowed pages stay collapsed/hidden.
                 if (nested.ShouldShow())
                     visibleChildren++;
             }
@@ -894,11 +962,13 @@ namespace CastRightCatchInvManagement
             Relayout();
         }
 
+        /// <summary>Re-measure after access changes without toggling open/closed.</summary>
         public void SyncExpanded()
         {
             Relayout();
         }
 
+        /// <summary>Expand only when the user opened this folder; height follows allowed children.</summary>
         public void Relayout()
         {
             bool related = IsCurrentRelated();
@@ -924,6 +994,7 @@ namespace CastRightCatchInvManagement
             ExpandedChanged?.Invoke();
         }
 
+        /// <summary>Review uses CanReview; other pages use table denials.</summary>
         private static bool PageAllowed(AppPage page)
         {
             if (page == AppPage.PendingChanges)
@@ -931,6 +1002,7 @@ namespace CastRightCatchInvManagement
             return TableAccess.CanPage(page);
         }
 
+        /// <summary>Hide children the current user cannot open.</summary>
         private bool ChildShouldShow(Control child, int pageIndex)
         {
             if (child is NavDropGroup nested)
@@ -938,6 +1010,7 @@ namespace CastRightCatchInvManagement
             return pageIndex < _pages.Count && PageAllowed(_pages[pageIndex]);
         }
 
+        /// <summary>Pixel height of allowed children used when the folder is expanded.</summary>
         private int ChildStackHeight()
         {
             int y = 4;
@@ -945,8 +1018,10 @@ namespace CastRightCatchInvManagement
             foreach (var child in _order)
             {
                 bool show = ChildShouldShow(child, pageIndex);
+                // Nested folders are not in _pages; only page buttons consume an index.
                 if (child is CrcNavButton)
                     pageIndex++;
+                // Denied pages do not take vertical space.
                 if (!show)
                     continue;
                 y += child is CrcNavButton ? 34 : Math.Max(child.Height, 34);
@@ -955,6 +1030,7 @@ namespace CastRightCatchInvManagement
             return y;
         }
 
+        /// <summary>Stack allowed children; denied pages stay invisible in place.</summary>
         private void LayoutChildren()
         {
             int y = 4;
@@ -966,30 +1042,36 @@ namespace CastRightCatchInvManagement
                 if (child is CrcNavButton)
                     pageIndex++;
                 child.Visible = show;
+                // Keep denied items out of the hit-test stack.
                 if (!show)
                     continue;
                 child.Location = new Point(0, y);
                 child.Width = width;
+                // Nested dropdowns keep the height Relayout already measured.
                 if (child is CrcNavButton)
                     child.Height = 34;
                 y += child.Height;
             }
         }
 
+        /// <summary>User-driven expand/collapse; does not auto-open for the current page.</summary>
         private void ToggleOpen()
         {
             _manualOpen = !_manualOpen;
             Relayout();
         }
 
+        /// <summary>True when this folder (or a nested one) contains the page shown in this window.</summary>
         private bool IsCurrentRelated() =>
             _workspace.CurrentPage is AppPage page &&
             (_pages.Contains(page) || _nested.Any(group => group.IsCurrentRelated()));
 
+        /// <summary>True when a child page is open in a different workspace.</summary>
         private bool HasOpenElsewhere() =>
             _pages.Any(page => Navigator.IsOpen(page) && page != _workspace.CurrentPage) ||
             _nested.Any(group => group.HasOpenElsewhere());
 
+        /// <summary>Chevron points down when expanded, right when collapsed.</summary>
         private void PaintArrow(object? sender, PaintEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -1014,6 +1096,7 @@ namespace CastRightCatchInvManagement
 
         public bool On => _on;
 
+        /// <summary>46×24 gold pill; Off is Current database, On is Old Inventory.</summary>
         public CrcToggleSwitch()
         {
             Size = new Size(46, 24);
@@ -1032,6 +1115,7 @@ namespace CastRightCatchInvManagement
             AccessibleRole = AccessibleRole.CheckButton;
         }
 
+        /// <summary>Set the switch without raising Toggled (used when syncing from AppState).</summary>
         public void SetOn(bool on)
         {
             if (_on == on)
@@ -1040,9 +1124,11 @@ namespace CastRightCatchInvManagement
             Invalidate();
         }
 
+        /// <summary>Toggle Old Inventory on left-click when the switch is enabled.</summary>
         protected override void OnMouseClick(MouseEventArgs e)
         {
             base.OnMouseClick(e);
+            // Disabled until a data folder or server is available.
             if (!Enabled || e.Button != MouseButtons.Left)
                 return;
 
@@ -1051,12 +1137,14 @@ namespace CastRightCatchInvManagement
             Toggled?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Repaint faded when no folder is selected.</summary>
         protected override void OnEnabledChanged(EventArgs e)
         {
             base.OnEnabledChanged(e);
             Invalidate();
         }
 
+        /// <summary>Navy or gold track with a cream knob on the Current/Old side.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
@@ -1064,6 +1152,7 @@ namespace CastRightCatchInvManagement
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             if (Parent != null)
             {
+                // Transparent back-color is unreliable; paint the navy rail behind the pill.
                 using var clear = new SolidBrush(Parent.BackColor);
                 g.FillRectangle(clear, ClientRectangle);
             }
@@ -1083,6 +1172,7 @@ namespace CastRightCatchInvManagement
             g.FillEllipse(knob, kx, pad, kn, kn);
         }
 
+        /// <summary>Closed pill path for the Current/Old track.</summary>
         private static GraphicsPath RoundedRect(Rectangle bounds, float radius)
         {
             float d = radius * 2f;
@@ -1124,6 +1214,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Flat navy button; gold leading bar is painted when Selected or OpenElsewhere.</summary>
         public CrcNavButton()
         {
             FlatStyle = FlatStyle.Flat;
@@ -1139,15 +1230,18 @@ namespace CastRightCatchInvManagement
             ApplyColors();
         }
 
+        /// <summary>Refresh faded vs cream colors when table access changes.</summary>
         protected override void OnEnabledChanged(EventArgs e)
         {
             base.OnEnabledChanged(e);
             ApplyColors();
         }
 
+        /// <summary>Gold leading bar when this page is selected here or open elsewhere.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
+            // Idle buttons have no gold leading bar.
             if (!_selected && !_openElsewhere)
                 return;
 
@@ -1157,6 +1251,7 @@ namespace CastRightCatchInvManagement
             e.Graphics.FillRectangle(gold, 0, 8, 4, Height - 16);
         }
 
+        /// <summary>Selected is gold on navy-mid; disabled is faded; otherwise cream on navy.</summary>
         private void ApplyColors()
         {
             if (_selected)
@@ -1177,8 +1272,10 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Compact keyboard glyph that opens the Controls (Help) page.</summary>
     internal sealed class CrcControlsButton : CrcNavButton
     {
+        /// <summary>Icon-only Help button on the Settings row.</summary>
         public CrcControlsButton()
         {
             Text = "";
@@ -1187,6 +1284,7 @@ namespace CastRightCatchInvManagement
             AccessibleName = "Controls";
         }
 
+        /// <summary>Keyboard glyph in the current ForeColor.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
@@ -1194,8 +1292,10 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Monitor glyph used for IT chrome when a text label would not fit.</summary>
     internal sealed class CrcItButton : CrcNavButton
     {
+        /// <summary>Icon-only IT button (unused on the current Settings row).</summary>
         public CrcItButton()
         {
             Text = "";
@@ -1204,6 +1304,7 @@ namespace CastRightCatchInvManagement
             AccessibleName = "IT";
         }
 
+        /// <summary>Monitor glyph in the current ForeColor.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
@@ -1211,8 +1312,10 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Small keyboard outline drawn on the Controls nav button.</summary>
     internal static class ControlsGlyph
     {
+        /// <summary>Draw a rounded keyboard with a space bar in the given color.</summary>
         public static void Paint(Graphics g, Rectangle bounds, Color color)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -1248,8 +1351,10 @@ namespace CastRightCatchInvManagement
         }
     }
 
+    /// <summary>Small monitor-and-stand outline for the IT nav button.</summary>
     internal static class MonitorGlyph
     {
+        /// <summary>Draw a rounded screen, bezel, and stand in the given color.</summary>
         public static void Paint(Graphics g, Rectangle bounds, Color color)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -1280,6 +1385,7 @@ namespace CastRightCatchInvManagement
         private readonly HistoryIconButton _forward;
         private readonly ToolTip _tips = new() { ShowAlways = true };
 
+        /// <summary>Back and Forward chevrons bound to this workspace's history stacks.</summary>
         public NavHistoryBar(Workspace workspace)
         {
             _workspace = workspace;
@@ -1292,6 +1398,7 @@ namespace CastRightCatchInvManagement
             _back = new HistoryIconButton(back: true);
             _back.Click += (_, _) =>
             {
+                // Faded chevron still receives clicks; ignore them.
                 if (_workspace.CanGoBack)
                     Navigator.GoBack(_workspace);
             };
@@ -1312,12 +1419,14 @@ namespace CastRightCatchInvManagement
             Sync();
         }
 
+        /// <summary>Gold when this window has back/forward history; faded otherwise.</summary>
         public void Sync()
         {
             _back.Usable = _workspace.CanGoBack;
             _forward.Usable = _workspace.CanGoForward;
         }
 
+        /// <summary>Place the two 32px chevrons side by side in the header.</summary>
         private void LayoutButtons()
         {
             int size = 32;
@@ -1335,6 +1444,7 @@ namespace CastRightCatchInvManagement
         private bool _hover;
         private bool _down;
 
+        /// <summary>back draws a left chevron; otherwise a right chevron.</summary>
         public HistoryIconButton(bool back)
         {
             _back = back;
@@ -1354,6 +1464,7 @@ namespace CastRightCatchInvManagement
             get => _usable;
             set
             {
+                // Skip a redundant invalidate while the header refreshes often.
                 if (_usable == value)
                     return;
                 _usable = value;
@@ -1362,6 +1473,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Brighten the chevron while the pointer is over a usable button.</summary>
         protected override void OnMouseEnter(EventArgs e)
         {
             _hover = true;
@@ -1369,6 +1481,7 @@ namespace CastRightCatchInvManagement
             base.OnMouseEnter(e);
         }
 
+        /// <summary>Clear hover and pressed gold when the pointer leaves.</summary>
         protected override void OnMouseLeave(EventArgs e)
         {
             _hover = false;
@@ -1377,15 +1490,19 @@ namespace CastRightCatchInvManagement
             base.OnMouseLeave(e);
         }
 
+        /// <summary>Raise Click only when this window has history in that direction.</summary>
         protected override void OnClick(EventArgs e)
         {
+            // Empty history must not fire Click subscribers.
             if (!_usable)
                 return;
             base.OnClick(e);
         }
 
+        /// <summary>Show the pressed navy chevron on a usable left-click.</summary>
         protected override void OnMouseDown(MouseEventArgs e)
         {
+            // Pressed gold is only for a live history target.
             if (e.Button == MouseButtons.Left && _usable)
             {
                 _down = true;
@@ -1395,6 +1512,7 @@ namespace CastRightCatchInvManagement
             base.OnMouseDown(e);
         }
 
+        /// <summary>Clear the pressed state even if the pointer is no longer over the button.</summary>
         protected override void OnMouseUp(MouseEventArgs e)
         {
             _down = false;
@@ -1402,6 +1520,7 @@ namespace CastRightCatchInvManagement
             base.OnMouseUp(e);
         }
 
+        /// <summary>Draw a gold, hover, pressed, or faded chevron.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -1426,6 +1545,7 @@ namespace CastRightCatchInvManagement
             float cy = Height / 2f;
             float dx = 6.5f;
             float dy = 8f;
+            // Left chevron for back; right chevron for forward.
             if (_back)
             {
                 e.Graphics.DrawLines(pen, new[]

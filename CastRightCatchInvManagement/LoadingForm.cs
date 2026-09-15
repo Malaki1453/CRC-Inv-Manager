@@ -8,6 +8,7 @@ namespace CastRightCatchInvManagement
         private readonly Label _status;
         private readonly WaitSpinner _spinner;
 
+        /// <summary>Centered navy splash shown before sign-in and the workspace.</summary>
         public LoadingForm()
         {
             Text = "Cast Right Catch Inventory";
@@ -66,10 +67,13 @@ namespace CastRightCatchInvManagement
             Controls.Add(gold);
         }
 
+        /// <summary>Update the status line from any thread without throwing if the splash closed.</summary>
         public void SetStatus(string text)
         {
+            // User may have closed the splash while data was still loading.
             if (IsDisposed)
                 return;
+            // LoadData and settings run off the UI thread.
             if (InvokeRequired)
             {
                 BeginInvoke(() => SetStatus(text));
@@ -88,6 +92,7 @@ namespace CastRightCatchInvManagement
         private readonly System.Windows.Forms.Timer _timer;
         private float _angle;
 
+        /// <summary>16ms timer drives a rotating gold arc.</summary>
         public WaitSpinner()
         {
             SetStyle(
@@ -105,19 +110,23 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Start the arc animation once the native handle exists.</summary>
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
             _timer.Start();
         }
 
+        /// <summary>Stop the animation timer with the control.</summary>
         protected override void Dispose(bool disposing)
         {
+            // Drop the animation timer with the control so it does not tick after close.
             if (disposing)
                 _timer.Dispose();
             base.Dispose(disposing);
         }
 
+        /// <summary>Dim gold ring plus a rotating gold sweep.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -142,6 +151,7 @@ namespace CastRightCatchInvManagement
     /// <summary>Modal spinner while a long action (SMTP send) runs off the UI thread.</summary>
     internal sealed class WaitForm : Form
     {
+        /// <summary>Show a blocking spinner, run work on a worker thread, then return the result.</summary>
         public static T Run<T>(IWin32Window? owner, string status, Func<T> work)
         {
             using var form = new WaitForm(status);
@@ -155,18 +165,22 @@ namespace CastRightCatchInvManagement
                 }
                 catch (Exception ex)
                 {
+                    // Capture so the caller sees the original exception after the dialog closes.
                     error = ex;
                 }
 
+                // Work finished (or failed); close unless the user already dismissed it.
                 if (!form.IsDisposed)
                     form.Close();
             };
             form.ShowDialog(owner);
+            // Re-throw after the UI is gone so callers can show their own error.
             if (error != null)
                 throw error;
             return result!;
         }
 
+        /// <summary>Navy modal with spinner; no close box so the work cannot be cancelled mid-send.</summary>
         private WaitForm(string status)
         {
             Text = "Please wait";

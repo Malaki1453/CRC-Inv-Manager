@@ -5,6 +5,7 @@ namespace CastRightCatchInvManagement
     {
         private DataGridView _grid = null!;
 
+        /// <summary>Register this page and build the user grid (now redirected to Admin).</summary>
         public ItUsersForm()
         {
             Navigator.Register(AppPage.ItUsers, this);
@@ -17,6 +18,7 @@ namespace CastRightCatchInvManagement
             Navigator.GoTo(AppPage.Admin);
         }
 
+        /// <summary>Lay out add-user, IT/admins, and the user grid.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
@@ -60,12 +62,14 @@ namespace CastRightCatchInvManagement
             _grid.AllowUserToOrderColumns = false;
             _grid.CellDoubleClick += (_, e) =>
             {
+                // Header clicks are not a user to edit.
                 if (e.RowIndex < 0)
                     return;
                 EditUser(RowUser(e.RowIndex));
             };
             _grid.CellMouseClick += (_, e) =>
             {
+                // Context menu is only for an existing user row.
                 if (e.Button != MouseButtons.Right || e.RowIndex < 0)
                     return;
                 _grid.ClearSelection();
@@ -73,12 +77,15 @@ namespace CastRightCatchInvManagement
                 string user = RowUser(e.RowIndex);
                 var menu = new ContextMenuStrip();
                 menu.Items.Add("Edit user", null, (_, _) => EditUser(user));
+                // Table access is administrator-only.
                 if (AppState.IsAdmin)
                     menu.Items.Add("Table access", null, (_, _) =>
                     {
+                        // Reload so group/override changes show immediately.
                         if (UserAccessForm.ShowFor(FindForm(), user))
                             LoadUsers();
                     });
+                // You change your own password; IT resets everyone else.
                 if (user.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
                     menu.Items.Add("Change my password", null, (_, _) =>
                     {
@@ -100,6 +107,7 @@ namespace CastRightCatchInvManagement
             LoadUsers();
         }
 
+        /// <summary>Username in column 0 of this grid row.</summary>
         private string RowUser(int row)
         {
             return _grid.Rows[row].Cells[0].Value?.ToString()?.Trim() ?? "";
@@ -129,6 +137,7 @@ namespace CastRightCatchInvManagement
         private void EditUser(string? username)
         {
             using var form = new ItUserEditForm(username);
+            // Refresh after a successful add/edit so the grid matches the database.
             if (form.ShowDialog(FindForm()) == DialogResult.OK)
                 LoadUsers();
         }
@@ -141,10 +150,12 @@ namespace CastRightCatchInvManagement
                 "Reset password",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
+            // Accidental reset would email a new password they did not ask for.
             if (confirm != DialogResult.Yes)
                 return;
 
             string temp = Accounts.GenerateTemporaryPassword();
+            // Policy or missing-user failures must not email a password we did not store.
             if (!Accounts.SetPassword(username, temp, out string error, mustChange: true))
             {
                 MessageBox.Show(error, "Reset password", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -165,9 +176,11 @@ namespace CastRightCatchInvManagement
                 "Delete user",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning);
+            // Accidental delete would lock that person out.
             if (confirm != DialogResult.Yes)
                 return;
 
+            // Last IT/admin or self-delete is rejected with a message.
             if (!Accounts.DeleteUser(username, out string error))
             {
                 MessageBox.Show(error, "Delete user", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -184,6 +197,7 @@ namespace CastRightCatchInvManagement
         private ListBox _admins = null!;
         private ListBox _it = null!;
 
+        /// <summary>Register this page and build the admin/IT lists (now redirected to Admin).</summary>
         public ItAccessForm()
         {
             Navigator.Register(AppPage.ItAccess, this);
@@ -196,6 +210,7 @@ namespace CastRightCatchInvManagement
             Navigator.GoTo(AppPage.Admin);
         }
 
+        /// <summary>Lay out administrator and IT role lists.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
@@ -238,6 +253,7 @@ namespace CastRightCatchInvManagement
             LoadLists();
         }
 
+        /// <summary>One role list with Add/Remove for administrators or IT.</summary>
         private CardPanel RoleCard(string title, bool admin, out ListBox list)
         {
             var card = new CardPanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, admin ? 8 : 0, 0) };
@@ -278,12 +294,14 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Reload administrator and IT names from admins.json.</summary>
         private void LoadLists()
         {
             Fill(_admins, Accounts.ReadAdmins());
             Fill(_it, Accounts.ReadIt());
         }
 
+        /// <summary>Replace list-box items with sorted usernames.</summary>
         private static void Fill(ListBox box, List<string> names)
         {
             box.Items.Clear();
@@ -303,6 +321,7 @@ namespace CastRightCatchInvManagement
                 .Where(name => !existing.Contains(name))
                 .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            // Nothing to pick means every account already has this role.
             if (choices.Length == 0)
             {
                 MessageBox.Show(
@@ -314,9 +333,11 @@ namespace CastRightCatchInvManagement
             }
 
             string? picked = PickUser(choices, admin ? "Add administrator" : "Add IT user");
+            // Cancel on the picker leaves roles unchanged.
             if (string.IsNullOrWhiteSpace(picked))
                 return;
 
+            // Keep admins.json and the access-group membership in sync.
             if (admin)
             {
                 Accounts.AddAdmin(picked);
@@ -328,6 +349,7 @@ namespace CastRightCatchInvManagement
                 SqliteInventory.AddAccessGroup(picked, AccessGroups.IT);
             }
 
+            // Live-refresh sidebar rights when granting a role to yourself.
             if (picked.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
             {
                 AppState.IsAdmin = Accounts.IsAdmin(picked);
@@ -342,22 +364,27 @@ namespace CastRightCatchInvManagement
         /// <summary>Revoke administrator or IT from the selected name. Blocks removing the last of either role.</summary>
         private void RemoveRole(bool admin, ListBox box)
         {
+            // Remove needs a selected name.
             if (box.SelectedItem is not string username)
                 return;
 
+            // Last remaining admin/IT is blocked inside RemoveAdmin/RemoveIt.
             if (!(admin ? Accounts.RemoveAdmin(username, out string error) : Accounts.RemoveIt(username, out error)))
             {
                 MessageBox.Show(error, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
+            // Drop the matching group so table access follows the role change.
             if (admin)
                 SqliteInventory.RemoveAccessGroup(username, AccessGroups.Admin);
             else
                 SqliteInventory.RemoveAccessGroup(username, AccessGroups.IT);
 
+            // Live-refresh if you removed a role from yourself.
             if (username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
             {
+                // Re-read so a remaining role is not cleared by mistake.
                 if (admin)
                     AppState.IsAdmin = Accounts.IsAdmin(username);
                 else
@@ -369,6 +396,7 @@ namespace CastRightCatchInvManagement
             LoadLists();
         }
 
+        /// <summary>Modal combo to pick a username, or null if they cancel.</summary>
         private string? PickUser(string[] choices, string title)
         {
             using var form = new Form
@@ -390,6 +418,7 @@ namespace CastRightCatchInvManagement
             };
             Theme.StyleCombo(box);
             box.Items.AddRange(choices);
+            // Preselect the first name so Enter adds without extra clicks.
             if (box.Items.Count > 0)
                 box.SelectedIndex = 0;
             var ok = new Button
@@ -429,6 +458,7 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _password;
         private readonly TextBox _confirm;
 
+        /// <summary>Add a user, or edit name/email/groups for an existing login.</summary>
         public ItUserEditForm(string? username, bool passwordOnly = false)
         {
             _username = string.IsNullOrWhiteSpace(username) ? null : username.Trim();
@@ -443,6 +473,7 @@ namespace CastRightCatchInvManagement
             ClientSize = new Size(400, add ? 470 : 430);
             BackColor = Theme.Cream;
             Font = Theme.Body;
+            // Match other CRC dialogs when the brand icon is present.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
 
@@ -483,11 +514,13 @@ namespace CastRightCatchInvManagement
             };
             Controls.Add(hint);
 
+            // Prefill when editing so IT changes only what they need.
             if (!add)
             {
                 var account = Accounts.List().FirstOrDefault(a =>
                     a.Username.Equals(_username, StringComparison.OrdinalIgnoreCase));
                 _user.Text = _username;
+                // Stale usernames still allow a rename even if the list row vanished.
                 if (account != null)
                 {
                     _name.Text = account.DisplayName;
@@ -498,6 +531,7 @@ namespace CastRightCatchInvManagement
                 foreach (var group in assigned)
                 {
                     int index = _groups.Items.IndexOf(group);
+                    // Groups renamed since assignment still need to show as checked.
                     if (index < 0)
                         index = _groups.Items.Add(group);
                     _groups.SetItemChecked(index, true);
@@ -513,6 +547,7 @@ namespace CastRightCatchInvManagement
             Theme.StyleGoldButton(save);
             save.Click += (_, _) =>
             {
+                // Stay open on validation errors so they can fix the form.
                 if (Save())
                     DialogResult = DialogResult.OK;
             };
@@ -533,14 +568,17 @@ namespace CastRightCatchInvManagement
         /// <summary>Create or update this user. New users get a temp password emailed when possible.</summary>
         private bool Save()
         {
+            // Block non-admins from assigning or removing Admin.
             if (!CanAssignSelectedGroup(_username))
                 return false;
 
             string user = _user.Text.Trim();
             string error;
+            // New user: create login, assign groups, then email the temp password.
             if (_username == null)
             {
                 string email = _email.Text.Trim();
+                // Optional email must still look like an address if they typed one.
                 if (email.Length > 0 && !email.Contains('@'))
                 {
                     MessageBox.Show("That email does not look right.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -554,6 +592,7 @@ namespace CastRightCatchInvManagement
                     return false;
                 }
 
+                // Do not email a login if group assignment failed after insert.
                 if (!ApplySelectedGroup(user))
                     return false;
                 SendLoginEmail(this, email, user, password);
@@ -569,6 +608,7 @@ namespace CastRightCatchInvManagement
             SqliteInventory.UpdateAccount(user, _name.Text.Trim(), _email.Text.Trim());
             if (!ApplySelectedGroup(user))
                 return false;
+            // Keep the signed-in session matching a self-edit or rename.
             if (user.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase) ||
                 _username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
             {
@@ -582,12 +622,14 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>Checked group names, skipping blank items.</summary>
         private List<string> SelectedGroups()
         {
             var selected = new List<string>();
             foreach (var item in _groups.CheckedItems)
             {
                 string name = item?.ToString()?.Trim() ?? "";
+                // Ignore empty checked items from a stale list box.
                 if (name.Length > 0)
                     selected.Add(name);
             }
@@ -595,6 +637,7 @@ namespace CastRightCatchInvManagement
             return selected;
         }
 
+        /// <summary>False when a non-admin tries to add or remove the Admin group.</summary>
         private bool CanAssignSelectedGroup(string? username)
         {
             var selected = SelectedGroups();
@@ -603,6 +646,7 @@ namespace CastRightCatchInvManagement
                 : SqliteInventory.GetAccessGroups(username);
             bool addingAdmin = selected.Any(AccessGroups.IsAdmin) && !previous.Any(AccessGroups.IsAdmin);
             bool removingAdmin = previous.Any(AccessGroups.IsAdmin) && !selected.Any(AccessGroups.IsAdmin);
+            // Only administrators may change Admin membership.
             if ((addingAdmin || removingAdmin) && !AppState.IsAdmin)
             {
                 MessageBox.Show(
@@ -618,14 +662,17 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>Write checked groups and keep admin/IT role lists in sync.</summary>
         private bool ApplySelectedGroup(string username)
         {
             if (!CanAssignSelectedGroup(username))
                 return false;
             var selected = SelectedGroups();
             SqliteInventory.SetAccessGroups(username, selected);
+            // Admin group also grants administrator in admins.json.
             if (selected.Any(AccessGroups.IsAdmin))
                 Accounts.AddAdmin(username);
+            // IT group also grants IT in admins.json.
             if (selected.Any(AccessGroups.IsIt))
                 Accounts.AddIt(username);
             return true;
@@ -635,6 +682,7 @@ namespace CastRightCatchInvManagement
         {
             bool sent;
             string error;
+            // No mailbox: skip the spinner and go straight to the copy dialog.
             if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
             {
                 sent = Mailer.TrySendNewUserDetails(email, username, password, out error);
@@ -648,6 +696,7 @@ namespace CastRightCatchInvManagement
                 });
             }
 
+            // Success toast when we have a control host; otherwise a simple message box.
             if (sent)
             {
                 if (owner is Control host)
@@ -666,6 +715,7 @@ namespace CastRightCatchInvManagement
             form.ShowDialog(owner);
         }
 
+        /// <summary>Caption plus styled text box on this dialog.</summary>
         private TextBox Field(string caption, int x, int y, int width)
         {
             var label = new Label { Text = caption, Location = new Point(x, y), AutoSize = true };
@@ -685,6 +735,7 @@ namespace CastRightCatchInvManagement
     /// <summary>Shows the new login so IT can copy it when email is not available.</summary>
     internal sealed class LoginShareForm : Form
     {
+        /// <summary>Show the temporary login so IT can copy it when email is missing or failed.</summary>
         public LoginShareForm(
             string email,
             string username,
@@ -702,11 +753,13 @@ namespace CastRightCatchInvManagement
             ClientSize = new Size(560, 500);
             BackColor = Theme.Cream;
             Font = Theme.Body;
+            // Match other CRC dialogs when the brand icon is present.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
 
             string body = Mailer.NewUserBody(username, password);
             string status;
+            // Tell IT whether they still need to copy the password by hand.
             if (emailed)
                 status = "A login email was sent to " + email + ". You can also copy the details below.";
             else if (string.IsNullOrWhiteSpace(email))
@@ -772,6 +825,7 @@ namespace CastRightCatchInvManagement
                 }
                 catch
                 {
+                    // Clipboard can be locked by another app; offer manual copy.
                     MessageBox.Show(
                         this,
                         "Could not copy. Select the text and press Ctrl+C.",

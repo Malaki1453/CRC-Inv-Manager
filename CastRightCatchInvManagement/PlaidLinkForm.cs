@@ -15,6 +15,7 @@ namespace CastRightCatchInvManagement
         public string AccountMask { get; private set; } = "";
         public string AccountId { get; private set; } = "";
 
+        /// <summary>Show Plaid Link for this token and wait for success or cancel.</summary>
         public PlaidLinkForm(string linkToken)
         {
             _linkToken = linkToken;
@@ -23,12 +24,14 @@ namespace CastRightCatchInvManagement
             Size = new Size(480, 720);
             MinimumSize = new Size(400, 560);
             BackColor = Theme.NavyDark;
+            // Use the app icon when the brand pack is present.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
             Controls.Add(_web);
             Shown += async (_, _) => await StartAsync();
         }
 
+        /// <summary>Create the WebView2 host and load Plaid Link HTML.</summary>
         private async Task StartAsync()
         {
             try
@@ -48,6 +51,7 @@ namespace CastRightCatchInvManagement
             }
             catch (Exception ex)
             {
+                // WebView2 missing or blocked — cancel so Connect bank can report the error.
                 MessageBox.Show(
                     "Could not open the bank login window.\n\n" + ex.Message,
                     "Connect bank",
@@ -58,14 +62,17 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Read success metadata or treat a Plaid exit as cancel.</summary>
         private void HandleMessage(string? json)
         {
+            // Ignore empty posts from the page before Link is ready.
             if (string.IsNullOrWhiteSpace(json))
                 return;
             try
             {
                 using var doc = System.Text.Json.JsonDocument.Parse(json);
                 var root = doc.RootElement;
+                // User closed Link without connecting a bank.
                 if (root.TryGetProperty("exit", out var exit) && exit.GetBoolean())
                 {
                     DialogResult = DialogResult.Cancel;
@@ -75,9 +82,11 @@ namespace CastRightCatchInvManagement
 
                 PublicToken = root.TryGetProperty("public_token", out var token)
                     ? token.GetString() ?? "" : "";
+                // Institution name is optional display text for the new account.
                 if (root.TryGetProperty("institution", out var inst) &&
                     inst.TryGetProperty("name", out var iname))
                     InstitutionName = iname.GetString() ?? "";
+                // First selected account is what we store as the live feed source.
                 if (root.TryGetProperty("account", out var account))
                 {
                     AccountId = account.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "";
@@ -90,11 +99,13 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Bad JSON from the page must not leave a half-connected bank.
                 DialogResult = DialogResult.Cancel;
                 Close();
             }
         }
 
+        /// <summary>Inline HTML that opens Plaid Link and posts the public_token back.</summary>
         private static string BuildHtml(string linkToken)
         {
             string token = System.Text.Json.JsonSerializer.Serialize(linkToken);

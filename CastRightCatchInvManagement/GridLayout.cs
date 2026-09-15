@@ -7,30 +7,38 @@ namespace CastRightCatchInvManagement
     {
         private static bool _applying;
 
+        /// <summary>Pause persistence while columns are being applied so display-index events do not rewrite prefs.</summary>
         public static void BeginUpdate() => _applying = true;
 
+        /// <summary>Resume saving column layout after a bulk apply.</summary>
         public static void EndUpdate() => _applying = false;
 
+        /// <summary>Restore this user's last visible columns and order for the table, if any.</summary>
         public static void Apply(DataGridView grid, string baseName)
         {
+            // No table or folder means there is nothing to restore.
             if (string.IsNullOrWhiteSpace(baseName) ||
                 string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 return;
 
             var names = Load(baseName);
+            // First visit uses the page's built-in summary columns.
             if (names.Count == 0)
                 return;
 
             ApplyNames(grid, names);
         }
 
+        /// <summary>Restore the saved default layout for this table and persist it as the current layout.</summary>
         public static bool ApplyDefault(DataGridView grid)
         {
+            // The grid's ColumnSearch tag holds the table name used as the prefs key.
             if (grid.Tag is not ColumnSearch search ||
                 string.IsNullOrWhiteSpace(search.FileBaseName))
                 return false;
 
             var names = LoadDefault(search.FileBaseName);
+            // No saved default: callers fall back to the page's summary columns.
             if (names.Count == 0)
                 return false;
 
@@ -39,18 +47,22 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>Store the current visible columns as this user's default layout for the table.</summary>
         public static bool SaveDefault(DataGridView grid)
         {
+            // Ignore events fired while ApplyNames is rearranging columns.
             if (_applying)
                 return false;
             if (grid.Tag is not ColumnSearch search ||
                 string.IsNullOrWhiteSpace(search.FileBaseName) ||
                 string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 return false;
+            // Layout defaults belong to a signed-in user, not a locked kiosk.
             if (!AppState.SignedIn)
                 return false;
 
             var names = VisibleNames(grid);
+            // Do not overwrite a saved default with an empty column set.
             if (names.Count == 0)
                 return false;
 
@@ -64,12 +76,15 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Prefs write can fail on a locked or remote-down database; keep the grid usable.
                 return false;
             }
         }
 
+        /// <summary>Persist the current visible columns and order for this user and table.</summary>
         public static void Save(DataGridView grid)
         {
+            // Ignore events fired while ApplyNames is rearranging columns.
             if (_applying)
                 return;
             if (grid.Tag is not ColumnSearch search ||
@@ -91,6 +106,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Show only the named columns, in that order, leaving the add-column button last.</summary>
         private static void ApplyNames(DataGridView grid, List<string> names)
         {
             _applying = true;
@@ -99,6 +115,7 @@ namespace CastRightCatchInvManagement
                 var wanted = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
                 foreach (DataGridViewColumn col in grid.Columns)
                 {
+                    // The trailing "+" column is not part of saved layouts.
                     if (Theme.IsAddColumn(col))
                         continue;
                     col.Visible = wanted.Contains(Key(col)) || wanted.Contains(col.HeaderText);
@@ -108,6 +125,7 @@ namespace CastRightCatchInvManagement
                 foreach (var name in names)
                 {
                     var col = Find(grid, name);
+                    // Saved names may refer to columns that this table no longer has.
                     if (col == null)
                         continue;
                     col.Visible = true;
@@ -115,6 +133,7 @@ namespace CastRightCatchInvManagement
                 }
 
                 var add = grid.Columns.Cast<DataGridViewColumn>().FirstOrDefault(Theme.IsAddColumn);
+                // Keep the add-column button at the far right after restoring order.
                 if (add != null)
                     add.DisplayIndex = grid.Columns.Count - 1;
             }
@@ -124,16 +143,19 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Save layout whenever the user drags a data column to a new position.</summary>
         public static void Attach(DataGridView grid)
         {
             grid.ColumnDisplayIndexChanged += (_, e) =>
             {
+                // The add-column button is not a user layout column.
                 if (e.Column == null || Theme.IsAddColumn(e.Column))
                     return;
                 Save(grid);
             };
         }
 
+        /// <summary>Visible data-column keys in display order, excluding the add-column button.</summary>
         private static List<string> VisibleNames(DataGridView grid)
         {
             return grid.Columns.Cast<DataGridViewColumn>()
@@ -144,11 +166,13 @@ namespace CastRightCatchInvManagement
                 .ToList();
         }
 
+        /// <summary>Load this user's current layout, then the shared public layout if none is stored.</summary>
         private static List<string> Load(string baseName)
         {
             try
             {
                 var settings = SqliteInventory.ReadPrefs();
+                // Fall back to a folder-wide layout when this user has never arranged the grid.
                 if (!settings.TryGetValue(CurrentKey(baseName), out var json) ||
                     string.IsNullOrWhiteSpace(json))
                 {
@@ -162,10 +186,12 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Corrupt prefs should not block opening the table.
                 return new List<string>();
             }
         }
 
+        /// <summary>Load this user's saved default column set, or empty if none exists.</summary>
         private static List<string> LoadDefault(string baseName)
         {
             try
@@ -179,6 +205,7 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Corrupt default JSON is treated as "no default saved".
                 return new List<string>();
             }
         }
@@ -187,10 +214,12 @@ namespace CastRightCatchInvManagement
 
         private static string DefaultKey(string baseName) => "grid_columns_default_" + baseName;
 
+        /// <summary>Find a data column by stored key or header text, skipping the add-column button.</summary>
         private static DataGridViewColumn? Find(DataGridView grid, string name)
         {
             foreach (DataGridViewColumn col in grid.Columns)
             {
+                // The add-column button is never a layout target.
                 if (Theme.IsAddColumn(col))
                     continue;
                 if (Key(col).Equals(name, StringComparison.OrdinalIgnoreCase) ||
@@ -201,9 +230,11 @@ namespace CastRightCatchInvManagement
             return null;
         }
 
+        /// <summary>Stable column id: tag (file header), else Name, else HeaderText.</summary>
         private static string Key(DataGridViewColumn col)
         {
             string tag = col.Tag as string ?? "";
+            // Tag holds the file header; skip the add-column sentinel.
             if (tag.Length > 0 && tag != Theme.AddColumnTag)
                 return tag;
             return col.Name.Length > 0 ? col.Name : col.HeaderText;

@@ -5,6 +5,7 @@ namespace CastRightCatchInvManagement
     /// </summary>
     public partial class Debits : Form, INavigationPage
     {
+        /// <summary>Build the Debits grid page and load current vendor debit claims.</summary>
         public Debits()
         {
             InitializeComponent();

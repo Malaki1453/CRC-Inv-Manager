@@ -7,10 +7,12 @@ namespace CastRightCatchInvManagement
         private readonly NavSidebar _sidebar;
         private readonly NavHistoryBar _history;
 
+        /// <summary>Attach the sidebar and open Home, or Settings if no data folder is set.</summary>
         public MainForm()
         {
             InitializeComponent();
 
+            // Use the packaged seal icon when the asset pack is present.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
             WindowChrome.Apply(this);
@@ -25,6 +27,7 @@ namespace CastRightCatchInvManagement
 
             AppLock.Changed += UpdateHeader;
 
+            // No shared folder yet: open Settings so the user can pick one.
             if (AppLock.HasFolder())
                 Navigator.GoTo(AppPage.Dashboard);
             else
@@ -33,17 +36,21 @@ namespace CastRightCatchInvManagement
             UpdateHeader();
         }
 
+        /// <summary>Unsubscribe from shared-settings changes so a closed window is not refreshed.</summary>
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
             AppLock.Changed -= UpdateHeader;
             base.OnFormClosed(e);
         }
 
+        /// <summary>Sync title, subtitle, and history buttons to the page shown in this window.</summary>
         private void UpdateHeader()
         {
+            // Closed while a folder-change callback was still queued.
             if (IsDisposed)
                 return;
 
+            // AppLock.Changed can fire from a background load.
             if (InvokeRequired)
             {
                 BeginInvoke(UpdateHeader);
@@ -55,6 +62,7 @@ namespace CastRightCatchInvManagement
             panelHeader.Visible = !home;
             panelFooter.Visible = !home;
             lblPageTitle.Text = home ? "" : UiStyle.PageTitle(page);
+            // Home uses its own hero; empty host after a steal needs a prompt.
             lblPageSubtitle.Text = home
                 ? ""
                 : _workspace.CurrentPage == null

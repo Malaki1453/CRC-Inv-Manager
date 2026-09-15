@@ -55,12 +55,14 @@ namespace CastRightCatchInvManagement
             Credits
         };
 
+        /// <summary>Legacy CSV name for a table in the current term: {table}_{yyyy-MM-dd}.csv.</summary>
         public static string GetFileName(string baseName)
         {
             DateTime start = AppState.TermStartDate ?? DateTime.Today;
             return $"{baseName}_{start:yyyy-MM-dd}.csv";
         }
 
+        /// <summary>Full path of that leftover CSV inside the chosen inventory folder.</summary>
         public static string GetPath(string baseName)
         {
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
@@ -69,8 +71,10 @@ namespace CastRightCatchInvManagement
             return Path.Combine(AppState.InventoryFolder, GetFileName(baseName));
         }
 
+        /// <summary>True when the live database exists locally, or when a remote session is connected.</summary>
         public static bool Exists(string baseName)
         {
+            // Remote clients never see a folder file; the server owns the tables.
             if (DataLink.IsRemote)
             {
                 SqliteInventory.EnsureCreated();
@@ -84,6 +88,7 @@ namespace CastRightCatchInvManagement
             return SqliteInventory.GetPath() != null;
         }
 
+        /// <summary>Newest leftover CSV for this table in the folder, by parsed term date.</summary>
         public static string? FindCurrentFile(string baseName)
         {
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) ||
@@ -110,10 +115,12 @@ namespace CastRightCatchInvManagement
             return bestPath;
         }
 
+        /// <summary>Set TermStartDate from the newest SQLite term, or leftover CSV names if the database is empty.</summary>
         public static void SyncTermStartFromFiles()
         {
             DateTime? latest = SqliteInventory.LatestTerm();
 
+            // Empty new databases still inherit a term from leftover CSVs in the folder.
             if (latest == null &&
                 !string.IsNullOrWhiteSpace(AppState.InventoryFolder) &&
                 Directory.Exists(AppState.InventoryFolder))
@@ -136,6 +143,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>CSV names that have no matching table yet, after syncing the term date.</summary>
         public static List<string> GetMissingFiles()
         {
             SyncTermStartFromFiles();
@@ -150,6 +158,7 @@ namespace CastRightCatchInvManagement
             return missing;
         }
 
+        /// <summary>SQLite table used by a navigation page, or empty for pages that are not tables.</summary>
         public static string GetPageFileBaseName(AppPage page)
         {
             return page switch
@@ -169,11 +178,13 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Status-bar file label for the page currently on screen.</summary>
         public static string? GetActiveFileName()
         {
             return GetDisplayedFileName(Navigator.CurrentPage);
         }
 
+        /// <summary>Status-bar label: live db + table + term, or archive + live when Old is on.</summary>
         public static string? GetDisplayedFileName(AppPage page)
         {
             string baseName = GetPageFileBaseName(page);
@@ -187,6 +198,7 @@ namespace CastRightCatchInvManagement
             return $"{SqliteInventory.FileName}  ·  {baseName}  ·  {term}";
         }
 
+        /// <summary>Live database path, or the archive path while Old Inventory is on.</summary>
         public static string? GetActiveFilePath()
         {
             return AppState.ViewingOldInventory
@@ -194,11 +206,13 @@ namespace CastRightCatchInvManagement
                 : SqliteInventory.GetPath();
         }
 
+        /// <summary>True when the live or archive database file exists for the current view.</summary>
         public static bool ActiveFileExists()
         {
             return GetActiveFilePath() != null;
         }
 
+        /// <summary>Folder for leftover invoice PDFs next to the database, or null if no folder is chosen.</summary>
         public static string? GetStoredInvoicesFolder()
         {
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
@@ -207,6 +221,7 @@ namespace CastRightCatchInvManagement
             return Path.Combine(AppState.InventoryFolder, StoredInvoicesFolderName);
         }
 
+        /// <summary>Create the Stored Invoices folder when a data folder is selected.</summary>
         public static void EnsureStoredInvoicesFolder()
         {
             string? path = GetStoredInvoicesFolder();
@@ -216,6 +231,7 @@ namespace CastRightCatchInvManagement
             Directory.CreateDirectory(path);
         }
 
+        /// <summary>Open the stored invoice PDF for this number, or explain why none was found.</summary>
         public static void OpenStoredInvoice(string? invoiceNumber)
         {
             string key = (invoiceNumber ?? "").Trim();
@@ -243,17 +259,20 @@ namespace CastRightCatchInvManagement
             OpenPdf(path, PdfKindInvoice, key);
         }
 
+        /// <summary>Disk or database path of a stored sales-order PDF, or null.</summary>
         public static string? FindStoredSalesOrder(string? soNumber)
         {
             return FindStoredPdf(PdfKindSalesOrder, soNumber);
         }
 
+        /// <summary>Store a PDF in the database and write a temp copy for the in-app viewer.</summary>
         public static string SaveStoredPdf(string kind, string key, string fileName, byte[] content)
         {
             SqliteInventory.SavePdf(kind, key, fileName, content);
             return WritePdfViewFile(kind, fileName, content);
         }
 
+        /// <summary>Remove a stored PDF from the database, leftover disk copy, and temp viewer files.</summary>
         public static void DeleteStoredPdf(string kind, string? key)
         {
             key = (key ?? "").Trim();
@@ -297,15 +316,18 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>True when the database already has a PDF for this kind and key.</summary>
         public static bool HasStoredPdf(string kind, string? key) =>
             SqliteInventory.HasPdf(kind, (key ?? "").Trim());
 
+        /// <summary>Attached vendor invoice PDF, or the generated purchase PDF, for this PO.</summary>
         public static string? FindPurchaseViewPdf(string? po)
         {
             return FindStoredPdf(PdfKindPurchaseInvoice, po) ??
                    FindStoredPdf(PdfKindPurchase, po);
         }
 
+        /// <summary>Open an attached purchase invoice, else the generated PDF, else offer to create one.</summary>
         public static void ShowPurchasePdf(string po, Action? create)
         {
             po = (po ?? "").Trim();
@@ -329,6 +351,7 @@ namespace CastRightCatchInvManagement
             ShowPdf(PdfKindPurchase, po, "purchase " + po, create);
         }
 
+        /// <summary>Resolve a stored PDF from the database, importing a leftover disk file if needed.</summary>
         public static string? FindStoredPdf(string kind, string? key)
         {
             key = (key ?? "").Trim();
@@ -353,12 +376,14 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Locked leftover files can still be opened from disk.
                 return disk;
             }
 
             return WritePdfViewFile(kind, Path.GetFileName(disk), bytes);
         }
 
+        /// <summary>Open a stored PDF, or ask to create one when none is on file.</summary>
         public static void ShowPdf(string kind, string key, string label, Action? create)
         {
             key = (key ?? "").Trim();
@@ -390,6 +415,7 @@ namespace CastRightCatchInvManagement
             create?.Invoke();
         }
 
+        /// <summary>Find a leftover invoice or sales-order PDF on disk by document number.</summary>
         private static string? FindPdfOnDisk(string kind, string key)
         {
             string? folder = kind == PdfKindInvoice
@@ -416,6 +442,7 @@ namespace CastRightCatchInvManagement
             });
         }
 
+        /// <summary>LocalApplicationData folder for temp copies the in-app PDF viewer opens.</summary>
         private static string PdfViewFolder() =>
             Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -437,6 +464,7 @@ namespace CastRightCatchInvManagement
             return path;
         }
 
+        /// <summary>Existing SO # already assigned to this customer for any of the given purchase lots.</summary>
         public static string? FindExistingSalesOrderNumber(
             IEnumerable<string> purchaseOrders,
             string? customerCode,
@@ -465,6 +493,7 @@ namespace CastRightCatchInvManagement
             return null;
         }
 
+        /// <summary>Open a PDF in the in-app viewer, inferring kind and key from the file name when omitted.</summary>
         public static void OpenPdf(string path, string? kind = null, string? key = null)
         {
             DescribePdf(path, out string title, out string? inferredKind, out string? inferredKey);
@@ -475,6 +504,7 @@ namespace CastRightCatchInvManagement
                 key ?? inferredKey);
         }
 
+        /// <summary>Infer invoice vs sales-order title, kind, and document number from path and file name.</summary>
         public static void DescribePdf(string path, out string title, out string? kind, out string? key)
         {
             string stem = Path.GetFileNameWithoutExtension(path) ?? "";
@@ -504,6 +534,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Document number after a prefix such as "Invoice ", stopping at " - ".</summary>
         private static string KeyAfterPrefix(string stem, string prefix)
         {
             if (!stem.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
@@ -516,6 +547,7 @@ namespace CastRightCatchInvManagement
             return rest.Trim();
         }
 
+        /// <summary>Open the stored sales-order PDF, or explain why none was found.</summary>
         public static void OpenStoredSalesOrder(string? soNumber)
         {
             string? path = FindStoredSalesOrder(soNumber);
@@ -543,6 +575,7 @@ namespace CastRightCatchInvManagement
             OpenPdf(path, PdfKindSalesOrder, soNumber);
         }
 
+        /// <summary>Folder for leftover sales-order PDFs next to the database, or null if no folder is chosen.</summary>
         public static string? GetStoredSalesOrdersFolder()
         {
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
@@ -551,6 +584,7 @@ namespace CastRightCatchInvManagement
             return Path.Combine(AppState.InventoryFolder, StoredSalesOrdersFolderName);
         }
 
+        /// <summary>Create the Stored Sales Orders folder when a data folder is selected.</summary>
         public static void EnsureStoredSalesOrdersFolder()
         {
             string? path = GetStoredSalesOrdersFolder();
@@ -560,6 +594,7 @@ namespace CastRightCatchInvManagement
             Directory.CreateDirectory(path);
         }
 
+        /// <summary>Create the database, import leftover CSVs/PDFs, and default the term date if needed.</summary>
         public static void EnsureFilesExistOrAsk()
         {
             if (DataLink.IsRemote)
@@ -584,6 +619,7 @@ namespace CastRightCatchInvManagement
             SyncTermStartFromFiles();
         }
 
+        /// <summary>Ensure each named table exists with its expected columns.</summary>
         public static void CreateMissingFiles(IEnumerable<string> missingBaseNames)
         {
             SqliteInventory.EnsureCreated();
@@ -631,6 +667,7 @@ namespace CastRightCatchInvManagement
             NotifyDataChanged();
         }
 
+        /// <summary>Canonical CSV/SQLite column list for a table, used to create schema and validate imports.</summary>
         public static string GetExpectedHeader(string baseName)
         {
             return baseName switch
@@ -673,6 +710,7 @@ namespace CastRightCatchInvManagement
         public static List<Dictionary<string, string>> VisibleRecords(string baseName) =>
             ReadRecords(baseName);
 
+        /// <summary>Visible rows for a table, adding newer customer/vendor columns when missing.</summary>
         public static List<Dictionary<string, string>> ReadRecords(string baseName)
         {
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
@@ -694,11 +732,13 @@ namespace CastRightCatchInvManagement
             return SqliteInventory.ReadUnrestricted(baseName);
         }
 
+        /// <summary>Cell text for a column, or empty when the key is missing.</summary>
         public static string GetRecord(Dictionary<string, string> record, string column)
         {
             return record.TryGetValue(column, out var value) ? value ?? "" : "";
         }
 
+        /// <summary>Keep only digit characters, used for routing and account numbers.</summary>
         public static string DigitsOnly(string? text)
         {
             if (string.IsNullOrEmpty(text))
@@ -707,6 +747,7 @@ namespace CastRightCatchInvManagement
             return new string(chars);
         }
 
+        /// <summary>Show only the last four account digits; short numbers stay unmasked.</summary>
         public static string MaskAccountNumber(string? raw)
         {
             string digits = DigitsOnly(raw);
@@ -717,6 +758,7 @@ namespace CastRightCatchInvManagement
             return "•••• " + digits[^4..];
         }
 
+        /// <summary>Keep the stored account number when the user retyped only the mask or last four digits.</summary>
         public static string ResolveAccountNumber(string typed, string stored)
         {
             string typedDigits = DigitsOnly(typed);
@@ -737,9 +779,11 @@ namespace CastRightCatchInvManagement
             return value.Length == 0 ? RecordLive : value;
         }
 
+        /// <summary>True when the row is queued as a new record awaiting review.</summary>
         public static bool IsWaitingAdd(Dictionary<string, string> record) =>
             StatusOf(record).Equals(RecordWaitingAdd, StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>True when the row is waiting for add, edit, or delete confirmation.</summary>
         public static bool IsWaiting(Dictionary<string, string> record)
         {
             string status = StatusOf(record);
@@ -757,6 +801,7 @@ namespace CastRightCatchInvManagement
 
             bool negative = text.StartsWith('(') && text.EndsWith(')');
             text = text.Replace("$", "").Replace(",", "").Replace("(", "").Replace(")", "").Trim();
+            // Invariant first (CSV), then the PC's culture for typed values.
             if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount) &&
                 !decimal.TryParse(text, NumberStyles.Number, CultureInfo.CurrentCulture, out amount))
                 return 0;
@@ -780,6 +825,7 @@ namespace CastRightCatchInvManagement
             {
                 foreach (var sale in ReadRecords(Sales))
                 {
+                    // Queued adds are not live revenue yet.
                     if (IsWaitingAdd(sale))
                         continue;
                     revenue += ParseMoney(GetRecord(sale, "Amount"));
@@ -794,6 +840,7 @@ namespace CastRightCatchInvManagement
             }
             else if (TableAccess.Can(TableAccess.Invoices))
             {
+                // Users without sales still see issued-invoice totals on Home.
                 foreach (var invoice in ReadRecords(Invoices))
                 {
                     if (IsWaitingAdd(invoice) || IsReceivedInvoice(invoice))
@@ -823,6 +870,7 @@ namespace CastRightCatchInvManagement
             }
 
             int dealCount = TableAccess.Can(TableAccess.Sales) ? deals.Count : 0;
+            // Invoice-only users get a deal count from issued invoices instead of sales lots.
             if (dealCount == 0 && TableAccess.Can(TableAccess.Invoices) && !TableAccess.Can(TableAccess.Sales))
             {
                 foreach (var invoice in ReadRecords(Invoices))
@@ -848,6 +896,7 @@ namespace CastRightCatchInvManagement
                 AppState.ViewingOldInventory);
         }
 
+        /// <summary>Amount still due: the Outstanding cell, or Amount minus Paid when that cell is blank.</summary>
         internal static decimal InvoiceOutstanding(Dictionary<string, string> invoice)
         {
             decimal outstanding = ParseMoney(GetRecord(invoice, "Outstanding"));
@@ -859,6 +908,7 @@ namespace CastRightCatchInvManagement
             return Math.Max(0, amount - paid);
         }
 
+        /// <summary>True for vendor (received) invoices; older rows with a vendor and no customer count as received.</summary>
         internal static bool IsReceivedInvoice(Dictionary<string, string> invoice)
         {
             string type = GetRecord(invoice, InvoiceTypeColumn).Trim();
@@ -870,6 +920,7 @@ namespace CastRightCatchInvManagement
                    GetRecord(invoice, "Customer").Trim().Length == 0;
         }
 
+        /// <summary>Letterhead block: business name (or Cast Right Catch Co.), address, and phone.</summary>
         public static string CompanyAddressBlock()
         {
             var lines = new List<string>();
@@ -886,6 +937,7 @@ namespace CastRightCatchInvManagement
             return string.Join(Environment.NewLine, lines);
         }
 
+        /// <summary>True when status is paid/closed/complete/settled, or outstanding is zero on a billed invoice.</summary>
         internal static bool InvoiceIsClosed(Dictionary<string, string> invoice)
         {
             string status = GetRecord(invoice, "Status").Trim();
@@ -899,6 +951,7 @@ namespace CastRightCatchInvManagement
             return InvoiceOutstanding(invoice) <= 0 && ParseMoney(GetRecord(invoice, "Amount")) > 0;
         }
 
+        /// <summary>True when Due Date parses and is before today; unparseable dates are not treated as late.</summary>
         internal static bool InvoiceIsPastDue(Dictionary<string, string> invoice)
         {
             string dueText = GetRecord(invoice, "Due Date").Trim();
@@ -907,6 +960,7 @@ namespace CastRightCatchInvManagement
             return due.Date < DateTime.Today;
         }
 
+        /// <summary>First non-empty cell among the given columns, for party names that use several headers.</summary>
         public static string GetRecordAny(Dictionary<string, string> record, params string[] columns)
         {
             foreach (var column in columns)
@@ -919,6 +973,7 @@ namespace CastRightCatchInvManagement
             return "";
         }
 
+        /// <summary>Uppercase PO/SO key with whitespace removed so CRC26-10001 matches CRC26 - 10001.</summary>
         public static string NormalizePo(string? po)
         {
             if (string.IsNullOrWhiteSpace(po))
@@ -927,11 +982,13 @@ namespace CastRightCatchInvManagement
             return new string(po.Where(c => !char.IsWhiteSpace(c)).ToArray()).ToUpperInvariant();
         }
 
+        /// <summary>First purchase row whose PO # matches, allowing a prefix fallback.</summary>
         public static Dictionary<string, string>? FindPurchaseByPo(string? poNumber)
         {
             return FindByNormalized(PurchaseSales, "PO #", poNumber);
         }
 
+        /// <summary>Every purchase line on this PO (one row per item).</summary>
         public static List<Dictionary<string, string>> FindPurchasesByPo(string? poNumber)
         {
             var result = new List<Dictionary<string, string>>();
@@ -949,6 +1006,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Every sale whose customer PO matches <paramref name="poNumber"/>.</summary>
         public static List<Dictionary<string, string>> FindSalesByPo(string? poNumber)
         {
             var result = new List<Dictionary<string, string>>();
@@ -971,6 +1029,7 @@ namespace CastRightCatchInvManagement
         /// </summary>
         public static string SalePo(Dictionary<string, string> record)
         {
+            // Current sales schema has Lot #; PO # on that row is the customer PO.
             if (record.ContainsKey("Lot #"))
                 return GetRecord(record, "PO #").Trim();
 
@@ -988,15 +1047,18 @@ namespace CastRightCatchInvManagement
         public static string SaleLot(Dictionary<string, string> record)
         {
             string lot = GetRecord(record, "Lot #").Trim();
+            // Lot # is the purchase PO that this sale should draw from.
             if (lot.Length > 0)
                 return lot;
 
+            // Older rows stored the customer PO in Customer PO and the sale PO # may not be the purchase lot.
             if (GetRecord(record, "Customer PO").Trim().Length > 0)
                 return GetRecord(record, "PO #").Trim();
 
             return "";
         }
 
+        /// <summary>First sale matching a customer PO, optional customer, and optional item.</summary>
         public static Dictionary<string, string>? FindSaleByPo(
             string? poNumber,
             string? customerCode = null,
@@ -1006,6 +1068,7 @@ namespace CastRightCatchInvManagement
             return FindSale(poNumber, "PO #", customerCode, customerName, 3, itemCode);
         }
 
+        /// <summary>First sale matching an SO #, optional customer, and optional item.</summary>
         public static Dictionary<string, string>? FindSaleBySo(
             string? soNumber,
             string? customerCode = null,
@@ -1015,6 +1078,7 @@ namespace CastRightCatchInvManagement
             return FindSale(soNumber, "SO #", customerCode, customerName, 3, itemCode);
         }
 
+        /// <summary>Sale+purchase source row for invoicing: first match, or the line for <paramref name="itemCode"/>.</summary>
         public static Dictionary<string, string>? FindInvoiceSource(
             string? key,
             string? customerCode = null,
@@ -1033,6 +1097,7 @@ namespace CastRightCatchInvManagement
                 GetRecord(record, "Item Code").Equals(item, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>True when an invoice row already uses this number (case-insensitive).</summary>
         public static bool InvoiceNumberExists(string? invoiceNumber)
         {
             string needle = (invoiceNumber ?? "").Trim();
@@ -1049,6 +1114,7 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        /// <summary>True when Lines Json holds at least one line; fills the invoice number from the row if blank.</summary>
         internal static bool TryInvoiceDraft(Dictionary<string, string> invoice, out InvoiceDraft draft)
         {
             draft = InvoiceDraft.FromJson(GetRecord(invoice, InvoiceLinesColumn)) ?? new InvoiceDraft();
@@ -1062,6 +1128,7 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        /// <summary>Issued invoice by SO #, or received invoice by PO # (falling back to SO #).</summary>
         internal static Dictionary<string, string>? FindInvoiceByOrder(string number, bool received)
         {
             string needle = NormalizePo(number);
@@ -1083,6 +1150,7 @@ namespace CastRightCatchInvManagement
             return null;
         }
 
+        /// <summary>First non-blank trimmed value, used when received invoices store the order on PO # or SO #.</summary>
         private static string FirstNonEmpty(params string[] values)
         {
             foreach (var value in values)
@@ -1094,6 +1162,7 @@ namespace CastRightCatchInvManagement
             return "";
         }
 
+        /// <summary>Insert or update the invoices table from an editor draft, preserving Paid when already set.</summary>
         internal static void UpsertInvoiceFromDraft(InvoiceDraft draft, DateTime due)
         {
             string number = (draft.InvoiceNumber ?? "").Trim();
@@ -1156,6 +1225,7 @@ namespace CastRightCatchInvManagement
                 throw new InvalidOperationException(result.Message);
         }
 
+        /// <summary>Sale+purchase lines that belong on an invoice, matched by invoice # and/or SO #.</summary>
         public static List<Dictionary<string, string>> FindInvoiceSourcesForInvoice(
             string? invoiceNumber,
             string? soNumber,
@@ -1198,6 +1268,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>SO # suggestion rows grouped by order, with customer name and item count.</summary>
         internal static List<LookupSuggest.Hit> SalesOrderSuggestHits() =>
             OrderSuggestHits(
                 Sales,
@@ -1207,6 +1278,7 @@ namespace CastRightCatchInvManagement
                 new[] { "Customer Code", "Cust ID" },
                 purchase: false);
 
+        /// <summary>PO # suggestion rows grouped by order, with vendor name and item count.</summary>
         internal static List<LookupSuggest.Hit> PurchaseOrderSuggestHits() =>
             OrderSuggestHits(
                 PurchaseSales,
@@ -1216,6 +1288,7 @@ namespace CastRightCatchInvManagement
                 new[] { "Vendor Code", "Code" },
                 purchase: true);
 
+        /// <summary>Group order lines by number and build lookup hits for the suggestion list.</summary>
         private static List<LookupSuggest.Hit> OrderSuggestHits(
             string table,
             string numberColumn,
@@ -1270,6 +1343,7 @@ namespace CastRightCatchInvManagement
             return hits;
         }
 
+        /// <summary>Accumulator while grouping order lines for lookup suggestions.</summary>
         private sealed class OrderSuggest
         {
             public string Number { get; set; } = "";
@@ -1278,6 +1352,7 @@ namespace CastRightCatchInvManagement
             public int Items { get; set; }
         }
 
+        /// <summary>Sale+purchase lines for a PO or SO key; short keys are ignored unless salesOrderOnly.</summary>
         public static List<Dictionary<string, string>> FindInvoiceSourcesForKey(
             string? key,
             string? customerCode = null,
@@ -1288,6 +1363,7 @@ namespace CastRightCatchInvManagement
             string needle = NormalizePo(key);
             if (needle.Length == 0)
                 return result;
+            // Short PO fragments would match too many lots while typing.
             if (!salesOrderOnly && needle.Length < 3)
                 return result;
 
@@ -1324,6 +1400,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Purchase lines for a PO, optionally limited to a vendor; short keys ignored unless allowShort.</summary>
         public static List<Dictionary<string, string>> FindPurchaseSourcesForKey(
             string? key,
             string? vendorCode = null,
@@ -1360,6 +1437,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Distinct purchase PO numbers for autocomplete, optionally filtered by vendor.</summary>
         public static AutoCompleteStringCollection PurchasePoSuggestions(
             string? vendorCode = null,
             string? vendorName = null)
@@ -1379,6 +1457,7 @@ namespace CastRightCatchInvManagement
             return source;
         }
 
+        /// <summary>Sale+purchase lines whose customer PO matches a key of at least three characters.</summary>
         public static List<Dictionary<string, string>> FindSalesOrderSourcesForKey(
             string? key,
             string? customerCode = null,
@@ -1405,6 +1484,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Write SO # (and optional freight company) onto matching sale lines that have no conflicting SO.</summary>
         public static int AssignSalesOrderNumber(
             IEnumerable<string> purchaseOrders,
             string? customerCode,
@@ -1443,6 +1523,7 @@ namespace CastRightCatchInvManagement
             });
         }
 
+        /// <summary>Apply <paramref name="mutate"/> to every matching live row and notify pages.</summary>
         public static int UpdateRecords(
             string baseName,
             Func<Dictionary<string, string>, bool> match,
@@ -1469,11 +1550,13 @@ namespace CastRightCatchInvManagement
             return updated;
         }
 
+        /// <summary>Add missing columns to a table without rewriting existing rows.</summary>
         public static void EnsureFileColumns(string baseName, params string[] columns)
         {
             SqliteInventory.EnsureColumns(baseName, columns);
         }
 
+        /// <summary>Purchase fields first, then non-empty sale fields so the invoice line shows both lots.</summary>
         private static Dictionary<string, string> MergeSaleAndPurchase(
             Dictionary<string, string> sale,
             Dictionary<string, string>? purchase)
@@ -1494,6 +1577,7 @@ namespace CastRightCatchInvManagement
             return merged;
         }
 
+        /// <summary>Distinct customer POs for invoice autocomplete, skipping already-used lots.</summary>
         public static AutoCompleteStringCollection InvoicePoSuggestions(
             string? customerCode = null,
             string? customerName = null,
@@ -1522,6 +1606,7 @@ namespace CastRightCatchInvManagement
             return source;
         }
 
+        /// <summary>True when no vendor filter is set, or the row's vendor code or name matches.</summary>
         public static bool MatchesVendor(
             Dictionary<string, string> record,
             string? vendorCode,
@@ -1546,6 +1631,7 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        /// <summary>True when no customer filter is set, or the row's customer code or name matches.</summary>
         public static bool MatchesCustomer(
             Dictionary<string, string> record,
             string? customerCode,
@@ -1570,6 +1656,7 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        /// <summary>First exact sale match on <paramref name="column"/>, else the first prefix match.</summary>
         private static Dictionary<string, string>? FindSale(
             string? key,
             string column,
@@ -1610,6 +1697,7 @@ namespace CastRightCatchInvManagement
             return startsWith;
         }
 
+        /// <summary>First exact column match, else the first prefix match, ignoring keys shorter than minLength.</summary>
         private static Dictionary<string, string>? FindByNormalized(
             string baseName,
             string column,
@@ -1665,6 +1753,7 @@ namespace CastRightCatchInvManagement
             return prefix + NextSequenceNumber(used, 10001);
         }
 
+        /// <summary>Next integer for a numeric column, starting at <paramref name="fallback"/>.</summary>
         public static string NextNumber(string baseName, string column, int fallback)
         {
             var used = new List<int>();
@@ -1687,8 +1776,10 @@ namespace CastRightCatchInvManagement
             return NextFromPattern(Sales, "SO #", pattern, AppState.SalesOrderStart);
         }
 
+        /// <summary>Next SO # without inserting a row, for Settings previews.</summary>
         public static string PreviewSalesOrderNumber() => NextSalesOrderNumber();
 
+        /// <summary>Next purchase PO without inserting a row, for Settings previews.</summary>
         public static string PreviewProductNumber() => NextPurchasePo();
 
         /// <summary>
@@ -1791,6 +1882,7 @@ namespace CastRightCatchInvManagement
             return built.ToString();
         }
 
+        /// <summary>True when <paramref name="token"/> occurs at <paramref name="index"/>, ignoring case.</summary>
         private static bool TokenAt(string pattern, int index, string token)
         {
             if (index + token.Length > pattern.Length)
@@ -1800,6 +1892,7 @@ namespace CastRightCatchInvManagement
                 pattern, index, token, 0, token.Length, StringComparison.OrdinalIgnoreCase) == 0;
         }
 
+        /// <summary>Split a pattern into prefix, hash-run width, and suffix around the last # sequence.</summary>
         private static void ParseHashPattern(string pattern, out string prefix, out int width, out string suffix)
         {
             int hashEnd = pattern.LastIndexOf('#');
@@ -1820,6 +1913,7 @@ namespace CastRightCatchInvManagement
             suffix = pattern[(hashEnd + 1)..];
         }
 
+        /// <summary>Read the running number from a stored value that matches prefix + digits + suffix.</summary>
         private static bool TryReadPatternNumber(string value, string prefix, string suffix, out int number)
         {
             number = 0;
@@ -1843,6 +1937,7 @@ namespace CastRightCatchInvManagement
             return int.TryParse(digits, out number);
         }
 
+        /// <summary>Insert a named row, throwing when access denies the write.</summary>
         public static void AppendNamedRow(string baseName, Dictionary<string, string> values)
         {
             var result = MutateInsert(baseName, values);
@@ -1851,6 +1946,7 @@ namespace CastRightCatchInvManagement
             NotifyDataChanged();
         }
 
+        /// <summary>Insert a row as Live or Waiting for add, and queue pending review when required.</summary>
         public static MutateResult MutateInsert(string baseName, Dictionary<string, string> values)
         {
             var gate = GateWrite(baseName, "add", values, null);
@@ -1865,6 +1961,7 @@ namespace CastRightCatchInvManagement
             return gate.Queued ? MutateResult.QueuedForReview() : MutateResult.Saved();
         }
 
+        /// <summary>Update the matching row as Live or Waiting for edit, queuing review when required.</summary>
         public static MutateResult MutateUpdate(
             string baseName,
             Func<Dictionary<string, string>, bool> match,
@@ -1893,6 +1990,7 @@ namespace CastRightCatchInvManagement
             return gate.Queued ? MutateResult.QueuedForReview() : MutateResult.Saved();
         }
 
+        /// <summary>Delete immediately, or mark Waiting for delete and queue review when Confirm is on.</summary>
         public static MutateResult MutateDelete(string baseName, Dictionary<string, string> record)
         {
             var gate = GateWrite(baseName, "delete", record, record);
@@ -1926,6 +2024,7 @@ namespace CastRightCatchInvManagement
             return gate.Queued ? MutateResult.QueuedForReview() : MutateResult.Saved();
         }
 
+        /// <summary>Deny view-only or blocked-company writes; Confirm returns queued instead of saved.</summary>
         private static MutateResult GateWrite(
             string baseName,
             string action,
@@ -1942,6 +2041,7 @@ namespace CastRightCatchInvManagement
             return MutateResult.Saved();
         }
 
+        /// <summary>Insert a pending_changes row so a reviewer can accept or reject this write.</summary>
         private static void QueuePending(
             string baseName,
             string action,
@@ -1968,6 +2068,7 @@ namespace CastRightCatchInvManagement
             });
         }
 
+        /// <summary>Natural key for a row (PO+item, Code, Invoice #, …) used to match pending changes.</summary>
         public static Dictionary<string, string> IdentityOf(
             string baseName,
             Dictionary<string, string> record)
@@ -1995,6 +2096,7 @@ namespace CastRightCatchInvManagement
             return map;
         }
 
+        /// <summary>True when every identity field matches the row (case-insensitive).</summary>
         public static bool MatchesIdentity(
             Dictionary<string, string> identity,
             Dictionary<string, string> record)
@@ -2008,6 +2110,7 @@ namespace CastRightCatchInvManagement
             return identity.Count > 0;
         }
 
+        /// <summary>Apply a pending add/edit/delete as Live, skipping the confirm queue, then mark it accepted.</summary>
         public static bool AcceptPending(Dictionary<string, string> pending)
         {
             string table = GetRecord(pending, "Table");
@@ -2042,6 +2145,7 @@ namespace CastRightCatchInvManagement
             return MarkPending(pending, "accepted");
         }
 
+        /// <summary>Undo a queued add/edit/delete and mark the pending row rejected.</summary>
         public static bool RejectPending(Dictionary<string, string> pending)
         {
             string table = GetRecord(pending, "Table");
@@ -2086,6 +2190,7 @@ namespace CastRightCatchInvManagement
             return MarkPending(pending, "rejected");
         }
 
+        /// <summary>Set Status/Reviewed By/At on the matching pending_changes row.</summary>
         private static bool MarkPending(Dictionary<string, string> pending, string status)
         {
             string requestedAt = GetRecord(pending, "Requested At");
@@ -2113,6 +2218,7 @@ namespace CastRightCatchInvManagement
             return ok;
         }
 
+        /// <summary>Deserialize a stored JSON object into a case-insensitive string map.</summary>
         private static Dictionary<string, string> ParseJsonMap(string json)
         {
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -2133,6 +2239,7 @@ namespace CastRightCatchInvManagement
             return map;
         }
 
+        /// <summary>Overwrite the first matching row by id without raising DataChanged.</summary>
         private static bool ReplaceMatchingRowRaw(
             string baseName,
             Func<Dictionary<string, string>, bool> match,
@@ -2149,11 +2256,13 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        /// <summary>Map named values onto the table header order, including Lot # / Customer PO aliases.</summary>
         public static string[] NamedRow(string baseName, Dictionary<string, string> values)
         {
             return MapNamedRow(SqliteInventory.Headers(baseName), values);
         }
 
+        /// <summary>Fill header cells from a dictionary, mapping PO # ↔ Customer PO / Lot # on older schemas.</summary>
         private static string[] MapNamedRow(string[] header, Dictionary<string, string> values)
         {
             bool hasLot = header.Any(h => h.Trim().Equals("Lot #", StringComparison.OrdinalIgnoreCase));
@@ -2177,6 +2286,7 @@ namespace CastRightCatchInvManagement
             return cells;
         }
 
+        /// <summary>Case-insensitive dictionary lookup used while mapping named rows onto headers.</summary>
         private static bool TryNamed(Dictionary<string, string> values, string key, out string value)
         {
             foreach (var pair in values)
@@ -2192,6 +2302,7 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        /// <summary>Insert positional fields as a named row, throwing when access denies the write.</summary>
         public static void AppendRow(string baseName, IEnumerable<string> fields)
         {
             var result = MutateInsert(baseName, RowFromFields(baseName, fields));
@@ -2199,6 +2310,7 @@ namespace CastRightCatchInvManagement
                 throw new InvalidOperationException(result.Message);
         }
 
+        /// <summary>Zip positional cells onto the table header as a named dictionary.</summary>
         public static Dictionary<string, string> RowFromFields(string baseName, IEnumerable<string> fields)
         {
             var header = SqliteInventory.Headers(baseName);
@@ -2209,6 +2321,7 @@ namespace CastRightCatchInvManagement
             return values;
         }
 
+        /// <summary>Build a named record from a grid row, skipping the add-column button.</summary>
         public static Dictionary<string, string> GridRowToRecord(DataGridView grid, int rowIndex)
         {
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -2225,6 +2338,7 @@ namespace CastRightCatchInvManagement
             return map;
         }
 
+        /// <summary>Overwrite the first matching row from positional fields and notify pages.</summary>
         public static bool ReplaceMatchingRow(
             string baseName,
             Func<Dictionary<string, string>, bool> match,
@@ -2251,6 +2365,7 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        /// <summary>User-facing header: Order Date for Agreement Date, Lot # / PO # swap on older sales files.</summary>
         public static string DisplayColumnHeader(string baseName, string[] fileHeader, string name)
         {
             name = name.Trim();
@@ -2278,6 +2393,7 @@ namespace CastRightCatchInvManagement
             return name;
         }
 
+        /// <summary>Preferred column order for each table, then any remaining file columns.</summary>
         private static int[] ColumnDisplayOrder(string baseName, string[] fileHeader)
         {
             string[]? first = baseName switch
@@ -2391,6 +2507,7 @@ namespace CastRightCatchInvManagement
             return order.ToArray();
         }
 
+        /// <summary>Restore default or summary columns, then hide columns this user is not allowed to see.</summary>
         public static void ResetGridColumns(DataGridView grid)
         {
             string? baseName = grid.Tag is ColumnSearch search ? search.FileBaseName : null;
@@ -2440,6 +2557,7 @@ namespace CastRightCatchInvManagement
                 layout.NotifyColumnsChanged();
         }
 
+        /// <summary>True for the compact set of columns shown before the user customizes layout.</summary>
         private static bool IsSummaryColumn(string baseName, string displayHeader)
         {
             string[]? visible = baseName switch
@@ -2459,6 +2577,7 @@ namespace CastRightCatchInvManagement
                 name.Equals(displayHeader, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>True when the column is Record Status, which must stay visible for waiting rows.</summary>
         private static bool IsRecordStatusColumn(DataGridViewColumn col)
         {
             string key = col.Tag as string ?? col.Name;
@@ -2466,6 +2585,7 @@ namespace CastRightCatchInvManagement
                    col.HeaderText.Equals(RecordStatus, StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>Color waiting-add/edit/delete rows and bold the Record Status cell.</summary>
         private static void StyleRecordStatusRow(DataGridViewRow row, string status)
         {
             if (status.Equals(RecordWaitingAdd, StringComparison.OrdinalIgnoreCase))
@@ -2503,6 +2623,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Display account numbers as last-four only in grids.</summary>
         private static void MaskAccountCells(object? sender, DataGridViewCellFormattingEventArgs e)
         {
             if (sender is not DataGridView grid || e.RowIndex < 0 || e.ColumnIndex < 0)
@@ -2516,13 +2637,16 @@ namespace CastRightCatchInvManagement
             e.FormattingApplied = true;
         }
 
+        /// <summary>True for any of the three queued Record Status values.</summary>
         private static bool IsWaitingStatus(string status) =>
             status.Equals(RecordWaitingAdd, StringComparison.OrdinalIgnoreCase) ||
             status.Equals(RecordWaitingEdit, StringComparison.OrdinalIgnoreCase) ||
             status.Equals(RecordWaitingDelete, StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>Raised after inserts, updates, deletes, imports, and term roll-over so open pages reload.</summary>
         public static event Action? DataChanged;
 
+        /// <summary>Tell open pages the inventory tables changed.</summary>
         public static void NotifyDataChanged() => DataChanged?.Invoke();
 
         /// <summary>Flip the Current/Old toggle and reload open pages.</summary>
@@ -2536,6 +2660,7 @@ namespace CastRightCatchInvManagement
             Navigator.RefreshOpenPages();
         }
 
+        /// <summary>Row count for a table in the current view, or 0 when no folder is selected.</summary>
         public static int CountDataRows(string baseName)
         {
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
@@ -2544,6 +2669,7 @@ namespace CastRightCatchInvManagement
             return SqliteInventory.Count(baseName);
         }
 
+        /// <summary>Rebuild grid columns and rows for a table, applying layout, hidden columns, and status colors.</summary>
         public static void FillGrid(DataGridView grid, string baseName)
         {
             grid.Columns.Clear();
@@ -2622,6 +2748,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Import a CSV into the current page's table when headings match and the user has auto-write.</summary>
         public static bool TryImportCsv(string sourcePath, out string message)
         {
             string baseName = GetPageFileBaseName(Navigator.CurrentPage);
@@ -2710,6 +2837,7 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>True when every incoming heading exists on the expected customer/vendor header.</summary>
         private static bool IncomingMapsToExpected(string[] incoming, string[] expected)
         {
             if (incoming.Length == 0)
@@ -2727,6 +2855,7 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>Parse the term date from a live CSV name table_yyyy-MM-dd.csv; archived names with two dates fail.</summary>
         internal static bool TryParseStartDate(string fileName, string baseName, out DateTime date)
         {
             date = default;
@@ -2746,6 +2875,7 @@ namespace CastRightCatchInvManagement
             return DateTime.TryParse(rest, out date);
         }
 
+        /// <summary>Lowercase, trimmed heading list used to compare import files to the expected schema.</summary>
         private static string NormalizeHeader(string header)
         {
             var parts = header

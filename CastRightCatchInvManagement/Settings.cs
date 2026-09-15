@@ -6,6 +6,7 @@ namespace CastRightCatchInvManagement
     /// </summary>
     public partial class Settings : Form, INavigationPage
     {
+        /// <summary>Register this page, build cards, and load company and account fields.</summary>
         public Settings()
         {
             InitializeComponent();
@@ -21,6 +22,7 @@ namespace CastRightCatchInvManagement
             ApplyLockState();
         }
 
+        /// <summary>Company, data folder, numbering, and account cards.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
@@ -280,6 +282,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Show the next purchase PO that the current pattern and start would produce.</summary>
         private void UpdateProductNumberPreview()
         {
+            // Product numbering card not built yet.
             if (_productPreview == null)
                 return;
 
@@ -287,10 +290,12 @@ namespace CastRightCatchInvManagement
             string savedStart = AppState.ProductNumberStart;
             AppState.ProductNumberPattern = _productPattern.Text.Trim();
             AppState.ProductNumberStart = _productStart.Text.Trim();
+            // Temporarily apply the typed pattern so Preview uses it.
             try
             {
                 _productPreview.Text = "Next product number:  " + DataFiles.PreviewProductNumber();
             }
+            // Restore saved numbering so leaving the box without save does not persist.
             finally
             {
                 AppState.ProductNumberPattern = savedPattern;
@@ -371,6 +376,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Show the next SO # that the current pattern and start would produce.</summary>
         private void UpdateSalesOrderPreview()
         {
+            // Sales-order numbering card not built yet.
             if (_soPreview == null)
                 return;
 
@@ -378,10 +384,12 @@ namespace CastRightCatchInvManagement
             string savedStart = AppState.SalesOrderStart;
             AppState.SalesOrderPattern = _soPattern.Text.Trim();
             AppState.SalesOrderStart = _soStart.Text.Trim();
+            // Temporarily apply the typed pattern so Preview uses it.
             try
             {
                 _soPreview.Text = "Next sales order:  " + DataFiles.PreviewSalesOrderNumber();
             }
+            // Restore saved numbering so leaving the box without save does not persist.
             finally
             {
                 AppState.SalesOrderPattern = savedPattern;
@@ -389,6 +397,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Shared reuse-missing-numbers checkbox for a numbering card.</summary>
         private CheckBox MakeReuseCheckbox(Control card)
         {
             var box = new CheckBox
@@ -402,12 +411,14 @@ namespace CastRightCatchInvManagement
             card.Controls.Add(box);
             box.CheckedChanged += (_, _) => SaveReuseMissing(box.Checked);
             _syncingReuse = true;
+            // Load the flag without firing SaveReuseMissing.
             try
             {
                 box.Checked = AppState.ReuseMissingNumbers;
             }
             finally
             {
+                // Allow later clicks to persist the shared flag.
                 _syncingReuse = false;
             }
             return box;
@@ -416,15 +427,19 @@ namespace CastRightCatchInvManagement
         /// <summary>Persist the shared “reuse missing numbers” flag and refresh both numbering previews.</summary>
         private void SaveReuseMissing(bool value)
         {
+            // Ignore CheckedChanged while LoadCompanyInfo sets the box.
             if (_syncingReuse)
                 return;
 
             _syncingReuse = true;
+            // Guard against re-entrancy while updating both numbering checkboxes.
             try
             {
                 AppState.ReuseMissingNumbers = value;
+                // Keep both numbering cards on the same shared flag.
                 if (_reuseProduct != null)
                     _reuseProduct.Checked = value;
+                // Keep the sales-order checkbox in sync with product numbering.
                 if (_reuseSo != null)
                     _reuseSo.Checked = value;
                 AppLock.SaveSettings();
@@ -433,6 +448,7 @@ namespace CastRightCatchInvManagement
             }
             finally
             {
+                // Allow later clicks to persist the shared flag.
                 _syncingReuse = false;
             }
         }
@@ -536,10 +552,12 @@ namespace CastRightCatchInvManagement
         /// <summary>Save this user’s username, name, email, and optional password change.</summary>
         private void SaveOwnAccount()
         {
+            // Account save needs a signed-in user.
             if (!AppState.SignedIn)
                 return;
 
             string newUser = _accountUser.Text.Trim();
+            // Duplicate or blank usernames are rejected.
             if (!Accounts.RenameUser(AppState.CurrentUsername, newUser, out string error))
             {
                 MessageBox.Show(error, "Account", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -553,14 +571,17 @@ namespace CastRightCatchInvManagement
             AppState.UserEmail = email;
             AppLock.SaveSettings();
 
+            // Blank new password means keep the current one.
             if (_accountNew.Text.Length > 0 || _accountConfirm.Text.Length > 0)
             {
+                // Mismatched passwords must not replace the hash.
                 if (_accountNew.Text != _accountConfirm.Text)
                 {
                     MessageBox.Show("The new passwords do not match.", "Account", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
 
+                // Wrong current password or policy failure keeps the old hash.
                 if (!Accounts.ChangeOwnPassword(AppState.CurrentUsername, _accountCurrent.Text, _accountNew.Text, out error))
                 {
                     MessageBox.Show(error, "Account", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -570,10 +591,12 @@ namespace CastRightCatchInvManagement
                 _accountCurrent.Text = "";
                 _accountNew.Text = "";
                 _accountConfirm.Text = "";
+                // Refresh this PC’s session token after a password change.
                 if (AppState.StaySignedIn)
                 {
                     var self = Accounts.List().FirstOrDefault(a =>
                         a.Username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase));
+                    // The renamed account row is used to rewrite the local session.
                     if (self != null)
                         Accounts.RememberSignIn(self);
                 }
@@ -583,6 +606,7 @@ namespace CastRightCatchInvManagement
             ApplyLockState();
         }
 
+        /// <summary>Position a caption and text box on a card.</summary>
         private static void PlaceField(Control parent, Label label, TextBox box, int x, int y, int width)
         {
             label.Location = new Point(x, y);
@@ -593,10 +617,12 @@ namespace CastRightCatchInvManagement
             parent.Controls.Add(box);
         }
 
+        /// <summary>Save a company field on Leave when the user may edit it.</summary>
         private static void BindInvoiceField(TextBox box, Action<string> set, bool adminOnly = false)
         {
             box.Leave += (_, _) =>
             {
+                // Non-admins can view company fields but not persist edits.
                 if (adminOnly && !AppState.IsAdmin)
                     return;
                 set(box.Text.Trim());
@@ -619,37 +645,49 @@ namespace CastRightCatchInvManagement
                     ? AppState.InventoryFolder
                     : "No folder selected — click Change Folder";
 
+            // Numbering controls exist after BuildUi.
             if (_soPattern != null)
                 _soPattern.Text = AppState.SalesOrderPattern;
+            // Start-number box is optional until the card is built.
             if (_soStart != null)
                 _soStart.Text = AppState.SalesOrderStart;
             UpdateSalesOrderPreview();
 
+            // Product pattern box is optional until the card is built.
             if (_productPattern != null)
                 _productPattern.Text = AppState.ProductNumberPattern;
+            // Product start box is optional until the card is built.
             if (_productStart != null)
                 _productStart.Text = AppState.ProductNumberStart;
             _syncingReuse = true;
+            // Guard against re-entrancy while setting both reuse checkboxes from AppState.
             try
             {
+                // Keep both numbering cards on the same shared flag.
                 if (_reuseProduct != null)
                     _reuseProduct.Checked = AppState.ReuseMissingNumbers;
+                // Keep the sales-order checkbox in sync with product numbering.
                 if (_reuseSo != null)
                     _reuseSo.Checked = AppState.ReuseMissingNumbers;
             }
             finally
             {
+                // Allow later clicks to persist the shared flag.
                 _syncingReuse = false;
             }
             UpdateProductNumberPreview();
 
+            // Account card may not be built yet during first load.
             if (_userEmail != null)
                 _userEmail.Text = AppState.UserEmail;
+            // Fill username when the account card exists.
             if (_accountUser != null)
                 _accountUser.Text = AppState.CurrentUsername;
+            // Fill display name when the account card exists.
             if (_accountName != null)
                 _accountName.Text = AppState.CurrentDisplayName;
 
+            // Signed-in caption is looked up by name from the card.
             if (Controls.Find("lblSignedIn", true).FirstOrDefault() is Label who)
             {
                 string name = AppState.CurrentDisplayName.Length > 0
@@ -675,30 +713,43 @@ namespace CastRightCatchInvManagement
             txtPhone.Enabled = admin;
             txtEmail.Enabled = admin;
             txtPaymentTerms.Enabled = admin;
+            // Numbering controls exist after BuildUi.
             if (_soPattern != null)
                 _soPattern.Enabled = admin;
+            // Start-number box is optional until the card is built.
             if (_soStart != null)
                 _soStart.Enabled = admin;
+            // Product pattern box is optional until the card is built.
             if (_productPattern != null)
                 _productPattern.Enabled = admin;
+            // Product start box is optional until the card is built.
             if (_productStart != null)
                 _productStart.Enabled = admin;
+            // Keep both numbering cards on the same shared flag.
             if (_reuseProduct != null)
                 _reuseProduct.Enabled = admin;
+            // Keep the sales-order checkbox in sync with product numbering.
             if (_reuseSo != null)
                 _reuseSo.Enabled = admin;
+            // Account card may not be built yet during first load.
             if (_userEmail != null)
                 _userEmail.Enabled = ready && AppState.SignedIn;
+            // Fill username when the account card exists.
             if (_accountUser != null)
                 _accountUser.Enabled = ready && AppState.SignedIn;
+            // Fill display name when the account card exists.
             if (_accountName != null)
                 _accountName.Enabled = ready && AppState.SignedIn;
+            // Password boxes exist after the account card is built.
             if (_accountCurrent != null)
                 _accountCurrent.Enabled = ready && AppState.SignedIn;
+            // New-password box is disabled until signed in.
             if (_accountNew != null)
                 _accountNew.Enabled = ready && AppState.SignedIn;
+            // Confirm box follows the same signed-in lock.
             if (_accountConfirm != null)
                 _accountConfirm.Enabled = ready && AppState.SignedIn;
+            // Save is disabled until a user is signed in.
             if (_accountSave != null)
                 _accountSave.Enabled = ready && AppState.SignedIn;
 
@@ -706,12 +757,14 @@ namespace CastRightCatchInvManagement
             txtFolderPath.BackColor = ready ? Theme.Paper : Theme.DangerFill;
             txtFolderPath.ForeColor = ready ? Theme.Ink : Theme.Danger;
 
+            // Highlight the missing folder so they click Change Folder.
             if (!ready)
                 txtFolderPath.Text = "No folder selected — click Change Folder";
 
             btnChangeFolder.Enabled = true;
             btnRollToNextTerm.Enabled = admin;
 
+            // Signed-in caption is looked up by name from the card.
             if (Controls.Find("lblSignedIn", true).FirstOrDefault() is Label who)
             {
                 string name = AppState.CurrentDisplayName.Length > 0
@@ -726,6 +779,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Point this PC at a different shared data folder and reload settings from that database.</summary>
         private void btnChangeFolder_Click(object sender, EventArgs e)
         {
+            // Server clients change host on the sign-in screen, not here.
             if (DataLink.IsRemote)
             {
                 MessageBox.Show(
@@ -743,9 +797,11 @@ namespace CastRightCatchInvManagement
                 ShowNewFolderButton = true
             };
 
+            // Cancel keeps the current folder.
             if (dialog.ShowDialog() != DialogResult.OK)
                 return;
 
+            // The picker can return a path that was deleted.
             if (!Directory.Exists(dialog.SelectedPath))
                 return;
 
@@ -764,6 +820,7 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void btnRollToNextTerm_Click(object sender, EventArgs e)
         {
+            // Roll-over needs a live database.
             if (!AppLock.HasFolder())
             {
                 MessageBox.Show(
@@ -774,6 +831,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Only administrators can archive completed process rows.
             if (!AppState.IsAdmin)
             {
                 MessageBox.Show(
@@ -790,9 +848,11 @@ namespace CastRightCatchInvManagement
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
 
+            // Roll-over archives completed rows; require an explicit yes.
             if (confirm != DialogResult.Yes)
                 return;
 
+            // Archive completed rows; show success only if the move finishes.
             try
             {
                 DataFiles.RollToNextTerm();
@@ -802,6 +862,7 @@ namespace CastRightCatchInvManagement
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
             }
+            // A failed roll-over must not look like it succeeded.
             catch (Exception ex)
             {
                 MessageBox.Show(ex.Message, "Roll Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);

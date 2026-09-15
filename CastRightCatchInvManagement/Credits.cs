@@ -5,6 +5,7 @@ namespace CastRightCatchInvManagement
     /// </summary>
     public partial class Credits : Form, INavigationPage
     {
+        /// <summary>Build the Credits grid page and load current credit claims.</summary>
         public Credits()
         {
             InitializeComponent();

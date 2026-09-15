@@ -19,6 +19,7 @@ namespace CastRightCatchInvManagement
         private ReportResult? _current;
         private readonly HashSet<string> _expanded = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>Build the report home cards and subscribe to data changes.</summary>
         public Reports()
         {
             InitializeComponent();
@@ -26,10 +27,13 @@ namespace CastRightCatchInvManagement
             DataFiles.DataChanged += OnDataChanged;
         }
 
+        /// <summary>Rebuild the open report when inventory data changes.</summary>
         private void OnDataChanged()
         {
+            // Ignore changes while the home cards are showing or the page is closing.
             if (IsDisposed || !_showingDetail)
                 return;
+            // DataChanged can arrive off the UI thread.
             if (InvokeRequired)
             {
                 BeginInvoke(OnDataChanged);
@@ -42,10 +46,12 @@ namespace CastRightCatchInvManagement
         /// <summary>Rebuild the open report when this page is shown or Current/Old changes.</summary>
         public void HighlightCurrentPage()
         {
+            // Only the open report needs a rebuild when Current/Old flips.
             if (_showingDetail)
                 ShowReport(_kind);
         }
 
+        /// <summary>Home of six report cards plus the hidden detail view.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
@@ -100,6 +106,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(_home);
         }
 
+        /// <summary>Toolbar, stats chips, tabs, and grid for an open report.</summary>
         private void BuildDetail(Panel host)
         {
             var toolbar = new Panel
@@ -203,6 +210,7 @@ namespace CastRightCatchInvManagement
             host.Controls.Add(toolbar);
         }
 
+        /// <summary>Clickable card that opens one report.</summary>
         private Control BuildReportCard(ReportKind kind, string title, string hint)
         {
             var card = new CardPanel
@@ -257,6 +265,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Hide the detail grid and show the six cards again.</summary>
         private void ShowHome()
         {
             _showingDetail = false;
@@ -264,8 +273,10 @@ namespace CastRightCatchInvManagement
             _home.Visible = true;
         }
 
+        /// <summary>Build and show one report table from the current database view.</summary>
         private void ShowReport(ReportKind kind)
         {
+            // Switching reports clears expanded species groups.
             if (_kind != kind)
                 _expanded.Clear();
             _kind = kind;
@@ -281,10 +292,12 @@ namespace CastRightCatchInvManagement
             _detail.Visible = true;
         }
 
+        /// <summary>Aging (and similar) tabs, or hide the tab strip for single tables.</summary>
         private void BuildTabs(ReportResult report)
         {
             _tabs.SelectedIndexChanged -= TabChanged;
             _tabs.TabPages.Clear();
+            // Aging has Customers and Vendors; other reports are one table.
             if (report.Tabs is { Count: > 0 })
             {
                 foreach (var tab in report.Tabs)
@@ -292,6 +305,7 @@ namespace CastRightCatchInvManagement
                 _tabs.Visible = true;
                 _tabs.SelectedIndex = 0;
             }
+            // Opposite branch of the condition above.
             else
             {
                 _tabs.Visible = false;
@@ -300,12 +314,16 @@ namespace CastRightCatchInvManagement
             _tabs.SelectedIndexChanged += TabChanged;
         }
 
+        /// <summary>Reload chips and grid when the Aging tab changes.</summary>
         private void TabChanged(object? sender, EventArgs e) => ShowActiveTab();
 
+        /// <summary>Fill stats and grid for the selected tab, or the whole report.</summary>
         private void ShowActiveTab()
         {
+            // Export is only for an open report.
             if (_current == null)
                 return;
+            // Fill from the selected Aging tab rather than the unused main table.
             if (_current.Tabs is { Count: > 0 } tabs &&
                 _tabs.SelectedIndex >= 0 &&
                 _tabs.SelectedIndex < tabs.Count)
@@ -314,6 +332,7 @@ namespace CastRightCatchInvManagement
                 FillStats(tab.Stats);
                 FillTable(tab.Columns, tab.Rows, tab.Empty, _current.Groups);
             }
+            // Opposite branch of the condition above.
             else
             {
                 FillStats(_current.Stats);
@@ -323,6 +342,7 @@ namespace CastRightCatchInvManagement
             ApplyFilter();
         }
 
+        /// <summary>Up to four summary chips above the table.</summary>
         private void FillStats(List<(string Label, string Value)> stats)
         {
             _stats.Controls.Clear();
@@ -334,6 +354,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>One caption-plus-value chip.</summary>
         private static Control StatChip(string label, string value)
         {
             var card = new CardPanel
@@ -362,9 +383,11 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Fill the grid from the report’s main columns and rows.</summary>
         private void FillGrid(ReportResult report) =>
             FillTable(report.Columns, report.Rows, report.Empty, report.Groups);
 
+        /// <summary>Render grouped (species) or flat rows, or an empty-state line.</summary>
         private void FillTable(
             string[] columns,
             List<string[]> rows,
@@ -376,17 +399,20 @@ namespace CastRightCatchInvManagement
             foreach (var column in columns)
                 _grid.Columns.Add(column, column);
 
+            // Profit per species uses expandable parent rows.
             if (groups is { Count: > 0 })
             {
                 foreach (var group in groups)
                 {
                     bool open = _expanded.Contains(group.Key);
                     var parent = (string[])group.Parent.Clone();
+                    // Show a triangle on the species name cell.
                     if (parent.Length > 0)
                         parent[0] = (open ? "▼  " : "▶  ") + group.Key;
                     int index = _grid.Rows.Add(PadRow(parent, columns.Length));
                     _grid.Rows[index].Tag = group.Key;
                     _grid.Rows[index].DefaultCellStyle.Font = Theme.BodyBold;
+                    // Collapsed groups hide item-code children.
                     if (!open)
                         continue;
                     foreach (var child in group.Children)
@@ -401,8 +427,10 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Keep a placeholder so the grid is not a blank hole.
             if (rows.Count == 0)
             {
+                // Need at least one column to add the empty-state row.
                 if (_grid.Columns.Count > 0)
                     _grid.Rows.Add(Pad(empty, columns.Length));
                 return;
@@ -414,13 +442,16 @@ namespace CastRightCatchInvManagement
             Theme.FitAllColumns(_grid);
         }
 
+        /// <summary>Hide rows that do not contain the filter text.</summary>
         private void ApplyFilter()
         {
             string query = _filter.Text.Trim();
             foreach (DataGridViewRow row in _grid.Rows)
             {
+                // The unbound extra row is not report data.
                 if (row.IsNewRow)
                     continue;
+                // Clearing the filter shows every row again.
                 if (query.Length == 0)
                 {
                     row.Visible = true;
@@ -431,6 +462,7 @@ namespace CastRightCatchInvManagement
                 foreach (DataGridViewCell cell in row.Cells)
                 {
                     string text = cell.Value?.ToString() ?? "";
+                    // Any cell containing the text keeps the row visible.
                     if (text.Contains(query, StringComparison.OrdinalIgnoreCase))
                     {
                         match = true;
@@ -442,18 +474,23 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Expand or collapse a species group on click.</summary>
         private void OnSpeciesClick(object? sender, DataGridViewCellEventArgs e)
         {
+            // Header clicks and flat reports have nothing to expand.
             if (_current?.Groups == null || e.RowIndex < 0 || e.ColumnIndex < 0)
                 return;
+            // Child item-code rows are not toggles.
             if (_grid.Rows[e.RowIndex].Tag is not string key || key.Length == 0)
                 return;
+            // Second click collapses the species.
             if (!_expanded.Add(key))
                 _expanded.Remove(key);
             FillGrid(_current);
             ApplyFilter();
         }
 
+        /// <summary>Empty-state row with the message in the first cell.</summary>
         private static object[] Pad(string text, int columns)
         {
             var cells = new object[columns];
@@ -466,6 +503,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Save the open report table as CSV (opens in Excel). PDF is a better fit for invoices, not these grids.</summary>
         private void ExportCsv()
         {
+            // Export is only for an open report.
             if (_current == null)
                 return;
 
@@ -478,14 +516,17 @@ namespace CastRightCatchInvManagement
                 FileName = name,
                 OverwritePrompt = true
             };
+            // Cancel leaves the report on screen.
             if (dialog.ShowDialog(this) != DialogResult.OK)
                 return;
 
+            // Write can fail if Excel has the CSV open.
             try
             {
                 CsvIO.WriteExcel(dialog.FileName, ExportRows(_current));
                 ToastAlert.Success(this, "Report exported.");
             }
+            // Keep the report on screen and show why export failed.
             catch (Exception ex)
             {
                 ToastAlert.Error(this, ex.Message);
@@ -501,11 +542,13 @@ namespace CastRightCatchInvManagement
                 new[] { "Scope", ReportData.ScopeHint() },
                 new[] { "Exported", DateTime.Now.ToString("yyyy-MM-dd HH:mm") }
             };
+            // CSV header includes the on-screen hint when present.
             if (!string.IsNullOrWhiteSpace(report.Hint))
                 lines.Add(new[] { "Notes", report.Hint });
             foreach (var stat in report.Stats)
                 lines.Add(new[] { stat.Label, stat.Value });
             lines.Add(Array.Empty<string>());
+            // Aging has Customers and Vendors; other reports are one table.
             if (report.Tabs is { Count: > 0 })
             {
                 foreach (var tab in report.Tabs)
@@ -513,8 +556,10 @@ namespace CastRightCatchInvManagement
                     lines.Add(Array.Empty<string>());
                     lines.Add(new[] { tab.Name });
                     lines.Add(tab.Columns);
+                    // Still export the empty-state line so the sheet is not blank.
                     if (tab.Rows.Count == 0)
                         lines.Add(new[] { tab.Empty });
+                    // Opposite branch of the condition above.
                     else
                         lines.AddRange(tab.Rows);
                 }
@@ -523,6 +568,7 @@ namespace CastRightCatchInvManagement
             }
 
             lines.Add(report.Columns);
+            // Species CSV includes children only for expanded groups.
             if (report.Groups is { Count: > 0 })
             {
                 foreach (var group in report.Groups)
@@ -531,10 +577,12 @@ namespace CastRightCatchInvManagement
                     lines.AddRange(group.Children);
                 }
             }
+            // Alternative when the previous branch did not apply.
             else if (report.Rows.Count == 0)
             {
                 lines.Add(new[] { report.Empty });
             }
+            // Opposite branch of the condition above.
             else
             {
                 lines.AddRange(report.Rows);
@@ -542,6 +590,7 @@ namespace CastRightCatchInvManagement
             return lines;
         }
 
+        /// <summary>Replace characters Windows will not allow in a file name.</summary>
         private static string SanitizeFileName(string title)
         {
             var chars = title.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray();
@@ -551,6 +600,7 @@ namespace CastRightCatchInvManagement
             return name.Length > 0 ? name : "Report";
         }
 
+        /// <summary>Pad or trim a data row to the column count.</summary>
         private static object[] PadRow(string[] row, int columns)
         {
             var cells = new object[columns];

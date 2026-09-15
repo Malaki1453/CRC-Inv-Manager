@@ -6,12 +6,14 @@ namespace CastRightCatchInvManagement
     /// </summary>
     public partial class Banking : Form, INavigationPage
     {
+        /// <summary>Build the Banking grid, account actions, and admin live-feed sync.</summary>
         public Banking()
         {
             InitializeComponent();
             UiStyle.ApplyDataPage(this, "Banking", lblTitle, btnUpload, dataGridView1);
             UiStyle.AddDataPageAction(this, "Accounts", (_, _) => BankAccountsForm.ShowList(this));
             UiStyle.AddDataPageAction(this, "Read file", (_, _) => ReadBankFile());
+            // Only administrators may pull the live Plaid feed.
             if (AppState.IsAdmin)
                 UiStyle.AddDataPageAction(this, "Sync live feed", async (_, _) => await BankLive.SyncAllAsync(this), gold: true);
             DataFiles.DataChanged += LoadTable;
@@ -36,6 +38,7 @@ namespace CastRightCatchInvManagement
         private void ReadBankFile()
         {
             var account = BankAccountsForm.PickAccount(this);
+            // Import needs a target account; cancel leaves Banking unchanged.
             if (account == null)
                 return;
 
@@ -46,9 +49,11 @@ namespace CastRightCatchInvManagement
                     "Bank files (*.ofx;*.qfx;*.csv)|*.ofx;*.qfx;*.csv|OFX/QFX (*.ofx;*.qfx)|*.ofx;*.qfx|CSV (*.csv)|*.csv|All files (*.*)|*.*",
                 CheckFileExists = true
             };
+            // User backed out of the file picker.
             if (dialog.ShowDialog(this) != DialogResult.OK)
                 return;
 
+            // Refuse a file we cannot parse so we never insert empty junk.
             if (!BankFeed.TryParseFile(dialog.FileName, out var rows, out string error))
             {
                 MessageBox.Show(error, "Read file", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -60,6 +65,7 @@ namespace CastRightCatchInvManagement
                 "Read file",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
+            // Explicit confirm so a large statement is not imported by accident.
             if (confirm != DialogResult.Yes)
                 return;
 

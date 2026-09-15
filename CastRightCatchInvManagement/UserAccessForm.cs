@@ -12,6 +12,7 @@ namespace CastRightCatchInvManagement
         private readonly Dictionary<string, TextBox> _hiddenCols = new(StringComparer.OrdinalIgnoreCase);
         private TextBox _blocked = null!;
 
+        /// <summary>Edit this user's table access, including overrides on top of their groups.</summary>
         public static bool ShowFor(IWin32Window? owner, string username)
         {
             username = (username ?? "").Trim();
@@ -27,6 +28,7 @@ namespace CastRightCatchInvManagement
                 effective,
                 json =>
                 {
+                    // Users in groups store only diffs so later group edits still apply.
                     string stored = groups.Count == 0
                         ? json
                         : DataAccess.Diff(baseline, json, formTables);
@@ -45,19 +47,24 @@ namespace CastRightCatchInvManagement
             return result == DialogResult.OK || form.Applied;
         }
 
+        /// <summary>Reload sidebar/table rights immediately when editing the signed-in user.</summary>
         private static void ApplyIfCurrent(string username)
         {
+            // Other users pick up the change at their next sign-in.
             if (!username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
                 return;
             TableAccess.Apply(username);
             AppLock.NotifyChanged();
         }
 
+        /// <summary>Edit a group's default table access. Admin/IT rules still apply.</summary>
         public static bool ShowGroup(IWin32Window? owner, string groupName)
         {
             groupName = (groupName ?? "").Trim();
+            // No group name means the caller had no selected row.
             if (groupName.Length == 0)
                 return false;
+            // Admin is locked; IT can only be changed by an administrator.
             if (!AccessGroups.CanEdit(groupName))
             {
                 MessageBox.Show(
@@ -78,6 +85,7 @@ namespace CastRightCatchInvManagement
                 {
                     SqliteInventory.SaveAccessGroup(groupName, json, out _);
                     string current = AppState.CurrentUsername;
+                    // Live-refresh the signed-in user if they belong to this group.
                     if (SqliteInventory.GetAccessGroups(current)
                             .Any(name => name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
                     {
@@ -89,6 +97,7 @@ namespace CastRightCatchInvManagement
             return result == DialogResult.OK;
         }
 
+        /// <summary>Build visibility, write-mode, hidden-column, and blocked-party editors.</summary>
         private UserAccessForm(
             string title,
             string json,
@@ -109,6 +118,7 @@ namespace CastRightCatchInvManagement
             MinimumSize = new Size(640, 520);
             BackColor = Theme.Cream;
             Font = Theme.Body;
+            // Match other CRC dialogs when the brand icon is present.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
 
@@ -136,6 +146,7 @@ namespace CastRightCatchInvManagement
             Theme.StyleOutlineButton(cancel);
             footer.Controls.Add(save);
             footer.Controls.Add(cancel);
+            // Per-user overrides can be cleared back to group settings.
             if (_groupBaseline != null)
             {
                 var reset = new Button
@@ -184,6 +195,7 @@ namespace CastRightCatchInvManagement
             int y = 76;
             foreach (var (key, label) in TableAccess.All)
             {
+                // Reports access is not configured per table on this dialog.
                 if (key == TableAccess.Reports)
                     continue;
 
@@ -265,6 +277,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(footer);
         }
 
+        /// <summary>Fill checkboxes, write modes, hidden columns, and blocked names from stored JSON.</summary>
         private void LoadJson(string? json)
         {
             var denied = TableAccess.ParseDenied(json ?? "");
@@ -280,11 +293,13 @@ namespace CastRightCatchInvManagement
                 if (_write.TryGetValue(key, out var write))
                 {
                     write.SelectedItem = DataAccess.ModeLabel(policy.Write);
+                    // Unknown stored modes fall back to Add / edit / delete.
                     if (write.SelectedIndex < 0)
                         write.SelectedIndex = 2;
                     write.Enabled = visible.Checked;
                 }
 
+                // Restore comma-separated hidden columns when this table has them.
                 if (_hiddenCols.TryGetValue(key, out var hidden))
                     hidden.Text = string.Join(", ", policy.HideColumns);
             }
@@ -292,6 +307,7 @@ namespace CastRightCatchInvManagement
             _blocked.Text = string.Join(Environment.NewLine, blocked);
         }
 
+        /// <summary>Write denied tables, write modes, hidden columns, and blocked parties.</summary>
         private void Save()
         {
             var denied = _visible
@@ -301,6 +317,7 @@ namespace CastRightCatchInvManagement
             var policies = new Dictionary<string, DataTablePolicy>(StringComparer.OrdinalIgnoreCase);
             foreach (var (key, _) in TableAccess.All)
             {
+                // Reports (and any table without a write combo) is not saved here.
                 if (!_write.TryGetValue(key, out var write))
                     continue;
                 policies[key] = new DataTablePolicy

@@ -5,15 +5,19 @@ namespace CastRightCatchInvManagement
     {
         private readonly DataGridView _grid = new();
 
+        /// <summary>Modal list of labeled accounts used when importing statements.</summary>
         public static void ShowList(IWin32Window? owner)
         {
             using var form = new BankAccountsForm();
+            // Keep the dialog owned so it stays on top of Banking.
             if (owner != null)
                 form.ShowDialog(owner);
+            // No owner when opened from a context that is not a window.
             else
                 form.ShowDialog();
         }
 
+        /// <summary>Build the account grid, add/edit/delete actions, and load saved rows.</summary>
         private BankAccountsForm()
         {
             Text = "Bank accounts";
@@ -26,6 +30,7 @@ namespace CastRightCatchInvManagement
             MinimumSize = new Size(520, 320);
             BackColor = Theme.Cream;
             Font = Theme.Body;
+            // Match other CRC dialogs when the brand icon is present.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
 
@@ -69,11 +74,13 @@ namespace CastRightCatchInvManagement
             Theme.StyleGrid(_grid);
             _grid.CellDoubleClick += (_, e) =>
             {
+                // Header clicks are not an account to edit.
                 if (e.RowIndex >= 0)
                     Edit(RowId(e.RowIndex));
             };
             _grid.CellMouseClick += (_, e) =>
             {
+                // Context menu is only for an existing account row.
                 if (e.Button != MouseButtons.Right || e.RowIndex < 0)
                     return;
                 _grid.ClearSelection();
@@ -96,6 +103,7 @@ namespace CastRightCatchInvManagement
         public static (long Id, string Name)? PickAccount(IWin32Window owner)
         {
             var accounts = SqliteInventory.ListBankAccounts();
+            // Import cannot proceed without a labeled account to attach rows to.
             if (accounts.Count == 0)
             {
                 var ask = MessageBox.Show(
@@ -104,14 +112,17 @@ namespace CastRightCatchInvManagement
                     "Bank accounts",
                     MessageBoxButtons.OKCancel,
                     MessageBoxIcon.Information);
+                // Cancel leaves Read file without importing.
                 if (ask != DialogResult.OK)
                     return null;
                 ShowList(owner);
                 accounts = SqliteInventory.ListBankAccounts();
+                // They closed the list without adding an account.
                 if (accounts.Count == 0)
                     return null;
             }
 
+            // Skip the chooser when there is only one destination.
             if (accounts.Count == 1)
                 return (accounts[0].Id, accounts[0].Name);
 
@@ -163,11 +174,13 @@ namespace CastRightCatchInvManagement
             form.Controls.Add(cancel);
             form.AcceptButton = ok;
             form.CancelButton = cancel;
+            // Cancel or a missing selection must not start the file import.
             if (form.ShowDialog(owner) != DialogResult.OK || box.SelectedItem is not Choice choice)
                 return null;
             return (choice.Id, choice.Name);
         }
 
+        /// <summary>Reload the grid from saved bank account labels.</summary>
         private void LoadRows()
         {
             _grid.Columns.Clear();
@@ -181,11 +194,13 @@ namespace CastRightCatchInvManagement
                 _grid.Rows.Add(account.Id, account.Name, account.Bank, account.Last4, account.Notes);
         }
 
+        /// <summary>Hidden Id cell for the row, or 0 when the value is not numeric.</summary>
         private long RowId(int row)
         {
             return long.TryParse(_grid.Rows[row].Cells[0].Value?.ToString(), out long id) ? id : 0;
         }
 
+        /// <summary>Add a new account or update the selected one.</summary>
         private void Edit(long? id)
         {
             var existing = id == null
@@ -207,6 +222,7 @@ namespace CastRightCatchInvManagement
             var bank = Field(form, "BANK", 24, 74, 350);
             var last4 = Field(form, "LAST 4", 24, 128, 120);
             var notes = Field(form, "NOTES", 160, 128, 214);
+            // Prefill when editing so the user changes only what they need.
             if (id != null)
             {
                 name.Text = existing.Name;
@@ -219,14 +235,17 @@ namespace CastRightCatchInvManagement
             Theme.StyleGoldButton(save);
             save.Click += (_, _) =>
             {
+                // Name is the label shown on imported Banking rows.
                 if (name.Text.Trim().Length == 0)
                 {
                     MessageBox.Show("Enter an account name.", form.Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
 
+                // New rows get an insert; existing rows keep their id for live-feed links.
                 if (id == null)
                     SqliteInventory.InsertBankAccount(name.Text.Trim(), bank.Text.Trim(), last4.Text.Trim(), notes.Text.Trim());
+                // Existing rows keep their id for live-feed links.
                 else
                     SqliteInventory.UpdateBankAccount(id.Value, name.Text.Trim(), bank.Text.Trim(), last4.Text.Trim(), notes.Text.Trim());
                 form.DialogResult = DialogResult.OK;
@@ -243,12 +262,15 @@ namespace CastRightCatchInvManagement
             form.Controls.Add(cancel);
             form.AcceptButton = save;
             form.CancelButton = cancel;
+            // Refresh after a save so the list matches the database.
             if (form.ShowDialog(this) == DialogResult.OK)
                 LoadRows();
         }
 
+        /// <summary>Remove the account label after confirm. Imported lines stay in Banking.</summary>
         private void Delete(long id)
         {
+            // Accidental delete would drop the label used when reading the next statement.
             if (MessageBox.Show(
                     "Delete this bank account? Imported transactions stay in Banking.",
                     "Bank accounts",
@@ -260,6 +282,7 @@ namespace CastRightCatchInvManagement
             LoadRows();
         }
 
+        /// <summary>Caption plus styled text box used on the add/edit dialog.</summary>
         private static TextBox Field(Form form, string caption, int x, int y, int width)
         {
             var label = new Label { Text = caption, Location = new Point(x, y), AutoSize = true };
@@ -275,8 +298,10 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Combo item for picking which account a statement belongs to.</summary>
         private sealed class Choice
         {
+            /// <summary>Build a display label with bank and last-4 when they are known.</summary>
             public Choice(long id, string name, string bank, string last4)
             {
                 Id = id;
@@ -289,6 +314,7 @@ namespace CastRightCatchInvManagement
             public long Id { get; }
             public string Name { get; }
             public string Label { get; }
+            /// <summary>Combo boxes show the formatted account label.</summary>
             public override string ToString() => Label;
         }
     }

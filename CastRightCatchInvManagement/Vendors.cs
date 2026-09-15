@@ -7,6 +7,7 @@ namespace CastRightCatchInvManagement
     /// </summary>
     public partial class Vendors : Form, INavigationPage
     {
+        /// <summary>Build the Vendors grid with add/edit actions and load live rows.</summary>
         public Vendors()
         {
             InitializeComponent();

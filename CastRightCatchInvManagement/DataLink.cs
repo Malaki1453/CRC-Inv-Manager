@@ -19,10 +19,12 @@ namespace CastRightCatchInvManagement
         private static readonly object Gate = new();
         private static IDataChannel? _channel;
 
+        /// <summary>True when this PC is connected to CrcInventoryServer instead of a local folder.</summary>
         public static bool IsRemote
         {
             get
             {
+                // Local-folder builds never talk to the named-op stream.
                 if (!UseInventoryServer)
                     return false;
                 lock (Gate)
@@ -34,14 +36,18 @@ namespace CastRightCatchInvManagement
 
         public static string Fingerprint { get; private set; } = "";
 
+        /// <summary>Open a TLS session to the inventory server and record the hello handshake.</summary>
         public static void Connect(string host, int port, string? fingerprint)
         {
+            // The flag is the only switch between local SQLite and the server.
             if (!UseInventoryServer)
                 throw new InvalidOperationException("The inventory server is turned off in DataLink.");
 
             host = (host ?? "").Trim();
+            // A blank host cannot resolve; Settings must supply an address.
             if (host.Length == 0)
                 throw new InvalidOperationException("Enter the server IP address.");
+            // Out-of-range ports fall back to the app's default TLS port.
             if (port <= 0 || port > 65535)
                 port = DefaultPort;
 
@@ -60,11 +66,13 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Drop a half-open client so a failed connect cannot leak sockets.
                 client.Dispose();
                 throw;
             }
         }
 
+        /// <summary>Close the current server session and clear handshake state.</summary>
         public static void Disconnect()
         {
             lock (Gate)
@@ -76,6 +84,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Send a named op and deserialize the reply. Throws if no session is open.</summary>
         public static T Call<T>(string op, object? payload = null)
         {
             IDataChannel channel;
@@ -87,14 +96,17 @@ namespace CastRightCatchInvManagement
             return channel.Call<T>(op, payload);
         }
 
+        /// <summary>Fire a named op whose reply is only an acknowledgement.</summary>
         public static void Send(string op, object? payload = null)
         {
             _ = Call<bool>(op, payload);
         }
 
+        /// <summary>Call a named op when remote; return false on local mode or any transport error.</summary>
         public static bool Try<T>(string op, object? payload, out T? result)
         {
             result = default;
+            // Local SQLite callers should not hit the network.
             if (!IsRemote)
                 return false;
 
@@ -105,10 +117,12 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // A downed server should not crash table reads; callers fall back or skip.
                 return false;
             }
         }
 
+        /// <summary>Build the standard table payload, including Current/Old view flags.</summary>
         public static TableRequest Table(
             string table,
             Dictionary<string, string>? values = null,
@@ -140,10 +154,12 @@ namespace CastRightCatchInvManagement
             host = "";
             port = DefaultPort;
             text = (text ?? "").Trim();
+            // Empty Settings text means "use defaults" rather than a bad address.
             if (text.Length == 0)
                 return;
 
             int colon = text.LastIndexOf(':');
+            // Treat a single trailing :port as an explicit port, not an IPv6 address.
             if (colon > 0 &&
                 colon < text.Length - 1 &&
                 int.TryParse(text[(colon + 1)..], out int parsed) &&

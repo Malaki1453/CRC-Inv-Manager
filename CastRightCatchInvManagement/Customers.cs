@@ -7,6 +7,7 @@ namespace CastRightCatchInvManagement
     /// </summary>
     public partial class Customers : Form, INavigationPage
     {
+        /// <summary>Build the Customers grid with add/edit actions and load live rows.</summary>
         public Customers()
         {
             InitializeComponent();

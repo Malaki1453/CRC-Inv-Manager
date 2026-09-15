@@ -18,6 +18,7 @@ namespace CastRightCatchInvManagement
         private TreeNode? _menuDropTarget;
         private MenuDropKind _menuDropKind;
 
+        /// <summary>Where a dragged sidebar item will land relative to the hover row.</summary>
         private enum MenuDropKind
         {
             None,
@@ -54,6 +55,7 @@ namespace CastRightCatchInvManagement
         private ComboBox _slotLogistics = null!;
         private bool _loadingVendorLookup;
 
+        /// <summary>Register this page and build User, Groups, Pages, and Admin tabs.</summary>
         public AdminSettings()
         {
             Navigator.Register(AppPage.Admin, this);
@@ -63,6 +65,7 @@ namespace CastRightCatchInvManagement
         /// <summary>IT and admins. Reloads users, roles, and admin-only settings.</summary>
         public void HighlightCurrentPage()
         {
+            // Regular users have no Admin page; send them to Settings.
             if (!AppState.IsAdmin && !AppState.IsIt)
             {
                 Navigator.GoTo(AppPage.Settings);
@@ -74,17 +77,20 @@ namespace CastRightCatchInvManagement
             LoadGroups();
             LoadPages();
             LoadRoles();
+            // Administrator-only settings and menu items.
             if (AppState.IsAdmin)
             {
                 LoadBankFeed();
                 LoadSession();
                 LoadVendorTypes();
+                // Leaving the tab would lose unsaved SMTP edits.
                 if (_smtpDirty)
                     SaveMail();
                 LoadMail();
             }
         }
 
+        /// <summary>Create the tab control and load users, groups, pages, roles, and admin settings.</summary>
         private void BuildUi()
         {
             UiStyle.ApplyChildPage(this);
@@ -135,6 +141,7 @@ namespace CastRightCatchInvManagement
 
             _tabs.SelectedIndexChanged += (_, _) =>
             {
+                // Leaving the tab would lose unsaved SMTP edits.
                 if (_smtpDirty)
                     SaveMail();
             };
@@ -149,13 +156,17 @@ namespace CastRightCatchInvManagement
             LoadMail();
         }
 
+        /// <summary>Show Admin management only for administrators.</summary>
         private void ApplyTabs()
         {
+            // UI not built yet.
             if (_adminTab == null)
                 return;
             bool showAdmin = AppState.IsAdmin;
+            // Restore Admin management after an IT-only session.
             if (showAdmin && !_tabs.TabPages.Contains(_adminTab))
                 _tabs.TabPages.Add(_adminTab);
+            // Hide Admin management so IT cannot change SMTP or Plaid.
             if (!showAdmin && _tabs.TabPages.Contains(_adminTab))
             {
                 _tabs.SelectedIndex = 0;
@@ -163,6 +174,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>User grid plus administrator and IT role lists.</summary>
         private Control BuildUsersTab()
         {
             var host = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Cream };
@@ -199,11 +211,13 @@ namespace CastRightCatchInvManagement
             _grid.AllowUserToOrderColumns = false;
             _grid.CellDoubleClick += (_, e) =>
             {
+                // Header clicks are not a row to edit.
                 if (e.RowIndex >= 0)
                     EditUser(RowUser(e.RowIndex));
             };
             _grid.CellMouseClick += (_, e) =>
             {
+                // Context menu is only for an existing row.
                 if (e.Button != MouseButtons.Right || e.RowIndex < 0)
                     return;
                 ShowUserMenu(e.RowIndex);
@@ -253,6 +267,7 @@ namespace CastRightCatchInvManagement
             return host;
         }
 
+        /// <summary>Access-group grid with add/edit/delete.</summary>
         private Control BuildGroupsTab()
         {
             var host = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Cream };
@@ -278,21 +293,26 @@ namespace CastRightCatchInvManagement
             _groupsGrid.AllowUserToOrderColumns = false;
             _groupsGrid.CellDoubleClick += (_, e) =>
             {
+                // Header clicks are not a row to edit.
                 if (e.RowIndex >= 0)
                     EditGroup(GroupName(e.RowIndex));
             };
             _groupsGrid.CellMouseClick += (_, e) =>
             {
+                // Context menu is only for an existing row.
                 if (e.Button != MouseButtons.Right || e.RowIndex < 0)
                     return;
                 _groupsGrid.ClearSelection();
                 _groupsGrid.Rows[e.RowIndex].Selected = true;
                 string name = GroupName(e.RowIndex);
                 var menu = new ContextMenuStrip();
+                // Custom groups (and IT, for admins) can be opened.
                 if (AccessGroups.CanEdit(name))
                     menu.Items.Add("Edit settings", null, (_, _) => EditGroup(name));
+                // Built-in Admin/IT cannot be deleted.
                 if (AccessGroups.CanDelete(name))
                     menu.Items.Add("Delete group", null, (_, _) => DeleteGroup(name));
+                // Explain why the built-in group is locked.
                 if (menu.Items.Count == 0)
                 {
                     var locked = menu.Items.Add(AccessGroups.IsAdmin(name)
@@ -335,6 +355,7 @@ namespace CastRightCatchInvManagement
             return host;
         }
 
+        /// <summary>Sidebar tree with drag-and-drop, rename, and delete.</summary>
         private Control BuildPagesTab()
         {
             var host = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Cream };
@@ -389,6 +410,7 @@ namespace CastRightCatchInvManagement
             _menuTree.ItemDrag += MenuTreeItemDrag;
             _menuTree.DragEnter += (_, e) =>
             {
+                // Accept only sidebar nodes, not files.
                 if (e.Data?.GetDataPresent(typeof(TreeNode)) == true)
                     e.Effect = DragDropEffects.Move;
             };
@@ -404,14 +426,17 @@ namespace CastRightCatchInvManagement
             return host;
         }
 
+        /// <summary>Reload the sidebar tree from MenuLayout.</summary>
         private void LoadPages()
         {
+            // Pages tab not built yet.
             if (_menuTree == null)
                 return;
             _menu = MenuLayout.Load();
             FillMenuTree();
         }
 
+        /// <summary>Rebuild tree nodes from the in-memory menu without firing check events.</summary>
         private void FillMenuTree()
         {
             _menuLoading = true;
@@ -424,6 +449,7 @@ namespace CastRightCatchInvManagement
             _menuLoading = false;
         }
 
+        /// <summary>Tree node tagged with the MenuNode, including children.</summary>
         private static TreeNode MakeTreeNode(MenuNode node)
         {
             var tree = new TreeNode(node.Title) { Tag = node, Checked = node.On };
@@ -432,8 +458,10 @@ namespace CastRightCatchInvManagement
             return tree;
         }
 
+        /// <summary>MenuNode stored on the tree node, or null.</summary>
         private static MenuNode? NodeOf(TreeNode? tree) => tree?.Tag as MenuNode;
 
+        /// <summary>Persist the sidebar layout and refresh open pages.</summary>
         private void SaveMenu()
         {
             _menu.Save();
@@ -441,17 +469,22 @@ namespace CastRightCatchInvManagement
             Navigator.RefreshOpenPages();
         }
 
+        /// <summary>Insert a new sidebar tab under the selection or at the root.</summary>
         private void AddMenuFolder()
         {
             string? name = PromptText("New tab", "TAB NAME");
+            // Cancel or blank name leaves the tree unchanged.
             if (string.IsNullOrWhiteSpace(name))
                 return;
             var folder = MenuNode.Folder(name.Trim());
             var selected = NodeOf(_menuTree.SelectedNode);
+            // Nest the new tab inside the selected folder.
             if (selected is { IsFolder: true })
                 selected.Children.Add(folder);
+            // No selection: append a top-level tab.
             else if (selected == null)
                 _menu.Root.Add(folder);
+            // Opposite branch of the condition above.
             else
             {
                 var loc = _menu.Locate(selected);
@@ -463,9 +496,11 @@ namespace CastRightCatchInvManagement
             FillMenuTree();
         }
 
+        /// <summary>Rename the selected folder or page after a prompt.</summary>
         private void RenameMenuNode()
         {
             var node = NodeOf(_menuTree.SelectedNode);
+            // Need a selected tab to rename or delete.
             if (node == null)
             {
                 MessageBox.Show("Select a tab to rename.", "Pages", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -473,6 +508,7 @@ namespace CastRightCatchInvManagement
             }
 
             string? name = PromptText("Rename tab", "TAB NAME", node.Title, "Save");
+            // Cancel or blank name leaves the tree unchanged.
             if (string.IsNullOrWhiteSpace(name))
                 return;
             node.Name = name.Trim();
@@ -480,15 +516,19 @@ namespace CastRightCatchInvManagement
             FillMenuTree();
         }
 
+        /// <summary>Remove the selected node and lift its children up one level.</summary>
         private void DeleteMenuNode()
         {
             var node = NodeOf(_menuTree.SelectedNode);
+            // Need a selected tab to rename or delete.
             if (node == null)
                 return;
             var loc = _menu.Locate(node);
+            // Node is not in the model (stale tree).
             if (loc.Index < 0)
                 return;
             loc.Siblings.RemoveAt(loc.Index);
+            // Lift children so nested pages are not lost.
             if (node.IsFolder)
             {
                 loc.Siblings.InsertRange(loc.Index, node.Children);
@@ -498,11 +538,14 @@ namespace CastRightCatchInvManagement
             FillMenuTree();
         }
 
+        /// <summary>Toggle visibility of a sidebar item and save.</summary>
         private void MenuTreeAfterCheck(object? sender, TreeViewEventArgs e)
         {
+            // Ignore checks fired while rebuilding the tree.
             if (_menuLoading || e.Node == null)
                 return;
             var node = NodeOf(e.Node);
+            // Need a selected tab to rename or delete.
             if (node == null)
                 return;
             _menu.SetOn(node, e.Node.Checked);
@@ -510,16 +553,20 @@ namespace CastRightCatchInvManagement
             FillMenuTree();
         }
 
+        /// <summary>Start a move drag for a tree node.</summary>
         private void MenuTreeItemDrag(object? sender, ItemDragEventArgs e)
         {
+            // Only tree nodes start a sidebar drag.
             if (e.Item is not TreeNode node)
                 return;
             _menuDrag = node;
             _menuTree.DoDragDrop(node, DragDropEffects.Move);
         }
 
+        /// <summary>Show the gold drop hint while dragging a sidebar item.</summary>
         private void MenuTreeDragOver(object? sender, DragEventArgs e)
         {
+            // Reject non-node drags.
             if (e.Data?.GetDataPresent(typeof(TreeNode)) != true)
             {
                 e.Effect = DragDropEffects.None;
@@ -528,6 +575,7 @@ namespace CastRightCatchInvManagement
             }
 
             var point = _menuTree.PointToClient(new Point(e.X, e.Y));
+            // Pointer is not a valid drop site.
             if (!TryMenuDrop(point, out var target, out var kind))
             {
                 e.Effect = DragDropEffects.None;
@@ -539,6 +587,7 @@ namespace CastRightCatchInvManagement
             SetMenuDropHint(target, kind);
         }
 
+        /// <summary>Move the dragged item before, after, or inside the target.</summary>
         private void MenuTreeDragDrop(object? sender, DragEventArgs e)
         {
             var sourceNode = _menuDrag ?? e.Data?.GetData(typeof(TreeNode)) as TreeNode;
@@ -547,10 +596,12 @@ namespace CastRightCatchInvManagement
             ClearMenuDropHint();
             _menuDrag = null;
             var source = NodeOf(sourceNode);
+            // Drop cancelled or left the tree.
             if (source == null || !hit)
                 return;
 
             var target = NodeOf(targetTree);
+            // Empty area means move to the end of the root.
             if (target == null || targetTree == null)
             {
                 _menu.Move(source, _menu.Root, _menu.Root.Count);
@@ -559,24 +610,31 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Cannot nest a folder inside itself.
             if (source == target || _menu.IsDescendant(source, target))
                 return;
 
+            // Gold box: nest under that dropdown.
             if (kind == MenuDropKind.Inside && target.IsFolder)
             {
+                // Sidebar only allows two folder levels.
                 if (_menu.DepthOf(target) >= 2 && source.IsFolder)
                     return;
                 _menu.Move(source, target.Children, target.Children.Count);
             }
+            // Dropping onto a page wraps it in a new dropdown.
             else if (kind == MenuDropKind.Inside && !target.IsFolder && _menu.DepthOf(target) < 2)
             {
                 var folder = _menu.WrapInFolder(target, target.Title);
+                // Skip if wrap somehow created a cycle.
                 if (!_menu.IsDescendant(source, folder))
                     _menu.Move(source, folder.Children, folder.Children.Count);
             }
+            // Opposite branch of the condition above.
             else
             {
                 var loc = _menu.Locate(target);
+                // Node is not in the model (stale tree).
                 if (loc.Index < 0)
                     return;
                 int index = kind == MenuDropKind.Before ? loc.Index : loc.Index + 1;
@@ -587,13 +645,16 @@ namespace CastRightCatchInvManagement
             FillMenuTree();
         }
 
+        /// <summary>Decide before/after/inside from the pointer on a row.</summary>
         private bool TryMenuDrop(Point client, out TreeNode? target, out MenuDropKind kind)
         {
             target = _menuTree.GetNodeAt(client);
             kind = MenuDropKind.None;
             var source = _menuDrag;
+            // Drag was cleared before hit-testing.
             if (source == null)
                 return false;
+            // Filter was deleted on another PC.
             if (target == null)
             {
                 target = LastTreeNode(_menuTree.Nodes);
@@ -601,20 +662,25 @@ namespace CastRightCatchInvManagement
                 return target != source && !IsTreeDescendant(source, target);
             }
 
+            // Cannot drop a node onto its descendant.
             if (target == source || IsTreeDescendant(source, target))
                 return false;
 
             var bounds = NodeRow(target);
             int y = client.Y - bounds.Top;
+            // Middle of the row means nest inside.
             if (y > bounds.Height / 4 && y < (bounds.Height * 3) / 4)
                 kind = MenuDropKind.Inside;
+            // Opposite branch of the condition above.
             else
                 kind = y < bounds.Height / 2 ? MenuDropKind.Before : MenuDropKind.After;
             return true;
         }
 
+        /// <summary>Invalidate the tree when the drop target changes.</summary>
         private void SetMenuDropHint(TreeNode? target, MenuDropKind kind)
         {
+            // Avoid flicker when the hint has not changed.
             if (_menuDropTarget == target && _menuDropKind == kind)
                 return;
             _menuDropTarget = target;
@@ -624,8 +690,10 @@ namespace CastRightCatchInvManagement
             _menuTree.Invalidate();
         }
 
+        /// <summary>Clear the gold line or box after drag leave or drop.</summary>
         private void ClearMenuDropHint()
         {
+            // Already cleared.
             if (_menuDropKind == MenuDropKind.None && _menuDropTarget == null)
                 return;
             _menuDropKind = MenuDropKind.None;
@@ -640,14 +708,17 @@ namespace CastRightCatchInvManagement
             public TreeNode? DropTarget { get; set; }
             public MenuDropKind DropKind { get; set; }
 
+            /// <summary>Owner-drawn sidebar tree with double buffering.</summary>
             public MenuHintTree()
             {
                 Theme.EnableDoubleBuffer(this);
             }
 
+            /// <summary>Paint chevron, checkbox, tab icon, and title for a row.</summary>
             protected override void OnDrawNode(DrawTreeNodeEventArgs e)
             {
                 var node = e.Node;
+                // Skip empty paint events.
                 if (node == null || e.Bounds.Height <= 0)
                     return;
                 var g = e.Graphics;
@@ -664,9 +735,11 @@ namespace CastRightCatchInvManagement
                     g.DrawLine(line, 12, row.Bottom - 1, row.Right - 12, row.Bottom - 1);
 
                 var parts = LayoutNode(node, row, folder);
+                // Folders get a chevron and tab icon; pages do not.
                 if (folder)
                     DrawChevron(g, parts.Chevron, node.IsExpanded, on);
                 DrawCheck(g, parts.Check, on);
+                // Folders get a chevron and tab icon; pages do not.
                 if (folder)
                     DrawTabIcon(g, parts.Icon, on);
 
@@ -681,12 +754,15 @@ namespace CastRightCatchInvManagement
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
             }
 
+            /// <summary>Toggle expand or checked without selecting when those glyphs are hit.</summary>
             protected override void OnMouseDown(MouseEventArgs e)
             {
                 var node = GetNodeAt(e.Location);
+                // Left-click on glyphs should not start a drag-select.
                 if (node != null && e.Button == MouseButtons.Left)
                 {
                     var parts = LayoutNode(node, NodeRow(node), node.Tag is MenuNode { IsFolder: true });
+                    // Chevron toggles expand without changing selection.
                     if (parts.Chevron.Contains(e.Location) && node.Tag is MenuNode { IsFolder: true })
                     {
                         node.Toggle();
@@ -694,6 +770,7 @@ namespace CastRightCatchInvManagement
                         return;
                     }
 
+                    // Checkbox toggles sidebar visibility.
                     if (parts.Check.Contains(e.Location))
                     {
                         SelectedNode = node;
@@ -705,9 +782,11 @@ namespace CastRightCatchInvManagement
                 base.OnMouseDown(e);
             }
 
+            /// <summary>Draw the gold drop line or nest box after WM_PAINT.</summary>
             protected override void WndProc(ref Message m)
             {
                 base.WndProc(ref m);
+                // Only paint the drop hint after WM_PAINT when dragging.
                 if (m.Msg != 0x000F || DropKind == MenuDropKind.None)
                     return;
                 using var g = Graphics.FromHwnd(Handle);
@@ -715,6 +794,7 @@ namespace CastRightCatchInvManagement
                 var row = DropTarget == null
                     ? new Rectangle(8, Math.Max(4, ClientSize.Height - 6), ClientSize.Width - 16, 0)
                     : NodeRow(DropTarget);
+                // Gold box means the item will nest under this row.
                 if (DropKind == MenuDropKind.Inside)
                 {
                     using var fill = new SolidBrush(Color.FromArgb(70, Theme.Gold));
@@ -733,6 +813,7 @@ namespace CastRightCatchInvManagement
                 g.FillEllipse(dot, x - 5, y - 5, 10, 10);
             }
 
+            /// <summary>Hit rectangles for chevron, check, icon, and text.</summary>
             private NodeParts LayoutNode(TreeNode node, Rectangle row, bool folder)
             {
                 int x = 12 + node.Level * 22;
@@ -742,6 +823,7 @@ namespace CastRightCatchInvManagement
                 var check = new Rectangle(x, mid - 8, 16, 16);
                 x += 22;
                 var icon = folder ? new Rectangle(x, mid - 9, 18, 18) : Rectangle.Empty;
+                // Folders get a chevron and tab icon; pages do not.
                 if (folder)
                     x += 24;
                 var text = new Rectangle(x, row.Y, Math.Max(20, row.Right - x - 8), row.Height);
@@ -750,6 +832,7 @@ namespace CastRightCatchInvManagement
 
             private readonly record struct NodeParts(Rectangle Chevron, Rectangle Check, Rectangle Icon, Rectangle Text);
 
+            /// <summary>Expand/collapse triangle for a folder row.</summary>
             private static void DrawChevron(Graphics g, Rectangle box, bool expanded, bool on)
             {
                 using var brush = new SolidBrush(on ? Theme.Navy : Theme.Muted);
@@ -761,12 +844,14 @@ namespace CastRightCatchInvManagement
                 g.FillPolygon(brush, pts);
             }
 
+            /// <summary>Visibility checkbox with a gold mark when on.</summary>
             private static void DrawCheck(Graphics g, Rectangle box, bool on)
             {
                 using var border = new Pen(on ? Theme.Navy : Theme.CreamDark, 1.5f);
                 using var fill = new SolidBrush(on ? Theme.Paper : Theme.CreamDark);
                 g.FillRectangle(fill, box);
                 g.DrawRectangle(border, box);
+                // Unchecked boxes stay empty so Off pages look muted.
                 if (!on)
                     return;
                 using var mark = new Pen(Theme.Gold, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
@@ -778,6 +863,7 @@ namespace CastRightCatchInvManagement
                 });
             }
 
+            /// <summary>Folder tab glyph used for dropdowns.</summary>
             private static void DrawTabIcon(Graphics g, Rectangle box, bool on)
             {
                 var body = new Rectangle(box.X, box.Y + 5, box.Width, box.Height - 5);
@@ -790,6 +876,7 @@ namespace CastRightCatchInvManagement
                 g.FillRectangle(gold, body.X, body.Bottom - 3, body.Width, 3);
             }
 
+            /// <summary>Rounded rectangle path for the tab body.</summary>
             private static GraphicsPath Rounded(Rectangle box, int radius)
             {
                 int d = radius * 2;
@@ -803,14 +890,17 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Full-width row bounds for painting and hit tests.</summary>
         private static Rectangle NodeRow(TreeNode node)
         {
             var bounds = node.Bounds;
             return new Rectangle(0, bounds.Y, node.TreeView?.ClientSize.Width ?? bounds.Width, Math.Max(bounds.Height, 22));
         }
 
+        /// <summary>Deepest last visible node, used when dropping at the bottom.</summary>
         private static TreeNode? LastTreeNode(TreeNodeCollection nodes)
         {
+            // Empty tree has no last node.
             if (nodes.Count == 0)
                 return null;
             var node = nodes[^1];
@@ -819,10 +909,12 @@ namespace CastRightCatchInvManagement
             return node;
         }
 
+        /// <summary>True when node is nested under ancestor.</summary>
         private static bool IsTreeDescendant(TreeNode ancestor, TreeNode? node)
         {
             while (node != null)
             {
+                // Walk parents until we know it is nested under ancestor.
                 if (node.Parent == ancestor)
                     return true;
                 node = node.Parent;
@@ -831,11 +923,14 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        /// <summary>Select the hit node and show rename/delete on right-click.</summary>
         private void MenuTreeMouseDown(object? sender, MouseEventArgs e)
         {
             var hit = _menuTree.GetNodeAt(e.Location);
+            // Mouse-down selects the row so right-click has a target.
             if (hit != null)
                 _menuTree.SelectedNode = hit;
+            // Rename/delete menu is only for a real node.
             if (e.Button != MouseButtons.Right || hit == null)
                 return;
             var node = NodeOf(hit);
@@ -845,6 +940,7 @@ namespace CastRightCatchInvManagement
             menu.Show(_menuTree, e.Location);
         }
 
+        /// <summary>Stay signed in, vendor types, SMTP, and live bank feed cards.</summary>
         private Control BuildAdminTab()
         {
             var host = new Panel
@@ -883,8 +979,10 @@ namespace CastRightCatchInvManagement
             return host;
         }
 
+        /// <summary>Owner-draw tab headers with a gold underline on the selected tab.</summary>
         private static void PaintAdminTab(object? sender, DrawItemEventArgs e)
         {
+            // Owner-draw can fire for a removed tab.
             if (sender is not TabControl tabs || e.Index < 0 || e.Index >= tabs.TabCount)
                 return;
 
@@ -898,6 +996,7 @@ namespace CastRightCatchInvManagement
                 e.Bounds,
                 selected ? Theme.Navy : Theme.Muted,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            // Gold underline marks the active Admin tab.
             if (selected)
             {
                 using var gold = new SolidBrush(Theme.Gold);
@@ -905,6 +1004,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Type list, named filters, and purchase-slot combos.</summary>
         private void LayoutVendorTypesCard(CardPanel card)
         {
             var heading = new Label
@@ -956,6 +1056,7 @@ namespace CastRightCatchInvManagement
             _vendorFilters.SelectedIndexChanged += (_, _) => FillFilterTypes();
             _vendorFilterTypes.ItemCheck += (_, _) =>
             {
+                // Skip saves while the lists are being refilled.
                 if (_loadingVendorLookup)
                     return;
                 BeginInvoke(SaveFilterTypes);
@@ -990,6 +1091,7 @@ namespace CastRightCatchInvManagement
             LoadVendorTypes();
         }
 
+        /// <summary>Add/Rename/Delete buttons for types or filters.</summary>
         private static Button[] ActionRow(
             int x,
             int y,
@@ -1015,6 +1117,7 @@ namespace CastRightCatchInvManagement
             return new[] { addBtn, renameBtn, deleteBtn };
         }
 
+        /// <summary>Drop-down of filters for a purchase form field.</summary>
         private static ComboBox SlotCombo(int x, int y)
         {
             var box = new ComboBox
@@ -1027,8 +1130,10 @@ namespace CastRightCatchInvManagement
             return box;
         }
 
+        /// <summary>Reload types, filters, and slots, keeping the previous selection.</summary>
         private void LoadVendorTypes()
         {
+            // Vendor card not built yet.
             if (_vendorTypes == null)
                 return;
             _loadingVendorLookup = true;
@@ -1039,10 +1144,12 @@ namespace CastRightCatchInvManagement
             _vendorTypes.Items.Clear();
             foreach (var name in catalog.Types)
                 _vendorTypes.Items.Add(name);
+            // Restore the previously selected type after reload.
             if (keepType != null)
             {
                 for (int i = 0; i < _vendorTypes.Items.Count; i++)
                 {
+                    // Find the same type name ignoring case.
                     if (_vendorTypes.Items[i] is string item &&
                         item.Equals(keepType, StringComparison.OrdinalIgnoreCase))
                     {
@@ -1055,10 +1162,12 @@ namespace CastRightCatchInvManagement
             _vendorFilters.Items.Clear();
             foreach (var filter in catalog.Filters)
                 _vendorFilters.Items.Add(filter);
+            // Restore the previously selected filter after reload.
             if (keepFilter != null)
             {
                 for (int i = 0; i < _vendorFilters.Items.Count; i++)
                 {
+                    // Find the same filter id ignoring case.
                     if (_vendorFilters.Items[i] is VendorTypeFilter filter &&
                         filter.Id.Equals(keepFilter, StringComparison.OrdinalIgnoreCase))
                     {
@@ -1068,6 +1177,7 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            // Always have a filter selected so types-in-filter can fill.
             if (_vendorFilters.SelectedIndex < 0 && _vendorFilters.Items.Count > 0)
                 _vendorFilters.SelectedIndex = 0;
 
@@ -1077,11 +1187,14 @@ namespace CastRightCatchInvManagement
             _loadingVendorLookup = false;
         }
 
+        /// <summary>Filter currently selected in the list, or null.</summary>
         private VendorTypeFilter? SelectedFilter() =>
             _vendorFilters?.SelectedItem as VendorTypeFilter;
 
+        /// <summary>Checkboxes for which types belong to the selected filter.</summary>
         private void FillFilterTypes()
         {
+            // Filter checkbox list not built yet.
             if (_vendorFilterTypes == null)
                 return;
             bool restore = _loadingVendorLookup;
@@ -1098,8 +1211,10 @@ namespace CastRightCatchInvManagement
             _loadingVendorLookup = restore;
         }
 
+        /// <summary>Fill a slot combo and select the assigned filter.</summary>
         private void FillSlotCombo(ComboBox box, string slot)
         {
+            // Slot combo not built yet.
             if (box == null)
                 return;
             var catalog = VendorTypes.Catalog();
@@ -1109,6 +1224,7 @@ namespace CastRightCatchInvManagement
                 box.Items.Add(filter);
             for (int i = 0; i < box.Items.Count; i++)
             {
+                // Select the filter assigned to this purchase slot.
                 if (box.Items[i] is VendorTypeFilter filter &&
                     filter.Id.Equals(current, StringComparison.OrdinalIgnoreCase))
                 {
@@ -1117,20 +1233,25 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            // Preselect the first name so Enter adds without extra clicks.
             if (box.Items.Count > 0)
                 box.SelectedIndex = 0;
         }
 
+        /// <summary>Persist checked types for the selected filter.</summary>
         private void SaveFilterTypes()
         {
+            // Skip saves while the lists are being refilled.
             if (_loadingVendorLookup)
                 return;
             var filter = SelectedFilter();
+            // No filter selected to save or rename.
             if (filter == null)
                 return;
             var catalog = VendorTypes.Catalog();
             var target = catalog.Filters.FirstOrDefault(item =>
                 item.Id.Equals(filter.Id, StringComparison.OrdinalIgnoreCase));
+            // Filter was deleted on another PC.
             if (target == null)
                 return;
             target.Types = _vendorFilterTypes.CheckedItems.Cast<string>().ToList();
@@ -1138,24 +1259,31 @@ namespace CastRightCatchInvManagement
             filter.Types = target.Types.ToList();
         }
 
+        /// <summary>Persist which filter Forwarder and Logistics use.</summary>
         private void SaveSlots()
         {
+            // Skip saves while the lists are being refilled.
             if (_loadingVendorLookup)
                 return;
             var catalog = VendorTypes.Catalog();
+            // Store the Forwarder slot only when a filter is picked.
             if (_slotForwarder.SelectedItem is VendorTypeFilter forwarder)
                 catalog.Slots[VendorTypes.SlotPurchaseForwarder] = forwarder.Id;
+            // Store the Logistics slot only when a filter is picked.
             if (_slotLogistics.SelectedItem is VendorTypeFilter logistics)
                 catalog.Slots[VendorTypes.SlotPurchaseLogistics] = logistics.Id;
             VendorTypes.SaveCatalog(catalog);
         }
 
+        /// <summary>Prompt for a new Type name used on Edit Vendor.</summary>
         private void AddVendorType()
         {
             string? name = PromptText("New vendor type", "TYPE NAME");
+            // Cancel or blank name leaves the tree unchanged.
             if (string.IsNullOrWhiteSpace(name))
                 return;
             var catalog = VendorTypes.Catalog();
+            // Type names must stay unique in the Edit Vendor dropdown.
             if (catalog.Types.Any(item => item.Equals(name, StringComparison.OrdinalIgnoreCase)))
             {
                 MessageBox.Show("That type already exists.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1167,8 +1295,10 @@ namespace CastRightCatchInvManagement
             LoadVendorTypes();
         }
 
+        /// <summary>Rename the selected Type everywhere it is listed.</summary>
         private void RenameVendorType()
         {
+            // Rename/delete needs a selected type.
             if (_vendorTypes.SelectedItem is not string current || current.Length == 0)
             {
                 MessageBox.Show("Select a type to rename.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1176,9 +1306,11 @@ namespace CastRightCatchInvManagement
             }
 
             string? name = PromptText("Rename vendor type", "TYPE NAME", current, "Save");
+            // Cancel or unchanged name is a no-op.
             if (string.IsNullOrWhiteSpace(name) || name.Equals(current, StringComparison.OrdinalIgnoreCase))
                 return;
             var catalog = VendorTypes.Catalog();
+            // Type names must stay unique in the Edit Vendor dropdown.
             if (catalog.Types.Any(item => item.Equals(name, StringComparison.OrdinalIgnoreCase)))
             {
                 MessageBox.Show("That type already exists.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1189,8 +1321,10 @@ namespace CastRightCatchInvManagement
             LoadVendorTypes();
         }
 
+        /// <summary>Remove the selected Type from the catalog.</summary>
         private void DeleteVendorType()
         {
+            // Rename/delete needs a selected type.
             if (_vendorTypes.SelectedItem is not string current || current.Length == 0)
             {
                 MessageBox.Show("Select a type to delete.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1203,9 +1337,11 @@ namespace CastRightCatchInvManagement
             LoadVendorTypes();
         }
 
+        /// <summary>Create a named lookup filter and select it.</summary>
         private void AddVendorFilter()
         {
             string? name = PromptText("New lookup filter", "FILTER NAME");
+            // Cancel or blank name leaves the tree unchanged.
             if (string.IsNullOrWhiteSpace(name))
                 return;
             var catalog = VendorTypes.Catalog();
@@ -1219,9 +1355,11 @@ namespace CastRightCatchInvManagement
             _vendorFilters.SelectedIndex = _vendorFilters.Items.Count - 1;
         }
 
+        /// <summary>Rename the selected lookup filter.</summary>
         private void RenameVendorFilter()
         {
             var filter = SelectedFilter();
+            // No filter selected to save or rename.
             if (filter == null)
             {
                 MessageBox.Show("Select a filter to rename.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1229,11 +1367,13 @@ namespace CastRightCatchInvManagement
             }
 
             string? name = PromptText("Rename lookup filter", "FILTER NAME", filter.Name, "Save");
+            // Cancel or unchanged filter name is a no-op.
             if (string.IsNullOrWhiteSpace(name) || name.Equals(filter.Name, StringComparison.OrdinalIgnoreCase))
                 return;
             var catalog = VendorTypes.Catalog();
             var target = catalog.Filters.FirstOrDefault(item =>
                 item.Id.Equals(filter.Id, StringComparison.OrdinalIgnoreCase));
+            // Filter was deleted on another PC.
             if (target == null)
                 return;
             target.Name = name.Trim();
@@ -1241,9 +1381,11 @@ namespace CastRightCatchInvManagement
             LoadVendorTypes();
         }
 
+        /// <summary>Delete a filter that is not assigned to a form slot.</summary>
         private void DeleteVendorFilter()
         {
             var filter = SelectedFilter();
+            // No filter selected to save or rename.
             if (filter == null)
             {
                 MessageBox.Show("Select a filter to delete.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1253,6 +1395,7 @@ namespace CastRightCatchInvManagement
             var catalog = VendorTypes.Catalog();
             bool used = catalog.Slots.Values.Any(id =>
                 id.Equals(filter.Id, StringComparison.OrdinalIgnoreCase));
+            // Do not delete a filter still assigned to a purchase field.
             if (used)
             {
                 MessageBox.Show(
@@ -1263,6 +1406,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Lookups need at least one filter to bind.
             if (catalog.Filters.Count <= 1)
             {
                 MessageBox.Show("Keep at least one filter.", "Vendor types", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1276,6 +1420,7 @@ namespace CastRightCatchInvManagement
             LoadVendorTypes();
         }
 
+        /// <summary>Stay signed in toggle, duration, and idle close.</summary>
         private void LayoutSessionCard(CardPanel card)
         {
             var heading = new Label
@@ -1343,8 +1488,10 @@ namespace CastRightCatchInvManagement
             card.Controls.Add(_idleHours);
         }
 
+        /// <summary>Load stay-signed-in settings into the controls.</summary>
         private void LoadSession()
         {
+            // Session card not built yet.
             if (_stayToggle == null)
                 return;
             _stayToggle.SetOn(AppState.StaySignedInEnabled);
@@ -1353,6 +1500,7 @@ namespace CastRightCatchInvManagement
             ApplySessionEnabled();
         }
 
+        /// <summary>Write stay-signed-in policy and start or stop idle watch.</summary>
         private void SaveSession()
         {
             AppState.StaySignedInEnabled = _stayToggle.On;
@@ -1360,25 +1508,31 @@ namespace CastRightCatchInvManagement
             AppState.IdleCloseHours = _idleHours.SelectedItem is IntChoice hours ? hours.Value : 5;
             ApplySessionEnabled();
             AppLock.SaveSettings();
+            // Idle watch is meaningless when Stay signed in is off.
             if (!AppState.StaySignedInEnabled)
                 IdleWatch.Stop();
+            // This PC already remembered login, so restart idle timing.
             else if (AppState.StaySignedIn)
                 IdleWatch.Start();
         }
 
+        /// <summary>Enable duration/idle combos only when Stay signed in is on.</summary>
         private void ApplySessionEnabled()
         {
             bool on = _stayToggle.On;
             _sessionDays.Enabled = on;
             _idleHours.Enabled = on;
+            // On/Off label is looked up by name from the card.
             if (Controls.Find("lblStayOnOff", true).FirstOrDefault() is Label label)
                 label.Text = on ? "On" : "Off";
         }
 
+        /// <summary>Select a matching IntChoice, or the fallback.</summary>
         private static void SelectChoice(ComboBox box, int value, int fallback)
         {
             for (int i = 0; i < box.Items.Count; i++)
             {
+                // Select the stored number of days or hours.
                 if (box.Items[i] is IntChoice choice && choice.Value == value)
                 {
                     box.SelectedIndex = i;
@@ -1388,6 +1542,7 @@ namespace CastRightCatchInvManagement
 
             for (int i = 0; i < box.Items.Count; i++)
             {
+                // Stored value is not in the list; use the default.
                 if (box.Items[i] is IntChoice choice && choice.Value == fallback)
                 {
                     box.SelectedIndex = i;
@@ -1395,10 +1550,12 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            // Preselect the first name so Enter adds without extra clicks.
             if (box.Items.Count > 0)
                 box.SelectedIndex = 0;
         }
 
+        /// <summary>SMTP login email, password, host, and port fields.</summary>
         private void LayoutMailCard(CardPanel card)
         {
             var heading = new Label
@@ -1485,9 +1642,11 @@ namespace CastRightCatchInvManagement
             _smtpPort.TextChanged += (_, _) => MarkSmtpDirty();
             _smtpPassword.TextChanged += (_, _) =>
             {
+                // Typing while LoadMail fills fields is not a user edit.
                 if (_loadingMail)
                     return;
                 _smtpPasswordFresh = _smtpPassword.Text.Length > 0;
+                // Clearing the box hides a leftover Show preview.
                 if (!_smtpPasswordFresh)
                     HideSmtpPassword();
                 _smtpPassHint.Text = "";
@@ -1495,17 +1654,22 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Remember unsaved SMTP edits so a tab change can save them.</summary>
         private void MarkSmtpDirty()
         {
+            // Typing while LoadMail fills fields is not a user edit.
             if (_loadingMail)
                 return;
             _smtpDirty = true;
+            // Clear the saved-success hint once they edit again.
             if (_smtpPassHint != null && _smtpPassHint.ForeColor == Theme.Success)
                 _smtpPassHint.Text = "";
         }
 
+        /// <summary>Show a freshly typed password; saved passwords stay hidden.</summary>
         private void ToggleSmtpPassword()
         {
+            // Saved passwords cannot be revealed; only a just-typed one can.
             if (!_smtpPasswordFresh || _smtpPassword.Text.Length == 0)
             {
                 HideSmtpPassword();
@@ -1523,14 +1687,17 @@ namespace CastRightCatchInvManagement
                 : "This is the password you just typed. Click Save to keep it.";
         }
 
+        /// <summary>Mask the password box and reset the Show button.</summary>
         private void HideSmtpPassword()
         {
             _smtpPassword.UseSystemPasswordChar = true;
             _smtpShow.Text = "Show";
         }
 
+        /// <summary>Fill SMTP fields from the database without marking them dirty.</summary>
         private void LoadMail()
         {
+            // Mail card not built yet.
             if (_smtpUser == null)
                 return;
             var row = SqliteInventory.LoadAdminSmtp();
@@ -1558,12 +1725,16 @@ namespace CastRightCatchInvManagement
             _loadingMail = false;
         }
 
+        /// <summary>Write SMTP settings; announce success or failure when requested.</summary>
         private void SaveMail(bool announce = false)
         {
+            // Mail card not built yet.
             if (_smtpUser == null)
                 return;
+            // SMTP is administrator-only even if the tab was left open.
             if (!AppState.IsAdmin)
             {
+                // Silent auto-save on tab change should not toast.
                 if (announce)
                     ToastAlert.Error(FindForm() ?? this, "Only an administrator can save the login email.");
                 return;
@@ -1575,17 +1746,21 @@ namespace CastRightCatchInvManagement
                 ? Mailer.DefaultHost
                 : _smtpHost.Text.Trim();
             int port = Mailer.DefaultPort;
+            // Invalid port falls back to 587.
             if (int.TryParse(_smtpPort.Text.Trim(), out int parsed) && parsed > 0)
                 port = parsed;
 
             bool ok = SqliteInventory.SaveAdminSmtp(email, password, host, port, out string error);
+            // Clear dirty so a later tab change does not rewrite the same values.
             if (ok)
                 _smtpDirty = false;
 
+            // Background save: skip the success/error UI.
             if (!announce)
                 return;
 
             Control toastHost = FindForm() ?? this;
+            // Clear dirty so a later tab change does not rewrite the same values.
             if (ok)
             {
                 var row = SqliteInventory.LoadAdminSmtp();
@@ -1605,6 +1780,7 @@ namespace CastRightCatchInvManagement
                     (row.Password.Length > 0 ? "  Â·  password saved" : "  Â·  no password");
                 ToastAlert.Success(toastHost, "Saved to the database.");
             }
+            // Opposite branch of the condition above.
             else
             {
                 _smtpPassHint.ForeColor = Theme.Danger;
@@ -1623,6 +1799,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Position a caption and text box on a card.</summary>
         private static void PlaceField(Control parent, Label label, TextBox box, int x, int y, int width)
         {
             label.Location = new Point(x, y);
@@ -1635,6 +1812,7 @@ namespace CastRightCatchInvManagement
 
         private sealed class IntChoice
         {
+            /// <summary>Combo item pairing an integer with display text.</summary>
             public IntChoice(int value, string label)
             {
                 Value = value;
@@ -1643,9 +1821,11 @@ namespace CastRightCatchInvManagement
 
             public int Value { get; }
             public string Label { get; }
+            /// <summary>Combo boxes show the label, not the numeric value.</summary>
             public override string ToString() => Label;
         }
 
+        /// <summary>Plaid auto-sync, connect, and API key fields.</summary>
         private void LayoutBankCard(CardPanel card)
         {
             var heading = new Label
@@ -1690,6 +1870,7 @@ namespace CastRightCatchInvManagement
             Theme.StyleGoldButton(connect);
             connect.Click += async (_, _) =>
             {
+                // Connect bank needs keys before opening Plaid Link.
                 if (!PlaidClient.IsConfigured)
                 {
                     ShowKeys(true);
@@ -1784,6 +1965,7 @@ namespace CastRightCatchInvManagement
             card.Controls.Add(_keysPanel);
         }
 
+        /// <summary>Expand or collapse the API keys panel.</summary>
         private void ShowKeys(bool show)
         {
             _keysPanel.Visible = show;
@@ -1793,6 +1975,7 @@ namespace CastRightCatchInvManagement
 
         private sealed class SyncChoice
         {
+            /// <summary>Combo item for auto-sync hours.</summary>
             public SyncChoice(int hours, string label)
             {
                 Hours = hours;
@@ -1801,9 +1984,11 @@ namespace CastRightCatchInvManagement
 
             public int Hours { get; }
             public string Label { get; }
+            /// <summary>Combo boxes show the label, not the numeric value.</summary>
             public override string ToString() => Label;
         }
 
+        /// <summary>Persist Plaid keys and sync interval without a toast.</summary>
         private void SaveBankFeedQuiet()
         {
             AppState.PlaidClientId = _plaidId.Text.Trim();
@@ -1814,6 +1999,7 @@ namespace CastRightCatchInvManagement
             BankLiveWatch.Start();
         }
 
+        /// <summary>Fill Plaid fields and open keys when they are still empty.</summary>
         private void LoadBankFeed()
         {
             _plaidId.Text = AppState.PlaidClientId;
@@ -1826,14 +2012,17 @@ namespace CastRightCatchInvManagement
             ShowKeys(!PlaidClient.IsConfigured);
         }
 
+        /// <summary>Save Plaid settings and toast success.</summary>
         private void SaveBankFeed()
         {
             SaveBankFeedQuiet();
             ToastAlert.Success(this, "Live bank feed settings were saved.");
         }
 
+        /// <summary>Fill the user grid including lock status and table-access summary.</summary>
         private void LoadUsers()
         {
+            // Users tab not built yet.
             if (_grid == null)
                 return;
             _grid.Columns.Clear();
@@ -1856,13 +2045,16 @@ namespace CastRightCatchInvManagement
                     account.IsAdmin ? "Yes" : "",
                     account.IsIt ? "Yes" : "",
                     TableAccess.UserSummary(account.Username));
+                // Highlight locked accounts so IT can call them.
                 if (account.LoginLocked)
                     _grid.Rows[row].DefaultCellStyle.BackColor = Theme.DangerFill;
             }
         }
 
+        /// <summary>Fill the group grid with type, member count, and settings summary.</summary>
         private void LoadGroups()
         {
+            // Groups tab not built yet.
             if (_groupsGrid == null)
                 return;
             _groupsGrid.Columns.Clear();
@@ -1888,20 +2080,25 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Group name in column 0 of the groups grid.</summary>
         private string GroupName(int row) =>
             _groupsGrid.Rows[row].Cells[0].Value?.ToString()?.Trim() ?? "";
 
+        /// <summary>Create a custom group and open its data-access dialog.</summary>
         private void AddGroup()
         {
             string? name = PromptText("New group", "GROUP NAME");
+            // Cancel or blank name leaves the tree unchanged.
             if (string.IsNullOrWhiteSpace(name))
                 return;
+            // Admin and IT already exist and cannot be duplicated.
             if (AccessGroups.IsBuiltIn(name))
             {
                 MessageBox.Show("Admin and IT are built-in groups.", "Groups", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
+            // Group names must be unique.
             if (SqliteInventory.ListAccessGroups().Any(g =>
                     g.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
             {
@@ -1909,6 +2106,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Database rejected the new group.
             if (!SqliteInventory.SaveAccessGroup(name, "", out string error))
             {
                 MessageBox.Show(error, "Groups", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1920,10 +2118,13 @@ namespace CastRightCatchInvManagement
             LoadUsers();
         }
 
+        /// <summary>Open data access for a group that the current user may edit.</summary>
         private void EditGroup(string name)
         {
+            // No selected group row.
             if (name.Length == 0)
                 return;
+            // Admin is locked; IT is administrator-only.
             if (!AccessGroups.CanEdit(name))
             {
                 MessageBox.Show(
@@ -1936,6 +2137,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Reload after a successful group-access save.
             if (UserAccessForm.ShowGroup(this, name))
             {
                 LoadGroups();
@@ -1943,10 +2145,13 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Delete a custom group after confirm.</summary>
         private void DeleteGroup(string name)
         {
+            // No selected group row.
             if (name.Length == 0)
                 return;
+            // Built-in groups cannot be removed.
             if (!AccessGroups.CanDelete(name))
             {
                 MessageBox.Show(
@@ -1961,8 +2166,10 @@ namespace CastRightCatchInvManagement
                 "Delete group",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning);
+            // Accidental delete would drop users from the group.
             if (ask != DialogResult.Yes)
                 return;
+            // Members or a built-in name can block delete.
             if (!SqliteInventory.DeleteAccessGroup(name, out string error))
             {
                 MessageBox.Show(error, "Groups", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1973,6 +2180,7 @@ namespace CastRightCatchInvManagement
             LoadUsers();
         }
 
+        /// <summary>Small text prompt; null if they cancel.</summary>
         private string? PromptText(string title, string caption, string? value = null, string okText = "Create")
         {
             using var form = new Form
@@ -2020,9 +2228,11 @@ namespace CastRightCatchInvManagement
             return form.ShowDialog(this) == DialogResult.OK ? box.Text.Trim() : null;
         }
 
+        /// <summary>Username in column 0 of the users grid.</summary>
         private string RowUser(int row) =>
             _grid.Rows[row].Cells[0].Value?.ToString()?.Trim() ?? "";
 
+        /// <summary>Right-click menu: edit, access, password, lock, delete.</summary>
         private void ShowUserMenu(int row)
         {
             _grid.ClearSelection();
@@ -2030,20 +2240,24 @@ namespace CastRightCatchInvManagement
             string user = RowUser(row);
             var menu = new ContextMenuStrip();
             menu.Items.Add("Edit user", null, (_, _) => EditUser(user));
+            // Administrator-only settings and menu items.
             if (AppState.IsAdmin)
                 menu.Items.Add("Data access", null, (_, _) =>
                 {
                     if (UserAccessForm.ShowFor(this, user))
                         LoadUsers();
                 });
+            // You change your own password; IT resets everyone else.
             if (user.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
                 menu.Items.Add("Change my password", null, (_, _) =>
                 {
                     using var change = new ChangePasswordForm(user, requireCurrent: true);
                     change.ShowDialog(this);
                 });
+            // Opposite branch of the condition above.
             else
                 menu.Items.Add("Reset password", null, (_, _) => ResetPassword(user));
+            // Locked accounts get Clear lock and Set password.
             if (Accounts.List().Any(a =>
                     a.Username.Equals(user, StringComparison.OrdinalIgnoreCase) && a.LoginLocked))
             {
@@ -2055,9 +2269,11 @@ namespace CastRightCatchInvManagement
             menu.Show(_grid, _grid.PointToClient(Control.MousePosition));
         }
 
+        /// <summary>Add or edit a user, then reload lists.</summary>
         private void EditUser(string? username)
         {
             using var form = new ItUserEditForm(username);
+            // Reload after a successful add/edit.
             if (form.ShowDialog(this) == DialogResult.OK)
             {
                 LoadUsers();
@@ -2065,6 +2281,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Generate a temporary password and email it when SMTP is set.</summary>
         private void ResetPassword(string username)
         {
             var confirm = MessageBox.Show(
@@ -2072,10 +2289,12 @@ namespace CastRightCatchInvManagement
                 "Reset password",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
+            // Accidental reset/delete must not change the account.
             if (confirm != DialogResult.Yes)
                 return;
 
             string temp = Accounts.GenerateTemporaryPassword();
+            // Do not email a password we failed to store.
             if (!Accounts.SetPassword(username, temp, out string error, mustChange: true))
             {
                 MessageBox.Show(error, "Reset password", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -2088,8 +2307,10 @@ namespace CastRightCatchInvManagement
             LoadUsers();
         }
 
+        /// <summary>Unlock a locked account after IT confirms the person.</summary>
         private void ClearLoginLock(string username)
         {
+            // Non-IT callers or missing users are rejected.
             if (!Accounts.UnlockLogin(username, out string error))
             {
                 MessageBox.Show(error, "Clear lock", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -2100,10 +2321,13 @@ namespace CastRightCatchInvManagement
             LoadUsers();
         }
 
+        /// <summary>Set a phone-dictated password that must change at sign-in.</summary>
         private void SetCustomPassword(string username)
         {
+            // Cancel leaves the lock and old password.
             if (!PromptCustomPassword(username, out string password))
                 return;
+            // Policy failures keep the previous password.
             if (!Accounts.SetPassword(username, password, out string error, mustChange: true))
             {
                 MessageBox.Show(error, "Set password", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -2114,6 +2338,7 @@ namespace CastRightCatchInvManagement
             LoadUsers();
         }
 
+        /// <summary>Ask for a new password twice; false if they cancel.</summary>
         private bool PromptCustomPassword(string username, out string password)
         {
             password = "";
@@ -2172,6 +2397,7 @@ namespace CastRightCatchInvManagement
             string chosen = "";
             ok.Click += (_, _) =>
             {
+                // Empty or mismatched passwords must not save.
                 if (box.Text.Length == 0 || box.Text != confirm.Text)
                 {
                     MessageBox.Show(
@@ -2194,12 +2420,14 @@ namespace CastRightCatchInvManagement
             form.Controls.Add(confirm);
             form.Controls.Add(ok);
             form.Controls.Add(cancel);
+            // Cancel returns no password.
             if (form.ShowDialog(this) != DialogResult.OK)
                 return false;
             password = chosen;
             return password.Length > 0;
         }
 
+        /// <summary>Delete a user after confirm, blocking last IT/admin and self.</summary>
         private void DeleteUser(string username)
         {
             var confirm = MessageBox.Show(
@@ -2207,9 +2435,11 @@ namespace CastRightCatchInvManagement
                 "Delete user",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning);
+            // Accidental reset/delete must not change the account.
             if (confirm != DialogResult.Yes)
                 return;
 
+            // Last IT/admin or self-delete is blocked.
             if (!Accounts.DeleteUser(username, out string error))
             {
                 MessageBox.Show(error, "Delete user", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -2220,6 +2450,7 @@ namespace CastRightCatchInvManagement
             LoadRoles();
         }
 
+        /// <summary>Administrator or IT list with Add and Remove.</summary>
         private CardPanel RoleCard(string title, bool admin, out ListBox list)
         {
             var card = new CardPanel { Dock = DockStyle.Fill, Margin = new Padding(admin ? 0 : 8, 0, admin ? 8 : 0, 0) };
@@ -2260,14 +2491,17 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
+        /// <summary>Fill administrator and IT list boxes.</summary>
         private void LoadRoles()
         {
+            // Role lists not built yet.
             if (_admins == null)
                 return;
             FillRoles(_admins, Accounts.ReadAdmins());
             FillRoles(_it, Accounts.ReadIt());
         }
 
+        /// <summary>Replace list-box items with sorted usernames.</summary>
         private static void FillRoles(ListBox box, List<string> names)
         {
             box.Items.Clear();
@@ -2275,6 +2509,7 @@ namespace CastRightCatchInvManagement
                 box.Items.Add(name);
         }
 
+        /// <summary>Grant administrator or IT to a picked user.</summary>
         private void AddRole(bool admin)
         {
             var existing = new HashSet<string>(
@@ -2285,6 +2520,7 @@ namespace CastRightCatchInvManagement
                 .Where(name => !existing.Contains(name))
                 .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            // Every user already has this role.
             if (choices.Length == 0)
             {
                 MessageBox.Show(
@@ -2296,14 +2532,17 @@ namespace CastRightCatchInvManagement
             }
 
             string? picked = PickUser(choices, admin ? "Add administrator" : "Add IT user");
+            // Cancel on the picker leaves roles unchanged.
             if (string.IsNullOrWhiteSpace(picked))
                 return;
 
+            // Keep admins.json and the Admin group in sync.
             if (admin)
             {
                 Accounts.AddAdmin(picked);
                 SqliteInventory.AddAccessGroup(picked, AccessGroups.Admin);
             }
+            // Opposite branch of the condition above.
             else
             {
                 Accounts.AddIt(picked);
@@ -2316,26 +2555,33 @@ namespace CastRightCatchInvManagement
             LoadGroups();
         }
 
+        /// <summary>Revoke administrator or IT from the selected name.</summary>
         private void RemoveRole(bool admin, ListBox box)
         {
+            // Remove needs a selected name.
             if (box.SelectedItem is not string username)
                 return;
 
+            // Last remaining admin/IT is blocked.
             if (!(admin ? Accounts.RemoveAdmin(username, out string error) : Accounts.RemoveIt(username, out error)))
             {
                 MessageBox.Show(error, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
+            // Keep admins.json and the Admin group in sync.
             if (admin)
                 SqliteInventory.RemoveAccessGroup(username, AccessGroups.Admin);
+            // Opposite branch of the condition above.
             else
                 SqliteInventory.RemoveAccessGroup(username, AccessGroups.IT);
 
             if (username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
             {
+                // Keep admins.json and the Admin group in sync.
                 if (admin)
                     AppState.IsAdmin = Accounts.IsAdmin(username);
+                // Opposite branch of the condition above.
                 else
                     AppState.IsIt = Accounts.IsIt(username);
                 TableAccess.Apply(username);
@@ -2347,8 +2593,10 @@ namespace CastRightCatchInvManagement
             LoadGroups();
         }
 
+        /// <summary>Reload rights immediately when the signed-in user changed roles.</summary>
         private static void ApplyGroupIfCurrent(string username)
         {
+            // Other users pick up the role at next sign-in.
             if (!username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
                 return;
             AppState.IsAdmin = Accounts.IsAdmin(username);
@@ -2357,6 +2605,7 @@ namespace CastRightCatchInvManagement
             AppLock.NotifyChanged();
         }
 
+        /// <summary>Modal combo to pick a username, or null if they cancel.</summary>
         private string? PickUser(string[] choices, string title)
         {
             using var form = new Form
@@ -2378,6 +2627,7 @@ namespace CastRightCatchInvManagement
             };
             Theme.StyleCombo(box);
             box.Items.AddRange(choices);
+            // Preselect the first name so Enter adds without extra clicks.
             if (box.Items.Count > 0)
                 box.SelectedIndex = 0;
             var ok = new Button

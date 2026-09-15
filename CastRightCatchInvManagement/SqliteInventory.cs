@@ -32,6 +32,7 @@ namespace CastRightCatchInvManagement
             DataFiles.Credits
         };
 
+        /// <summary>Full path of crc_inventory.db, or null when no inventory folder is selected.</summary>
         public static string? GetPath()
         {
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) ||
@@ -41,6 +42,7 @@ namespace CastRightCatchInvManagement
             return Path.Combine(AppState.InventoryFolder, FileName);
         }
 
+        /// <summary>Full path of old_inventory.db, or null when no inventory folder is selected.</summary>
         public static string? GetArchivePath()
         {
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) ||
@@ -50,6 +52,7 @@ namespace CastRightCatchInvManagement
             return Path.Combine(AppState.InventoryFolder, ArchiveFileName);
         }
 
+        /// <summary>True when the live database file exists, or when a remote session is connected.</summary>
         public static bool Exists()
         {
             if (DataLink.IsRemote)
@@ -69,6 +72,7 @@ namespace CastRightCatchInvManagement
             EnsureCreated(archive: true);
         }
 
+        /// <summary>Create one database (live or archive) and its tables, then live-only settings/accounts/PDFs.</summary>
         public static void EnsureCreated(bool archive)
         {
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
@@ -110,6 +114,7 @@ namespace CastRightCatchInvManagement
                     DropTextColumn(table, "PDF Created", archive);
             }
 
+            // Archive files hold process tables only; settings and accounts stay in live.
             if (archive)
                 return;
 
@@ -259,6 +264,7 @@ namespace CastRightCatchInvManagement
             UpgradeSecrets();
         }
 
+        /// <summary>Load leftover table_*.csv files into empty tables so a first open keeps old spreadsheet data.</summary>
         public static void ImportCsvsIfEmpty()
         {
             if (DataLink.IsRemote)
@@ -305,6 +311,7 @@ namespace CastRightCatchInvManagement
         public static bool UsingArchive(string table) =>
             AppState.ViewingOldInventory && IsProcessTable(table);
 
+        /// <summary>Expected columns plus any extra columns already on the table, omitting dropped leftovers.</summary>
         public static string[] Headers(string table)
         {
             if (DataLink.Try(ServerOps.TableHeaders, DataLink.Table(table), out string[]? headers) && headers != null)
@@ -354,6 +361,7 @@ namespace CastRightCatchInvManagement
             if (column.Length == 0 || value.Length == 0)
                 return;
 
+            // Remote server has no streamed WHERE; filter the full table in memory.
             if (DataLink.IsRemote)
             {
                 foreach (var row in Read(table))
@@ -367,6 +375,7 @@ namespace CastRightCatchInvManagement
             }
 
             EnsureCreated();
+            // Old view: archive rows first, then live.
             if (UsingArchive(table))
                 ForEachWhereOn(table, archive: true, column, value, each, cancel);
             ForEachWhereOn(table, archive: false, column, value, each, cancel);
@@ -393,6 +402,7 @@ namespace CastRightCatchInvManagement
         public static List<(long Id, Dictionary<string, string> Fields)> ReadWithIds(string table) =>
             DataAccess.RestrictRows(table, ReadWithIdsUnrestricted(table));
 
+        /// <summary>Every row with ids, ignoring user blocks. Archive ids are negative.</summary>
         public static List<(long Id, Dictionary<string, string> Fields)> ReadWithIdsUnrestricted(string table)
         {
             if (DataLink.Try(ServerOps.TableReadIds, DataLink.Table(table), out List<IdFieldsDto>? remote) &&
@@ -438,6 +448,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Bulk-insert rows in one transaction (or via the server) and return how many were written.</summary>
         public static int InsertMany(
             string table,
             IEnumerable<Dictionary<string, string>> rows,
@@ -510,6 +521,7 @@ namespace CastRightCatchInvManagement
             return cmd.ExecuteNonQuery() > 0;
         }
 
+        /// <summary>Delete one row by id (live or archive). Remote still uses the local delete path today.</summary>
         public static bool DeleteById(string table, long id)
         {
             if (DataLink.IsRemote)
@@ -522,6 +534,7 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>Add missing TEXT columns on live, and on archive when Old view is combining both.</summary>
         public static void EnsureColumns(string table, params string[] columns)
         {
             if (columns.Length == 0)
@@ -538,6 +551,7 @@ namespace CastRightCatchInvManagement
                 EnsureColumnsOn(table, columns, archive: true);
         }
 
+        /// <summary>Row count in the current view (live, plus archive when Old is on).</summary>
         public static int Count(string table, bool currentTermOnly = true)
         {
             if (DataLink.Try(ServerOps.TableCount, DataLink.Table(table, currentTermOnly: currentTermOnly), out int count))
@@ -603,6 +617,7 @@ namespace CastRightCatchInvManagement
             return moved;
         }
 
+        /// <summary>Newest term_start date across live tables, used to restore TermStartDate.</summary>
         public static DateTime? LatestTerm()
         {
             if (DataLink.Try(ServerOps.TableLatestTerm, new { }, out string? text))
@@ -624,6 +639,7 @@ namespace CastRightCatchInvManagement
             return latest;
         }
 
+        /// <summary>True for UNC, network drives, and common cloud-sync folders that cannot share WAL files.</summary>
         public static bool IsSharedLocation(string? folder)
         {
             if (string.IsNullOrWhiteSpace(folder))
@@ -655,6 +671,7 @@ namespace CastRightCatchInvManagement
                    lower.Contains(@"\icloud");
         }
 
+        /// <summary>App settings; admins see revealed secrets, everyone else gets public keys only.</summary>
         public static Dictionary<string, string> ReadSettings()
         {
             if (AppState.IsAdmin &&
@@ -671,6 +688,7 @@ namespace CastRightCatchInvManagement
                 : SecretProtect.WithoutSecrets(map);
         }
 
+        /// <summary>Settings with secret values stripped, for non-admin callers and shared layout fallbacks.</summary>
         public static Dictionary<string, string> ReadPublicSettings()
         {
             if (DataLink.Try(ServerOps.SettingsReadPublic, new { }, out Dictionary<string, string>? remote) &&
@@ -680,6 +698,7 @@ namespace CastRightCatchInvManagement
             return SecretProtect.WithoutSecrets(ReadSettingsRaw());
         }
 
+        /// <summary>Read app_settings as stored, including sealed secret values.</summary>
         private static Dictionary<string, string> ReadSettingsRaw()
         {
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -697,6 +716,7 @@ namespace CastRightCatchInvManagement
             return map;
         }
 
+        /// <summary>Per-user prefs (grid layouts, etc.) for the signed-in account.</summary>
         public static Dictionary<string, string> ReadPrefs()
         {
             string user = (AppState.CurrentUsername ?? "").Trim();
@@ -717,6 +737,7 @@ namespace CastRightCatchInvManagement
             return map;
         }
 
+        /// <summary>Upsert prefs for the signed-in user; no-op when nobody is signed in.</summary>
         public static void WritePrefs(Dictionary<string, string> values)
         {
             string user = (AppState.CurrentUsername ?? "").Trim();
@@ -750,6 +771,7 @@ namespace CastRightCatchInvManagement
             tx.Commit();
         }
 
+        /// <summary>Load the single admin SMTP row, revealing the sealed password.</summary>
         public static (string Email, string Password, string Host, int Port) LoadAdminSmtp()
         {
             EnsureCreated();
@@ -770,6 +792,7 @@ namespace CastRightCatchInvManagement
             return (email ?? "", password ?? "", host ?? "", port);
         }
 
+        /// <summary>Copy stored SMTP credentials into AppState for Mailer.</summary>
         public static void ApplyAdminSmtp()
         {
             var row = LoadAdminSmtp();
@@ -835,6 +858,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Copy leftover smtp_* app_settings into admin_smtp once, if that table is still empty.</summary>
         private static void SeedAdminSmtpFromSettings()
         {
             using var db = Open();
@@ -874,6 +898,7 @@ namespace CastRightCatchInvManagement
             insert.ExecuteNonQuery();
         }
 
+        /// <summary>Upsert app_settings, sealing secrets; non-admins cannot overwrite secret keys.</summary>
         public static void WriteSettings(Dictionary<string, string> values)
         {
             if (DataLink.IsRemote)
@@ -905,6 +930,7 @@ namespace CastRightCatchInvManagement
             tx.Commit();
         }
 
+        /// <summary>Email stored for a Windows user on this PC, used before an inventory account exists.</summary>
         public static string? ReadUserEmail(string windowsUser)
         {
             windowsUser = (windowsUser ?? "").Trim();
@@ -921,6 +947,7 @@ namespace CastRightCatchInvManagement
             return value;
         }
 
+        /// <summary>Remember the Windows user's email for first-run account setup.</summary>
         public static void WriteUserEmail(string windowsUser, string? email)
         {
             windowsUser = (windowsUser ?? "").Trim();
@@ -949,6 +976,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>How many app_accounts rows exist (local or remote).</summary>
         public static int CountAccounts()
         {
             if (DataLink.Try(ServerOps.AccountsCount, new { }, out int count))
@@ -960,6 +988,7 @@ namespace CastRightCatchInvManagement
             return Convert.ToInt32(cmd.ExecuteScalar());
         }
 
+        /// <summary>Load hash, salt, display name, email, and must-change flag for a username.</summary>
         public static bool TryGetAccount(
             string username,
             out string passwordHash,
@@ -1007,6 +1036,7 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>Insert a new account; returns false on a duplicate username.</summary>
         public static bool InsertAccount(
             string username,
             string displayName,
@@ -1039,10 +1069,12 @@ namespace CastRightCatchInvManagement
             }
             catch (SqliteException)
             {
+                // UNIQUE username conflict: the account already exists.
                 return false;
             }
         }
 
+        /// <summary>All accounts for user management, including lock and stay-signed-in flags.</summary>
         public static List<(string Username, string DisplayName, string Email, bool IsAdmin, bool IsIt, bool StaySignedIn, bool LoginLocked)> ListAccounts()
         {
             if (DataLink.Try(ServerOps.AccountsList, new { }, out List<AccountListDto>? remote) && remote != null)
@@ -1079,6 +1111,7 @@ namespace CastRightCatchInvManagement
             return list;
         }
 
+        /// <summary>Update display name and email for an existing username.</summary>
         public static bool UpdateAccount(
             string username,
             string displayName,
@@ -1110,6 +1143,7 @@ namespace CastRightCatchInvManagement
             return cmd.ExecuteNonQuery() > 0;
         }
 
+        /// <summary>Replace hash and salt, then drop sessions and clear lockout counters.</summary>
         public static bool UpdateAccountPassword(string username, string passwordHash, string passwordSalt)
         {
             username = (username ?? "").Trim();
@@ -1138,6 +1172,7 @@ namespace CastRightCatchInvManagement
             return updated;
         }
 
+        /// <summary>Force or clear the must-change-password flag after a reset.</summary>
         public static void SetMustChangePassword(string username, bool mustChange)
         {
             username = (username ?? "").Trim();
@@ -1163,6 +1198,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Rename an account and its stay-signed-in sessions; fails on a taken name.</summary>
         public static bool RenameAccount(string oldUsername, string newUsername)
         {
             oldUsername = (oldUsername ?? "").Trim();
@@ -1193,10 +1229,12 @@ namespace CastRightCatchInvManagement
             }
             catch (SqliteException)
             {
+                // UNIQUE conflict: the new username is already taken.
                 return false;
             }
         }
 
+        /// <summary>Set only the email on an account row.</summary>
         public static void UpdateAccountEmail(string username, string email)
         {
             username = (username ?? "").Trim();
@@ -1221,6 +1259,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Reset recovery-question lockout after a successful password change.</summary>
         private static void ClearRecoveryFails(string username)
         {
             username = (username ?? "").Trim();
@@ -1235,6 +1274,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>False when the account is IT-locked or still in a timed lockout from failed logins.</summary>
         public static bool AllowLogin(string username, out string error)
         {
             error = "";
@@ -1269,6 +1309,7 @@ namespace CastRightCatchInvManagement
             return true;
         }
 
+        /// <summary>Count a failed login, apply the next lockout penalty, and return the message to show.</summary>
         public static string NoteLoginFailure(string username)
         {
             username = (username ?? "").Trim();
@@ -1303,6 +1344,7 @@ namespace CastRightCatchInvManagement
             return penalty.Message;
         }
 
+        /// <summary>Clear an expired timed lock so the next login is not still blocked.</summary>
         private static void ClearLoginTimeLock(string username)
         {
             using var db = Open();
@@ -1313,6 +1355,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Reset failed-login count and lock after a successful sign-in.</summary>
         public static void ClearLoginFails(string username)
         {
             username = (username ?? "").Trim();
@@ -1327,6 +1370,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Delete an account and its stay-signed-in sessions.</summary>
         public static bool DeleteAccount(string username)
         {
             username = (username ?? "").Trim();
@@ -1344,6 +1388,7 @@ namespace CastRightCatchInvManagement
             return cmd.ExecuteNonQuery() > 0;
         }
 
+        /// <summary>True when this account may keep a hashed stay-signed-in token.</summary>
         public static bool GetStaySignedIn(string username)
         {
             username = (username ?? "").Trim();
@@ -1362,6 +1407,7 @@ namespace CastRightCatchInvManagement
             return value != null && value != DBNull.Value && Convert.ToInt32(value) != 0;
         }
 
+        /// <summary>Turn stay-signed-in on or off; turning it off drops existing sessions.</summary>
         public static void SetStaySignedIn(string username, bool enabled)
         {
             username = (username ?? "").Trim();
@@ -1415,6 +1461,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Username for a still-valid stay-signed-in token, or null if expired or remote.</summary>
         public static string? FindSessionUsername(string tokenHash)
         {
             tokenHash = (tokenHash ?? "").Trim();
@@ -1438,6 +1485,7 @@ namespace CastRightCatchInvManagement
             return cmd.ExecuteScalar()?.ToString();
         }
 
+        /// <summary>Drop one stay-signed-in token (sign-out on this PC).</summary>
         public static void DeleteSession(string tokenHash)
         {
             tokenHash = (tokenHash ?? "").Trim();
@@ -1454,6 +1502,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Drop every stay-signed-in token for a user (password change, disable, or delete).</summary>
         public static void DeleteSessionsForUser(string username)
         {
             username = (username ?? "").Trim();
@@ -1470,6 +1519,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Point existing stay-signed-in tokens at the renamed username.</summary>
         public static void RenameSessions(string oldUsername, string newUsername)
         {
             oldUsername = (oldUsername ?? "").Trim();
@@ -1488,6 +1538,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Remove stay-signed-in tokens whose expires_at has passed.</summary>
         private static void DeleteExpiredSessions()
         {
             using var db = Open();
@@ -1497,6 +1548,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Set is_admin and is_it flags on an account.</summary>
         public static void SetAccountRoles(string username, bool isAdmin, bool isIt)
         {
             username = (username ?? "").Trim();
@@ -1524,6 +1576,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Company bank accounts for Banking, without Plaid tokens.</summary>
         public static List<(long Id, string Name, string Bank, string Last4, string Notes)> ListBankAccounts()
         {
             if (DataLink.Try(ServerOps.BankList, new { }, out List<BankRowDto>? banks) && banks != null)
@@ -1548,6 +1601,7 @@ namespace CastRightCatchInvManagement
             return list;
         }
 
+        /// <summary>Insert a bank account row and return its id.</summary>
         public static long InsertBankAccount(string name, string bank, string last4, string notes)
         {
             if (DataLink.Try(ServerOps.BankInsert, new BankWriteRequest
@@ -1574,6 +1628,7 @@ namespace CastRightCatchInvManagement
             return Convert.ToInt64(cmd.ExecuteScalar());
         }
 
+        /// <summary>Update display fields on a bank account; Plaid tokens are set separately.</summary>
         public static void UpdateBankAccount(long id, string name, string bank, string last4, string notes)
         {
             if (DataLink.IsRemote)
@@ -1601,6 +1656,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Delete a bank account row and its stored Plaid link.</summary>
         public static void DeleteBankAccount(long id)
         {
             if (DataLink.IsRemote)
@@ -1616,6 +1672,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Ensure Admin (locked, no tables) and IT (empty access until set) groups exist.</summary>
         private static void SeedAccessGroups(SqliteCommand cmd)
         {
             cmd.Parameters.Clear();
@@ -1638,6 +1695,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Per-user table_access JSON overlay, or empty when the user follows groups only.</summary>
         public static string GetTableAccess(string username)
         {
             username = (username ?? "").Trim();
@@ -1654,6 +1712,7 @@ namespace CastRightCatchInvManagement
             return cmd.ExecuteScalar()?.ToString() ?? "";
         }
 
+        /// <summary>Merged table_access JSON from every group this user belongs to (allowed wins).</summary>
         public static string GetGroupAccessMerged(string username)
         {
             var groups = GetAccessGroups(username);
@@ -1664,15 +1723,19 @@ namespace CastRightCatchInvManagement
             return DataAccess.Merge(groups.Select(GetGroupAccess));
         }
 
+        /// <summary>Group access with this user's overlay applied.</summary>
         public static string GetEffectiveTableAccess(string username) =>
             DataAccess.Overlay(GetGroupAccessMerged(username), GetTableAccess(username));
 
+        /// <summary>True when the account stores its own table_access JSON on top of groups.</summary>
         public static bool HasAccessOverride(string username) =>
             !string.IsNullOrWhiteSpace(GetTableAccess(username));
 
+        /// <summary>Comma-joined group names for display.</summary>
         public static string GetAccessGroup(string username) =>
             AccessGroups.Join(GetAccessGroups(username));
 
+        /// <summary>Parse the account's access_group list.</summary>
         public static List<string> GetAccessGroups(string username)
         {
             username = (username ?? "").Trim();
@@ -1686,9 +1749,11 @@ namespace CastRightCatchInvManagement
             return AccessGroups.Parse(cmd.ExecuteScalar()?.ToString());
         }
 
+        /// <summary>Replace the account's group list from a stored comma/semicolon string.</summary>
         public static void SetAccessGroup(string username, string group) =>
             SetAccessGroups(username, AccessGroups.Parse(group));
 
+        /// <summary>Replace the account's group membership list.</summary>
         public static void SetAccessGroups(string username, IEnumerable<string> groups)
         {
             username = (username ?? "").Trim();
@@ -1703,6 +1768,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Add a group to the account if it is not already listed.</summary>
         public static void AddAccessGroup(string username, string group)
         {
             group = (group ?? "").Trim();
@@ -1715,6 +1781,7 @@ namespace CastRightCatchInvManagement
             SetAccessGroups(username, groups);
         }
 
+        /// <summary>Remove a group from the account's membership list.</summary>
         public static void RemoveAccessGroup(string username, string group)
         {
             group = (group ?? "").Trim();
@@ -1724,6 +1791,7 @@ namespace CastRightCatchInvManagement
                 .Where(name => !name.Equals(group, StringComparison.OrdinalIgnoreCase)));
         }
 
+        /// <summary>All access groups, with Admin then IT first, then the rest A–Z.</summary>
         public static List<(string Name, string Access)> ListAccessGroups()
         {
             EnsureCreated();
@@ -1747,6 +1815,7 @@ namespace CastRightCatchInvManagement
             return list;
         }
 
+        /// <summary>table_access JSON stored on an access group.</summary>
         public static string GetGroupAccess(string name)
         {
             name = (name ?? "").Trim();
@@ -1760,6 +1829,7 @@ namespace CastRightCatchInvManagement
             return cmd.ExecuteScalar()?.ToString() ?? "";
         }
 
+        /// <summary>Insert or update a group. Admin is locked; only an administrator can change IT.</summary>
         public static bool SaveAccessGroup(string name, string json, out string error)
         {
             error = "";
@@ -1811,6 +1881,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Delete a custom group and strip it from every account; built-in groups cannot be removed.</summary>
         public static bool DeleteAccessGroup(string name, out string error)
         {
             error = "";
@@ -1865,6 +1936,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>How many accounts currently list this group.</summary>
         public static int CountGroupMembers(string name)
         {
             name = (name ?? "").Trim();
@@ -1885,6 +1957,7 @@ namespace CastRightCatchInvManagement
             return count;
         }
 
+        /// <summary>Store a per-user table_access overlay (empty string means follow groups only).</summary>
         public static void SetTableAccess(string username, string json)
         {
             username = (username ?? "").Trim();
@@ -1909,6 +1982,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Plaid tokens for a bank account; the access token is sealed at rest.</summary>
         public static (string AccessToken, string ItemId, string AccountId, string Cursor) GetBankLiveLink(long id)
         {
             if (DataLink.Try(ServerOps.BankLinkGet, new BankWriteRequest { Id = id }, out BankLinkDto? link) &&
@@ -1934,6 +2008,7 @@ namespace CastRightCatchInvManagement
                 reader.IsDBNull(3) ? "" : reader.GetString(3));
         }
 
+        /// <summary>Store a Plaid item link, sealing the access token.</summary>
         public static void SetBankLiveLink(
             long id,
             string accessToken,
@@ -1973,6 +2048,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Update the Plaid transactions cursor after a successful sync.</summary>
         public static void SetBankLiveCursor(long id, string cursor)
         {
             if (DataLink.IsRemote)
@@ -1989,6 +2065,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Add a missing TEXT column and backfill Record Status to Live when that column is new.</summary>
         private static void EnsureTextColumn(string table, string column, bool archive = false)
         {
             var existing = new HashSet<string>(TableColumns(table, archive), StringComparer.OrdinalIgnoreCase);
@@ -2003,6 +2080,7 @@ namespace CastRightCatchInvManagement
                 BackfillLiveStatus(table, archive);
         }
 
+        /// <summary>Set blank Record Status cells to Live so older rows take part in the workflow.</summary>
         private static void BackfillLiveStatus(string table, bool archive = false)
         {
             var existing = new HashSet<string>(TableColumns(table, archive), StringComparer.OrdinalIgnoreCase);
@@ -2018,6 +2096,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Drop a leftover column that is no longer in the schema, if it still exists.</summary>
         private static void DropTextColumn(string table, string column, bool archive = false)
         {
             var existing = new HashSet<string>(TableColumns(table, archive), StringComparer.OrdinalIgnoreCase);
@@ -2030,11 +2109,13 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Add a missing column on app_accounts.</summary>
         private static void EnsureAccountColumn(string column, string definition)
         {
             EnsureAccountColumn("app_accounts", column, definition);
         }
 
+        /// <summary>Add a missing column on an accounts-related table (app_accounts or bank_accounts).</summary>
         private static void EnsureAccountColumn(string table, string column, string definition)
         {
             var existing = new HashSet<string>(TableColumns(table), StringComparer.OrdinalIgnoreCase);
@@ -2047,6 +2128,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Insert or replace a stored PDF blob keyed by kind and document number.</summary>
         public static void SavePdf(string kind, string key, string fileName, byte[] content)
         {
             kind = (kind ?? "").Trim();
@@ -2087,6 +2169,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Remove one stored PDF by kind and document number.</summary>
         public static void DeletePdf(string kind, string key)
         {
             kind = (kind ?? "").Trim();
@@ -2108,6 +2191,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>True when stored_pdfs already has this kind and key.</summary>
         public static bool HasPdf(string kind, string key)
         {
             kind = (kind ?? "").Trim();
@@ -2127,6 +2211,7 @@ namespace CastRightCatchInvManagement
             return cmd.ExecuteScalar() != null;
         }
 
+        /// <summary>Load a PDF by exact key, or the newest file_name that contains the key.</summary>
         public static (string FileName, byte[] Content)? TryGetPdf(string kind, string key)
         {
             kind = (kind ?? "").Trim();
@@ -2170,6 +2255,7 @@ namespace CastRightCatchInvManagement
             return (name, bytes);
         }
 
+        /// <summary>Import leftover invoice and sales-order PDFs from disk folders into stored_pdfs.</summary>
         public static void ImportPdfsFromFolders()
         {
             if (DataLink.IsRemote)
@@ -2182,6 +2268,7 @@ namespace CastRightCatchInvManagement
             ImportPdfFolder(DataFiles.GetStoredSalesOrdersFolder(), DataFiles.PdfKindSalesOrder, "Sales Order ");
         }
 
+        /// <summary>Every stored PDF of one kind (invoice, sales_order, …).</summary>
         public static List<(string Key, string FileName, byte[] Content)> ListPdfs(string kind)
         {
             kind = (kind ?? "").Trim();
@@ -2209,6 +2296,7 @@ namespace CastRightCatchInvManagement
             return list;
         }
 
+        /// <summary>Delete every stored PDF of one kind.</summary>
         public static void DeletePdfs(string kind)
         {
             kind = (kind ?? "").Trim();
@@ -2223,6 +2311,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Import each PDF in a leftover folder unless that document key is already stored.</summary>
         private static void ImportPdfFolder(string? folder, string kind, string prefix)
         {
             if (folder == null || !Directory.Exists(folder))
@@ -2255,6 +2344,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Map a SQLite row to named fields, skipping id/term_start and revealing sealed cells.</summary>
         private static Dictionary<string, string> ReadRow(string table, SqliteDataReader reader)
         {
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -2271,6 +2361,7 @@ namespace CastRightCatchInvManagement
             return map;
         }
 
+        /// <summary>Append every row from live or archive into <paramref name="result"/>.</summary>
         private static void AppendRows(
             string table,
             bool archive,
@@ -2294,6 +2385,7 @@ namespace CastRightCatchInvManagement
             CancellationToken cancel)
         {
             var columns = new HashSet<string>(TableColumns(table, archive), StringComparer.OrdinalIgnoreCase);
+            // Schema on this database may not have the filter column yet.
             if (!columns.Contains(column))
                 return;
 
@@ -2310,6 +2402,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Append rows with ids; archive ids are negated so they cannot collide with live ids.</summary>
         private static void AppendRowsWithIds(
             string table,
             bool archive,
@@ -2328,6 +2421,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Add any missing TEXT columns on one database file.</summary>
         private static void EnsureColumnsOn(string table, IEnumerable<string> columns, bool archive)
         {
             var existing = new HashSet<string>(TableColumns(table, archive), StringComparer.OrdinalIgnoreCase);
@@ -2343,6 +2437,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>COUNT(*) on live or archive for one table.</summary>
         private static int CountIn(string table, bool archive)
         {
             using var db = Open(archive);
@@ -2358,6 +2453,7 @@ namespace CastRightCatchInvManagement
 
         private static long DecodeRowId(long id) => id < 0 ? -id : id;
 
+        /// <summary>Column names for one file, or the union of live and archive when Old view is on.</summary>
         private static List<string> TableColumns(string table, bool? archive = null)
         {
             if (archive == null && UsingArchive(table))
@@ -2377,6 +2473,7 @@ namespace CastRightCatchInvManagement
             return TableColumnsFrom(table, archive ?? false);
         }
 
+        /// <summary>PRAGMA table_info column names for one database file.</summary>
         private static List<string> TableColumnsFrom(string table, bool archive)
         {
             var list = new List<string>();
@@ -2414,6 +2511,7 @@ namespace CastRightCatchInvManagement
             return db;
         }
 
+        /// <summary>Seal any leftover plaintext SMTP, Plaid, routing, and account-number values.</summary>
         private static void UpgradeSecrets()
         {
             UpgradeSetting("smtp_password");
@@ -2426,6 +2524,7 @@ namespace CastRightCatchInvManagement
             UpgradeColumn(DataFiles.Vendors, DataFiles.AccountNumber);
         }
 
+        /// <summary>Seal one app_settings value if it is still stored in plaintext.</summary>
         private static void UpgradeSetting(string key)
         {
             using var db = Open();
@@ -2442,6 +2541,7 @@ namespace CastRightCatchInvManagement
             write.ExecuteNonQuery();
         }
 
+        /// <summary>Seal admin_smtp.password if it is still stored in plaintext.</summary>
         private static void UpgradeSmtpPassword()
         {
             using var db = Open();
@@ -2456,6 +2556,7 @@ namespace CastRightCatchInvManagement
             write.ExecuteNonQuery();
         }
 
+        /// <summary>Seal every plaintext cell in a sensitive column (routing, account, Plaid token).</summary>
         private static void UpgradeColumn(string table, string column)
         {
             var columns = TableColumns(table);
@@ -2486,6 +2587,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Value to store for a column: Live if Record Status is blank, otherwise sealed when needed.</summary>
         private static string CellValue(string table, Dictionary<string, string> values, string name)
         {
             string value = Lookup(values, name);
@@ -2495,6 +2597,7 @@ namespace CastRightCatchInvManagement
             return SecretProtect.StoreField(table, name, value);
         }
 
+        /// <summary>Case-insensitive field lookup, with Customer PO / Lot # aliases for older sale rows.</summary>
         private static string Lookup(Dictionary<string, string> values, string name)
         {
             foreach (var pair in values)
@@ -2524,6 +2627,7 @@ namespace CastRightCatchInvManagement
             return "";
         }
 
+        /// <summary>Default TermStartDate to today when a write happens before Settings has a term.</summary>
         private static void EnsureTerm()
         {
             if (AppState.TermStartDate != null)
@@ -2532,9 +2636,11 @@ namespace CastRightCatchInvManagement
             AppLock.SaveSettings();
         }
 
+        /// <summary>Current term as yyyy-MM-dd for term_start stamps.</summary>
         private static string TermKey() =>
             (AppState.TermStartDate ?? DateTime.Today).ToString("yyyy-MM-dd");
 
+        /// <summary>True for tables that roll into old_inventory.db when completed.</summary>
         private static bool IsProcessTable(string table) =>
             ProcessTables.Any(t => t.Equals(table, StringComparison.OrdinalIgnoreCase));
 
@@ -2592,15 +2698,18 @@ namespace CastRightCatchInvManagement
             return !IsProcessTable(table);
         }
 
+        /// <summary>True when the named cell has any non-blank text.</summary>
         private static bool HasText(Dictionary<string, string> values, string column) =>
             Lookup(values, column).Trim().Length > 0;
 
+        /// <summary>True when the named money/qty cell parses as a number greater than zero.</summary>
         private static bool HasPositiveNumber(Dictionary<string, string> values, string column)
         {
             string raw = Lookup(values, column).Trim().Replace("$", "").Replace(",", "");
             return decimal.TryParse(raw, out var amount) && amount > 0;
         }
 
+        /// <summary>True when Paid is at least Amount, or Paid is set and Outstanding is zero or less.</summary>
         private static bool PaidCoversAmount(Dictionary<string, string> values)
         {
             if (HasPositiveNumber(values, "Paid") &&
@@ -2615,6 +2724,7 @@ namespace CastRightCatchInvManagement
                    left <= 0;
         }
 
+        /// <summary>True for paid, closed, complete, completed, finished, or settled.</summary>
         private static bool IsClosedStatus(string status)
         {
             string value = (status ?? "").Trim();
@@ -2626,6 +2736,7 @@ namespace CastRightCatchInvManagement
                    value.Equals("settled", StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>True for yes/y/true/1/approved/x on debit and credit approval cells.</summary>
         private static bool IsApproved(string value)
         {
             string trimmed = (value ?? "").Trim();
@@ -2640,6 +2751,7 @@ namespace CastRightCatchInvManagement
                    trimmed.Equals("x", StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>Live-database rows with id and term_start, used when deciding what to archive.</summary>
         private static List<(long Id, string TermStart, Dictionary<string, string> Fields)> ReadLiveRows(string table)
         {
             var result = new List<(long, string, Dictionary<string, string>)>();
@@ -2658,6 +2770,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Add live columns that are missing on old_inventory.db before copying completed rows.</summary>
         private static void EnsureArchiveColumns(string table, IEnumerable<string> columns)
         {
             var existing = new HashSet<string>(TableColumns(table, archive: true), StringComparer.OrdinalIgnoreCase);
@@ -2674,6 +2787,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Insert one archived process row inside an open transaction.</summary>
         private static void InsertRow(
             SqliteConnection db,
             SqliteTransaction tx,
@@ -2706,6 +2820,7 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>Delete live rows by id after they have been copied to the archive.</summary>
         private static void DeleteByIds(string table, List<long> ids)
         {
             if (ids.Count == 0)
@@ -2725,6 +2840,7 @@ namespace CastRightCatchInvManagement
             tx.Commit();
         }
 
+        /// <summary>Clear term_start on unfinished process rows so they stay live and undated.</summary>
         private static void ClearTermStart(string table, List<long> ids)
         {
             if (ids.Count == 0)
@@ -2745,6 +2861,7 @@ namespace CastRightCatchInvManagement
             tx.Commit();
         }
 
+        /// <summary>Quote an identifier so headers with spaces (PO #) are valid SQL.</summary>
         private static string Quote(string name) => "\"" + name.Replace("\"", "\"\"") + "\"";
     }
 }

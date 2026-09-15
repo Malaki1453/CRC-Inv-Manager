@@ -2,6 +2,7 @@ using System.Text.Json;
 
 namespace CastRightCatchInvManagement
 {
+    /// <summary>Outcome of an insert, update, or delete: saved, queued for review, or denied.</summary>
     public readonly struct MutateResult
     {
         public bool Ok { get; init; }
@@ -16,6 +17,7 @@ namespace CastRightCatchInvManagement
             new() { Ok = false, Message = message };
     }
 
+    /// <summary>How a user may change a table: view only, queue for review, or write immediately.</summary>
     internal enum DataWriteMode
     {
         View,
@@ -23,6 +25,7 @@ namespace CastRightCatchInvManagement
         Auto
     }
 
+    /// <summary>Write mode and hidden columns for one table in table_access JSON.</summary>
     internal sealed class DataTablePolicy
     {
         public DataWriteMode Write { get; set; } = DataWriteMode.Auto;
@@ -64,6 +67,7 @@ namespace CastRightCatchInvManagement
         /// <summary>When true, pending Accept writes skip the confirm queue.</summary>
         public static bool ApplyingReview { get; set; }
 
+        /// <summary>Load write modes, hidden columns, and blocked companies from table_access JSON.</summary>
         public static void Apply(string json)
         {
             Policies.Clear();
@@ -73,12 +77,14 @@ namespace CastRightCatchInvManagement
             ExpandBlockedKeys();
         }
 
+        /// <summary>Fill <paramref name="policies"/> and <paramref name="blocked"/> from $write, $hide, and $block.</summary>
         public static void Parse(
             string json,
             Dictionary<string, DataTablePolicy> policies,
             HashSet<string> blocked)
         {
             json = (json ?? "").Trim();
+            // Empty access JSON means default auto-write and no extra blocks.
             if (json.Length == 0)
                 return;
 
@@ -107,6 +113,7 @@ namespace CastRightCatchInvManagement
                 {
                     foreach (var pair in hide.EnumerateObject())
                     {
+                        // Hide lists are string arrays; skip a malformed value.
                         if (pair.Value.ValueKind != JsonValueKind.Array)
                             continue;
                         string key = TableKey(pair.Name);
@@ -142,6 +149,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Drop in-memory policies, used on sign-out.</summary>
         public static void Clear()
         {
             Policies.Clear();
@@ -149,22 +157,28 @@ namespace CastRightCatchInvManagement
             BlockedKeys.Clear();
         }
 
+        /// <summary>Write mode for a table. Review accepts skip Confirm so pending rows can be applied.</summary>
         public static DataWriteMode WriteMode(string table)
         {
+            // Pending Accept must write through even when the reviewer is on Confirm.
             if (ApplyingReview)
                 return DataWriteMode.Auto;
             table = TableKey(table);
             return Policies.TryGetValue(table, out var policy) ? policy.Write : DataWriteMode.Auto;
         }
 
+        /// <summary>True when the user may insert, update, or delete (including queued Confirm).</summary>
         public static bool CanMutate(string table) =>
             WriteMode(table) != DataWriteMode.View;
 
+        /// <summary>True when the user may read this table, including pending_changes for reviewers.</summary>
         public static bool CanReadTable(string table)
         {
+            // Review loads the real row, including blocked parties, to apply or restore it.
             if (ApplyingReview)
                 return true;
             table = TableKey(table);
+            // Pending queue is not a regular table; only auto-write users may review it.
             if (table.Equals(DataFiles.PendingChanges, StringComparison.OrdinalIgnoreCase))
                 return CanReview();
             foreach (var item in TableAccess.All)
@@ -182,14 +196,17 @@ namespace CastRightCatchInvManagement
             string table,
             List<Dictionary<string, string>> rows)
         {
+            // Review needs the unfiltered row to accept or restore it.
             if (ApplyingReview)
                 return rows;
+            // Denied tables return no rows rather than throwing.
             if (!CanReadTable(table))
                 return new List<Dictionary<string, string>>();
 
             var result = new List<Dictionary<string, string>>();
             foreach (var row in rows)
             {
+                // Blocked parties and products must not appear in grids or lookups.
                 if (IsRecordBlocked(row))
                     continue;
                 result.Add(StripHidden(table, row));
@@ -198,6 +215,7 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Same as the dictionary overload, keeping SQLite row ids for updates.</summary>
         public static List<(long Id, Dictionary<string, string> Fields)> RestrictRows(
             string table,
             List<(long Id, Dictionary<string, string> Fields)> rows)
@@ -218,11 +236,13 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
+        /// <summary>Copy the row without columns this user is not allowed to see.</summary>
         private static Dictionary<string, string> StripHidden(
             string table,
             Dictionary<string, string> row)
         {
             table = TableKey(table);
+            // No hide list means the full row is allowed.
             if (!Policies.TryGetValue(table, out var policy) || policy.HideColumns.Count == 0)
                 return row;
 
@@ -239,6 +259,7 @@ namespace CastRightCatchInvManagement
             return copy;
         }
 
+        /// <summary>True when this user has auto-write on at least one allowed table and may review pending changes.</summary>
         public static bool CanReview()
         {
             foreach (var item in TableAccess.All)
@@ -250,6 +271,7 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        /// <summary>True when this column is in the user's hide list for the table.</summary>
         public static bool IsColumnHidden(string table, string column)
         {
             if (string.IsNullOrWhiteSpace(column))
@@ -261,13 +283,16 @@ namespace CastRightCatchInvManagement
                 name.Equals(column, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>True when the row's vendor, customer, or item is on the block list.</summary>
         public static bool IsCompanyBlocked(Dictionary<string, string>? record) =>
             IsRecordBlocked(record);
 
+        /// <summary>True when any party or product field on the row matches a blocked key.</summary>
         public static bool IsRecordBlocked(Dictionary<string, string>? record)
         {
             if (record == null)
                 return false;
+            // No blocks configured: every row is visible.
             if (BlockedCompanies.Count == 0 && BlockedKeys.Count == 0)
                 return false;
             if (BlockedKeys.Count == 0)
@@ -283,6 +308,7 @@ namespace CastRightCatchInvManagement
             return false;
         }
 
+        /// <summary>True when a typed code or name is a blocked company or an expanded related key.</summary>
         public static bool IsCompanyBlocked(string? value)
         {
             value = (value ?? "").Trim();
@@ -310,6 +336,7 @@ namespace CastRightCatchInvManagement
             Absorb(DataFiles.ReadAllRecords(DataFiles.ItemCodes), ItemFields);
         }
 
+        /// <summary>If a master-table row matches a blocked seed, add all of its codes and names to BlockedKeys.</summary>
         private static void Absorb(
             List<Dictionary<string, string>> rows,
             string[] fields)
@@ -328,6 +355,7 @@ namespace CastRightCatchInvManagement
                         hit = true;
                 }
 
+                // Unrelated vendors/items stay visible.
                 if (!hit)
                     continue;
                 foreach (var token in tokens)
@@ -335,8 +363,10 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Companies listed in $block, before related codes are expanded.</summary>
         public static IReadOnlyCollection<string> BlockedList() => BlockedCompanies;
 
+        /// <summary>Policy for a table, or defaults (auto-write, no hidden columns) when unset.</summary>
         public static DataTablePolicy PolicyFor(string tableKey)
         {
             tableKey = TableKey(tableKey);
@@ -354,6 +384,7 @@ namespace CastRightCatchInvManagement
             var list = (jsons ?? Array.Empty<string>()).Select(json => json ?? "").ToList();
             if (list.Count == 0)
                 return "";
+            // One group needs no intersect; keep its JSON as-is.
             if (list.Count == 1)
                 return list[0];
 
@@ -383,6 +414,7 @@ namespace CastRightCatchInvManagement
             var mergedPolicies = new Dictionary<string, DataTablePolicy>(StringComparer.OrdinalIgnoreCase);
             foreach (var table in tables)
             {
+                // Denied by every group stays denied; skip write/hide merge.
                 if (mergedDenied.Contains(table))
                     continue;
 
@@ -412,6 +444,7 @@ namespace CastRightCatchInvManagement
                     if (hidden == null)
                         hidden = set;
                     else
+                        // A column stays hidden only when every allowing group hides it.
                         hidden.IntersectWith(set);
                 }
 
@@ -428,6 +461,7 @@ namespace CastRightCatchInvManagement
                 if (blockedMerge == null)
                     blockedMerge = new HashSet<string>(item.Blocked, StringComparer.OrdinalIgnoreCase);
                 else
+                    // A company stays blocked only when every group blocks it.
                     blockedMerge.IntersectWith(item.Blocked);
             }
 
@@ -441,9 +475,11 @@ namespace CastRightCatchInvManagement
         public static string Overlay(string baseline, string overlay)
         {
             overlay = (overlay ?? "").Trim();
+            // No per-user JSON: group settings stand alone.
             if (overlay.Length == 0)
                 return baseline ?? "";
             baseline = (baseline ?? "").Trim();
+            // No groups: the user override is the whole policy.
             if (baseline.Length == 0)
                 return overlay;
 
@@ -458,6 +494,7 @@ namespace CastRightCatchInvManagement
                 var root = doc.RootElement;
                 foreach (var pair in root.EnumerateObject())
                 {
+                    // $write / $hide / $block are handled below, not as table flags.
                     if (pair.Name.StartsWith('$'))
                         continue;
                     if (pair.Value.ValueKind == JsonValueKind.False)
@@ -493,6 +530,7 @@ namespace CastRightCatchInvManagement
                         }
 
                         policy.HideColumns = new List<string>();
+                        // A non-array $hide entry clears the list and skips names.
                         if (pair.Value.ValueKind != JsonValueKind.Array)
                             continue;
                         foreach (var item in pair.Value.EnumerateArray())
@@ -517,6 +555,7 @@ namespace CastRightCatchInvManagement
             }
             catch
             {
+                // Bad overlay JSON must not wipe group access.
                 return baseline;
             }
 
@@ -546,6 +585,7 @@ namespace CastRightCatchInvManagement
                 bool any = false;
                 foreach (var key in keys)
                 {
+                    // Omit tables that still match the group allow/deny.
                     if (baseDenied.Contains(key) == newDenied.Contains(key))
                         continue;
                     writer.WriteBoolean(key, !newDenied.Contains(key));
@@ -610,6 +650,7 @@ namespace CastRightCatchInvManagement
                 }
 
                 writer.WriteEndObject();
+                // Identical to the group baseline: store no override.
                 if (!any)
                     return "";
             }
@@ -617,6 +658,7 @@ namespace CastRightCatchInvManagement
             return System.Text.Encoding.UTF8.GetString(stream.ToArray());
         }
 
+        /// <summary>True when two name lists contain the same entries, ignoring order and blanks.</summary>
         private static bool SameNames(IEnumerable<string> left, IEnumerable<string> right)
         {
             var a = new HashSet<string>(
@@ -628,6 +670,7 @@ namespace CastRightCatchInvManagement
             return a.SetEquals(b);
         }
 
+        /// <summary>Serialize denied tables, write modes, hidden columns, and blocked companies.</summary>
         public static string BuildJson(
             IEnumerable<string> denied,
             IReadOnlyDictionary<string, DataTablePolicy> policies,
@@ -682,6 +725,7 @@ namespace CastRightCatchInvManagement
             return System.Text.Encoding.UTF8.GetString(stream.ToArray());
         }
 
+        /// <summary>Map an access key (purchases, items, …) to the SQLite table name.</summary>
         public static string TableFile(string accessKey) => accessKey switch
         {
             TableAccess.Purchases => DataFiles.PurchaseSales,
@@ -696,6 +740,7 @@ namespace CastRightCatchInvManagement
             _ => accessKey
         };
 
+        /// <summary>Normalize a file name or access key to the TableAccess key used in JSON.</summary>
         public static string TableKey(string fileOrKey)
         {
             fileOrKey = (fileOrKey ?? "").Trim();
@@ -723,6 +768,7 @@ namespace CastRightCatchInvManagement
             return fileOrKey;
         }
 
+        /// <summary>User-facing write-mode label for access editors.</summary>
         public static string ModeLabel(DataWriteMode mode) => mode switch
         {
             DataWriteMode.View => "View only",
@@ -730,6 +776,7 @@ namespace CastRightCatchInvManagement
             _ => "Add / edit / delete"
         };
 
+        /// <summary>Parse stored or UI text into View, Confirm, or Auto (default).</summary>
         public static DataWriteMode ParseMode(string? text)
         {
             text = (text ?? "").Trim();
@@ -742,6 +789,7 @@ namespace CastRightCatchInvManagement
             return DataWriteMode.Auto;
         }
 
+        /// <summary>Stored write-mode token in table_access JSON.</summary>
         private static string ModeName(DataWriteMode mode) => mode switch
         {
             DataWriteMode.View => "view",

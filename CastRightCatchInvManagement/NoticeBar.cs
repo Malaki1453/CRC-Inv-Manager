@@ -7,6 +7,7 @@ namespace CastRightCatchInvManagement
         private readonly bool _error;
         private Control? _host;
 
+        /// <summary>Build a corner banner; the timer auto-dismisses it.</summary>
         private ToastAlert(string message, bool error, int milliseconds)
         {
             _error = error;
@@ -52,6 +53,7 @@ namespace CastRightCatchInvManagement
             _timer.Start();
         }
 
+        /// <summary>Green or red border matching the success/error fill.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
@@ -59,8 +61,10 @@ namespace CastRightCatchInvManagement
             e.Graphics.DrawRectangle(border, 1, 1, Width - 3, Height - 3);
         }
 
+        /// <summary>Stop the timer and remove this banner from the host.</summary>
         public void Dismiss()
         {
+            // Already torn down by a previous dismiss or host dispose.
             if (IsDisposed)
                 return;
 
@@ -72,10 +76,13 @@ namespace CastRightCatchInvManagement
             Dispose();
         }
 
+        /// <summary>Show a green success banner on the host form.</summary>
         public static void Success(Control host, string message) => Show(host, message, error: false);
 
+        /// <summary>Show a red error banner on the host form.</summary>
         public static void Error(Control host, string message) => Show(host, message, error: true);
 
+        /// <summary>Replace any existing toast so only one banner is visible.</summary>
         private static void Show(Control host, string message, bool error)
         {
             foreach (var old in host.Controls.OfType<ToastAlert>().ToList())
@@ -89,10 +96,13 @@ namespace CastRightCatchInvManagement
             host.Resize += toast.OnHostResize;
         }
 
+        /// <summary>Keep the banner in the lower-right corner when the host resizes.</summary>
         private void OnHostResize(object? sender, EventArgs e) => Place();
 
+        /// <summary>Pin the banner above the footer in the host's lower-right corner.</summary>
         private void Place()
         {
+            // Host may have been closed while a toast was still scheduled.
             if (_host == null || _host.IsDisposed)
                 return;
 
