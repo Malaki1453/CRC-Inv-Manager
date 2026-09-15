@@ -152,9 +152,9 @@ namespace CastRightCatchInvManagement
                         return loaded;
                     }
                 }
+                // Bad JSON: seed a default tree instead of crashing the sidebar.
                 catch
                 {
-                    // fall through to seed
                 }
             }
 
@@ -245,6 +245,7 @@ namespace CastRightCatchInvManagement
             foreach (var node in siblings)
             {
                 var nested = Locate(node.Children, target);
+                // Found under this folder; stop walking siblings.
                 if (nested != null)
                     return nested;
             }
@@ -304,9 +305,9 @@ namespace CastRightCatchInvManagement
                 foreach (var child in node.Children)
                     SetOn(child, on);
             }
+            // A visible page is unreachable if its parent folder stays off.
             else if (on)
             {
-                // A visible page is unreachable if its parent folder stays off.
                 var parent = ParentOf(node);
                 while (parent != null)
                 {
@@ -418,6 +419,7 @@ namespace CastRightCatchInvManagement
                 return folder;
             foreach (var page in group.Pages)
             {
+                // Nested name points at another group, not a catalog page.
                 if (page.IsNested)
                 {
                     var nested = Groups.FirstOrDefault(item =>
@@ -470,6 +472,7 @@ namespace CastRightCatchInvManagement
                 bool present = false;
                 Walk(Root, node =>
                 {
+                    // This companion page already exists somewhere in the tree.
                     if (!node.IsFolder && node.Key.Equals(key, StringComparison.OrdinalIgnoreCase))
                         present = true;
                 });
@@ -486,6 +489,7 @@ namespace CastRightCatchInvManagement
             for (int i = nodes.Count - 1; i >= 0; i--)
             {
                 var node = nodes[i];
+                // Folders are unique by instance; recurse so nested pages are deduped too.
                 if (node.IsFolder)
                 {
                     DedupePages(node.Children);

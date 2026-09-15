@@ -92,6 +92,7 @@ namespace CastRightCatchInvManagement
                         using var change = new ChangePasswordForm(user, requireCurrent: true);
                         change.ShowDialog(FindForm());
                     });
+                // IT-only reset for other users; there are no security questions.
                 else
                     menu.Items.Add("Reset password", null, (_, _) => ResetPassword(user));
                 menu.Items.Add("Delete user", null, (_, _) => DeleteUser(user));
@@ -343,6 +344,7 @@ namespace CastRightCatchInvManagement
                 Accounts.AddAdmin(picked);
                 SqliteInventory.AddAccessGroup(picked, AccessGroups.Admin);
             }
+            // Non-admin branch grants IT, not administrator.
             else
             {
                 Accounts.AddIt(picked);
@@ -378,6 +380,7 @@ namespace CastRightCatchInvManagement
             // Drop the matching group so table access follows the role change.
             if (admin)
                 SqliteInventory.RemoveAccessGroup(username, AccessGroups.Admin);
+            // Non-admin branch drops IT membership only.
             else
                 SqliteInventory.RemoveAccessGroup(username, AccessGroups.IT);
 
@@ -387,6 +390,7 @@ namespace CastRightCatchInvManagement
                 // Re-read so a remaining role is not cleared by mistake.
                 if (admin)
                     AppState.IsAdmin = Accounts.IsAdmin(username);
+                // Clearing IT must not wipe a remaining administrator flag.
                 else
                     AppState.IsIt = Accounts.IsIt(username);
                 TableAccess.Apply(username);
@@ -586,6 +590,7 @@ namespace CastRightCatchInvManagement
                 }
 
                 string password = Accounts.GenerateTemporaryPassword();
+                // Duplicate username or policy failures must not email a login we did not create.
                 if (!Accounts.CreateUser(user, password, _name.Text, email, out error))
                 {
                     MessageBox.Show(error, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -599,6 +604,7 @@ namespace CastRightCatchInvManagement
                 return true;
             }
 
+            // Rename can fail if the new login is already taken.
             if (!Accounts.RenameUser(_username, user, out error))
             {
                 MessageBox.Show(error, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -606,6 +612,7 @@ namespace CastRightCatchInvManagement
             }
 
             SqliteInventory.UpdateAccount(user, _name.Text.Trim(), _email.Text.Trim());
+            // Keep groups unchanged when a non-admin tried to add/remove Admin.
             if (!ApplySelectedGroup(user))
                 return false;
             // Keep the signed-in session matching a self-edit or rename.
@@ -665,6 +672,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Write checked groups and keep admin/IT role lists in sync.</summary>
         private bool ApplySelectedGroup(string username)
         {
+            // Re-check Admin membership so a race on the dialog cannot sneak it through.
             if (!CanAssignSelectedGroup(username))
                 return false;
             var selected = SelectedGroups();
@@ -687,6 +695,7 @@ namespace CastRightCatchInvManagement
             {
                 sent = Mailer.TrySendNewUserDetails(email, username, password, out error);
             }
+            // Valid mailbox: show a wait dialog while SMTP runs.
             else
             {
                 (sent, error) = WaitForm.Run(owner, "Sending login email…", () =>
@@ -699,8 +708,10 @@ namespace CastRightCatchInvManagement
             // Success toast when we have a control host; otherwise a simple message box.
             if (sent)
             {
+                // Toast needs a Control; a bare IWin32Window gets a message box.
                 if (owner is Control host)
                     ToastAlert.Success(host, "Login email sent to " + email + ".");
+                // Owner is not a Control (or is null): fall back to a modal box.
                 else
                     MessageBox.Show(
                         owner,
@@ -762,8 +773,10 @@ namespace CastRightCatchInvManagement
             // Tell IT whether they still need to copy the password by hand.
             if (emailed)
                 status = "A login email was sent to " + email + ". You can also copy the details below.";
+            // No address was entered; SMTP was never attempted.
             else if (string.IsNullOrWhiteSpace(email))
                 status = "No email was sent. Copy the details below and send them yourself.";
+            // SMTP failed: still show the temp password so IT can send it another way.
             else
                 status = "The email did not send" +
                          (string.IsNullOrWhiteSpace(error) ? "" : ":\r\n\r\n" + error.Trim()) +
@@ -823,6 +836,7 @@ namespace CastRightCatchInvManagement
                     Clipboard.SetText(body);
                     copy.Text = "Copied";
                 }
+                // Clipboard can be locked by another app; offer manual copy.
                 catch
                 {
                     // Clipboard can be locked by another app; offer manual copy.

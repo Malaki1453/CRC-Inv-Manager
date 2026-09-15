@@ -17,8 +17,10 @@ namespace CastRightCatchInvManagement
         private bool _formatting;
         private DateTime? _value;
 
+        /// <summary>Fired after a typed, pasted, or cleared date is applied (including invalid → null).</summary>
         public event EventHandler? DateChanged;
 
+        /// <summary>Parsed calendar date, or null while the box is incomplete or invalid.</summary>
         public DateTime? Value => _value;
 
         /// <summary>Style the box and cap length at MM/DD/YYYY.</summary>
@@ -112,14 +114,17 @@ namespace CastRightCatchInvManagement
         /// <summary>Append a digit to month, then day, then year, advancing parts at two digits.</summary>
         private void AcceptDigit(char digit)
         {
+            // _part 0 is the month: digits go into `_month` until it has two.
             if (_part == 0)
             {
                 // Month already has two digits; treat this key as the start of the day.
                 if (_month.Length >= 2)
                     _part = 1;
+                // Still collecting month digits (M or MM).
                 else
                 {
                     _month += digit;
+                    // Two-digit month: advance to day so the next digit is DD, not a third month digit.
                     if (_month.Length == 2)
                         _part = 1;
                     Apply();
@@ -127,14 +132,17 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            // _part 1 is the day: digits go into `_day` until it has two.
             if (_part == 1)
             {
                 // Day already has two digits; treat this key as the start of the year.
                 if (_day.Length >= 2)
                     _part = 2;
+                // Still collecting day digits (D or DD).
                 else
                 {
                     _day += digit;
+                    // Two-digit day: advance to year so the next digit is YY/YYYY.
                     if (_day.Length == 2)
                         _part = 2;
                     Apply();
@@ -152,6 +160,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Move from month to day, or day to year, once that part has at least one digit.</summary>
         private void PlaceSeparator()
         {
+            // Slash while still on month: that slash is the month/day separator.
             if (_part == 0)
             {
                 // A leading slash with no month is ignored.
@@ -163,6 +172,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Slash while on day: that slash is the day/year separator once a day digit exists.
             if (_part == 1)
             {
                 // Extra slash before any day digit just keeps the month separator visible.
@@ -190,6 +200,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Delete the last typed piece: year digits, then separators, then day, then month.</summary>
         private void Backspace()
         {
+            // Year digits are the last typed piece: delete those first.
             if (_year.Length > 0)
             {
                 _year = _year[..^1];
@@ -198,6 +209,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // No year digits: remove the day/year slash and return to the day part.
             if (_sepDay)
             {
                 _sepDay = false;
@@ -206,6 +218,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Delete day digits next, staying on the day part.
             if (_day.Length > 0)
             {
                 _day = _day[..^1];
@@ -214,6 +227,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // No day digits: remove the month/day slash and return to the month part.
             if (_sepMonth)
             {
                 _sepMonth = false;
@@ -222,6 +236,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Last remaining digits are the month.
             if (_month.Length > 0)
             {
                 _month = _month[..^1];
@@ -243,18 +258,23 @@ namespace CastRightCatchInvManagement
             }
 
             char[] marks = { '/', '.', '-' };
+            // No slash/dot/dash: treat the text as a digit run (MM, MMDD, MMDDYY, MMDDYYYY).
             if (text.IndexOfAny(marks) < 0)
             {
                 string digits = Digits(text);
+                // Keep at most 8 digits so leftover junk cannot overflow YYYY.
                 if (digits.Length > 8)
                     digits = digits[..8];
+                // 1–2 digits is just the month.
                 if (digits.Length <= 2)
                     _month = digits;
+                // 3–4 digits is MM plus D or DD.
                 else if (digits.Length <= 4)
                 {
                     _month = digits[..2];
                     _day = digits[2..];
                 }
+                // 5+ digits: leftover after MMDD is the year.
                 else
                 {
                     _month = digits[..2];
@@ -262,17 +282,21 @@ namespace CastRightCatchInvManagement
                     _year = digits[4..];
                 }
             }
+            // Separated form: split on / . - into month, day, year.
             else
             {
                 string[] parts = text.Split(marks);
+                // First token is the month when present.
                 if (parts.Length > 0)
                     _month = TakeDigits(parts[0], 2);
+                // Second token is the day; also mark that the month slash was typed.
                 if (parts.Length > 1)
                 {
                     _sepMonth = true;
                     _day = TakeDigits(parts[1], 2);
                 }
 
+                // Third token is the year; also mark that the day slash was typed.
                 if (parts.Length > 2)
                 {
                     _sepDay = true;
@@ -280,10 +304,13 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            // Year digits or the second slash mean we are on the year part.
             if (_year.Length > 0 || _sepDay)
                 _part = 2;
+            // Day digits, the first slash, or a complete two-digit month mean we are on the day part.
             else if (_day.Length > 0 || _sepMonth || _month.Length == 2)
                 _part = 1;
+            // Only month (or empty): stay on the month part.
             else
                 _part = 0;
             Apply();
@@ -319,6 +346,7 @@ namespace CastRightCatchInvManagement
             // Partial typing (month only, etc.) is not yet a date.
             if (!PartsLookComplete())
                 return null;
+            // Month/day/year must be integers; leftover letters after a paste fail here.
             if (!int.TryParse(_month, out int month) ||
                 !int.TryParse(_day, out int day) ||
                 !int.TryParse(_year, out int year))
@@ -328,9 +356,9 @@ namespace CastRightCatchInvManagement
             {
                 return new DateTime(year, month, day);
             }
+            // 13/40/2026 and similar calendar-invalid values stay null and paint red.
             catch
             {
-                // 13/40/2026 and similar calendar-invalid values stay null and paint red.
                 return null;
             }
         }
@@ -356,8 +384,10 @@ namespace CastRightCatchInvManagement
         private string FormatParts()
         {
             string shown = _month;
+            // Show the first slash once the user typed it or has started day/year.
             if (_sepMonth || _day.Length > 0 || _year.Length > 0)
                 shown += "/" + _day;
+            // Show the second slash once the user typed it or has started the year.
             if (_sepDay || _year.Length > 0)
                 shown += "/" + _year;
             return shown;
@@ -379,10 +409,13 @@ namespace CastRightCatchInvManagement
         {
             text = (text ?? "").Trim();
             date = default;
+            // Blank cells are not dates and should not match a from/to filter.
             if (text.Length == 0)
                 return false;
+            // Prefer MM/DD/YYYY-style (and digit-run) parse so US inventory dates win over culture.
             if (TryParseFlexible(text, out date))
                 return true;
+            // Fall back to culture parse for leftover text such as "Jan 5, 2026".
             if (DateTime.TryParse(text, CultureInfo.CurrentCulture, DateTimeStyles.None, out date))
             {
                 date = date.Date;
@@ -395,8 +428,10 @@ namespace CastRightCatchInvManagement
         /// <summary>True when <paramref name="date"/> is on or after from and on or before to (inclusive).</summary>
         public static bool InRange(DateTime date, DateTime? from, DateTime? to)
         {
+            // from is set and date is before that day: out of range.
             if (from != null && date < from.Value.Date)
                 return false;
+            // to is set and date is after that day: out of range.
             if (to != null && date > to.Value.Date)
                 return false;
             return true;
@@ -407,12 +442,14 @@ namespace CastRightCatchInvManagement
         {
             date = default;
             char[] marks = { '/', '.', '-' };
+            // Slash/dot/dash present: parse as separated month/day/year (or ISO YYYY-MM-DD).
             if (text.IndexOfAny(marks) >= 0)
             {
                 string[] parts = text.Split(marks, StringSplitOptions.RemoveEmptyEntries);
                 // Need month, day, and year; two-part values are not dates.
                 if (parts.Length != 3)
                     return false;
+                // Non-numeric parts (e.g. "Jan/5/26") are not handled here; culture parse is the fallback.
                 if (!int.TryParse(parts[0], out int a) ||
                     !int.TryParse(parts[1], out int b) ||
                     !int.TryParse(parts[2], out int c))
@@ -424,6 +461,7 @@ namespace CastRightCatchInvManagement
             }
 
             string digits = Digits(text);
+            // Exactly 8 digits is MMDDYYYY with no separators.
             if (digits.Length == 8)
             {
                 return TryMake(
@@ -433,6 +471,7 @@ namespace CastRightCatchInvManagement
                     out date);
             }
 
+            // Exactly 6 digits is MMDDYY; ExpandYear maps YY through the culture's 100-year window.
             if (digits.Length == 6)
             {
                 return TryMake(
@@ -454,9 +493,9 @@ namespace CastRightCatchInvManagement
                 date = new DateTime(cYear, month, day);
                 return true;
             }
+            // Invalid calendar values (month 13, Feb 30) are not dates.
             catch
             {
-                // Invalid calendar values (month 13, Feb 30) are not dates.
                 return false;
             }
         }
@@ -464,6 +503,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Map a two-digit year through the current culture's 100-year window.</summary>
         private static int ExpandYear(int year, int digitCount)
         {
+            // Four-digit years (and other lengths) are already complete; only YY is expanded.
             if (digitCount != 2)
                 return year;
             return CultureInfo.CurrentCulture.Calendar.ToFourDigitYear(year);

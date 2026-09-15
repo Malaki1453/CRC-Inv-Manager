@@ -167,7 +167,7 @@ namespace CastRightCatchInvManagement
                 _established.PlaceholderText = "0.00";
                 FillVendorTypes(_type, record == null ? "" : DataFiles.GetRecord(record, "Type"));
             }
-            // Opposite branch of the condition above.
+            // Customer identity uses email, address, and credit instead of Type/amount.
             else
             {
                 identity = Section("Identity", 340, 4, out var grid);
@@ -241,7 +241,7 @@ namespace CastRightCatchInvManagement
                     _contact.Text = DataFiles.GetRecord(record, "Contact Name");
                     _established.Text = DataFiles.GetRecord(record, "Amount");
                 }
-                // Opposite branch of the condition above.
+                // Prefill customer-only fields from the existing row.
                 else
                 {
                     _extra.Text = DataFiles.GetRecord(record, "Credit Limit");
@@ -365,7 +365,7 @@ namespace CastRightCatchInvManagement
                 fields["Contact Name"] = _contact.Text.Trim();
                 fields["Amount"] = _established.Text.Trim();
             }
-            // Opposite branch of the condition above.
+            // Persist customer credit, email, and address instead of Type/amount.
             else
             {
                 fields["Credit Limit"] = _extra.Text.Trim();
@@ -388,7 +388,7 @@ namespace CastRightCatchInvManagement
                             .Equals(_originalCode, StringComparison.OrdinalIgnoreCase),
                         fields);
                 }
-                // Opposite branch of the condition above.
+                // New records insert a row instead of replacing an existing code.
                 else
                 {
                     result = DataFiles.MutateInsert(baseName, fields);
@@ -482,7 +482,7 @@ namespace CastRightCatchInvManagement
             // Vendor layout omits email/address and uses Type/amount.
             if (vendor)
                 FillPurchases(lines, code, name);
-            // Opposite branch of the condition above.
+            // Customer history lists sales, not purchases.
             else
                 FillSales(lines, code, name);
             var linesPage = new TabPage(vendor ? "Purchases" : "Sales")

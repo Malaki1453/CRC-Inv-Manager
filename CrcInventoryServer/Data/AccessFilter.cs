@@ -27,7 +27,7 @@ internal static class AccessFilter
             return new List<Dictionary<string, string>>();
 
         var result = new List<Dictionary<string, string>>();
-        foreach (var row in rows)
+        foreach (var row in rows) // column map for one inventory record
         {
             // Skip parties/items the user is blocked from seeing.
             if (policy.IsBlocked(row))
@@ -56,7 +56,7 @@ internal static class AccessFilter
             return new List<(long, Dictionary<string, string>)>();
 
         var result = new List<(long, Dictionary<string, string>)>();
-        foreach (var (id, fields) in rows)
+        foreach (var (id, fields) in rows) // live/archive id plus column map
         {
             // Skip parties/items the user is blocked from seeing.
             if (policy.IsBlocked(fields))
@@ -177,11 +177,11 @@ internal static class AccessFilter
     public static string Overlay(string baseline, string overlay)
     {
         overlay = (overlay ?? "").Trim();
-        // No user overlay means the group baseline is the whole policy.
+        // No user overlay: the group baseline is the whole policy (empty JSON allows all tables).
         if (overlay.Length == 0)
             return baseline ?? "";
         baseline = (baseline ?? "").Trim();
-        // No groups means the user overlay is the whole policy.
+        // No group baseline: the user overlay is the whole policy (empty JSON allows all tables).
         if (baseline.Length == 0)
             return overlay;
 
@@ -215,7 +215,7 @@ internal static class AccessFilter
     {
         var parts = new PolicyParts();
         json = (json ?? "").Trim();
-        // Empty JSON is a missing policy, not an error.
+        // Empty JSON denies nothing, so all tables are allowed (IT default; Admin uses LockedAdminJson).
         if (json.Length == 0)
             return parts;
         // Invalid JSON is treated as an empty policy rather than failing the request.
@@ -396,7 +396,7 @@ internal static class AccessFilter
         public void Parse(string json)
         {
             json = (json ?? "").Trim();
-            // No JSON means no restrictions from this user.
+            // Empty JSON denies nothing, so all tables are allowed (same as an empty IT group policy).
             if (json.Length == 0)
                 return;
             // Invalid JSON is treated as an empty policy rather than failing the request.
@@ -475,7 +475,8 @@ internal static class AccessFilter
         /// <summary>True unless the table's policy key is in the deny set.</summary>
         public bool CanRead(string table)
         {
-            string key = TableKey(table);
+            string key = TableKey(table); // short policy name (purchases, sales, …)
+            // Empty deny set (empty JSON) allows every table.
             return !_denied.Contains(key);
         }
 

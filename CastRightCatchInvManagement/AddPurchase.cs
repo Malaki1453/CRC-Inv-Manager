@@ -371,6 +371,7 @@ namespace CastRightCatchInvManagement
                 // Forwarder slot is a subset of vendors, not a separate table.
                 if (VendorTypes.MatchesSlot(record, VendorTypes.SlotPurchaseForwarder))
                     _forwarderHits.Add(hit);
+                // Logistics slot is also a vendor subset, not a separate table.
                 if (VendorTypes.MatchesSlot(record, VendorTypes.SlotPurchaseLogistics))
                     _logisticsHits.Add(hit);
             }
@@ -532,6 +533,7 @@ namespace CastRightCatchInvManagement
                             ["Item Code"] = oldItem
                         };
                         last = DataFiles.MutateDelete(DataFiles.PurchaseSales, doomed);
+                        // Stop so remaining dropped lines are not deleted after a failed mutate.
                         if (last is not { Ok: true })
                         {
                             ToastAlert.Error(this, last?.Message ?? "Could not remove that line.");
@@ -540,9 +542,9 @@ namespace CastRightCatchInvManagement
                     }
                 }
             }
+            // Mutate can throw when the store is locked or the row is missing.
             catch (Exception ex)
             {
-                // Mutate can throw when the store is locked or the row is missing.
                 ToastAlert.Error(this, ex.Message);
                 return;
             }
@@ -551,9 +553,9 @@ namespace CastRightCatchInvManagement
             {
                 PurchaseDocument.SaveFromPo(po);
             }
+            // Keep the saved rows even if the PDF cannot be written.
             catch
             {
-                // keep the saved rows even if the PDF cannot be written
             }
 
             ToastAlert.Success(this, last is { Queued: true }
@@ -698,6 +700,7 @@ namespace CastRightCatchInvManagement
                 _vendorTerms.Text = terms;
                 _location.Text = location;
             }
+            // Full Clear wipes vendor/location so the next PO starts blank.
             else
             {
                 _vendor.Text = "";
@@ -842,9 +845,9 @@ namespace CastRightCatchInvManagement
                 picker.Value = date.Date;
                 picker.Checked = true;
             }
+            // Blank or junk should not invent a date.
             else
             {
-                // Blank or junk should not invent a date.
                 picker.Checked = false;
             }
         }
@@ -863,6 +866,7 @@ namespace CastRightCatchInvManagement
             // Older rows used Open/Paid; the combo only has Pending/Complete.
             if (pick.Equals("Open", StringComparison.OrdinalIgnoreCase))
                 pick = "Pending";
+            // Paid purchases are treated as Complete in the current status list.
             if (pick.Equals("Paid", StringComparison.OrdinalIgnoreCase))
                 pick = "Complete";
             box.SelectedItem = pick.Length > 0 ? pick : "Pending";

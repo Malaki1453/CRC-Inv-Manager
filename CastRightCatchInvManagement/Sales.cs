@@ -44,6 +44,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Open the stored sale PDF, or build one from the customer PO if it is missing.</summary>
         private void ShowSalePdf(Dictionary<string, string> record)
         {
+            // SalePo reads Invoice # (customer PO). Grid shows that column as "Customer PO".
             string po = DataFiles.SalePo(record);
             DataFiles.ShowPdf(
                 DataFiles.PdfKindSale,
@@ -101,9 +102,10 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void AddSaleRecordToInvoice(Dictionary<string, string> record, bool stayOnPage)
         {
+            // SalePo is Invoice # (customer PO). Grid PO # is the purchase lot, shown as "Lot #".
             string po = DataFiles.SalePo(record);
             string so = DataFiles.GetRecord(record, "SO #");
-            // Prefill looks up sale lines by customer PO or SO #.
+            // Prefill looks up sale lines by customer PO (Invoice #) or SO #, not the purchase lot.
             if (po.Length == 0 && so.Length == 0)
                 return;
 
@@ -134,9 +136,10 @@ namespace CastRightCatchInvManagement
         private void AddSaleToDocument(int rowIndex, bool invoice, bool stayOnPage = false)
         {
             var record = DataFiles.GridRowToRecord(dataGridView1, rowIndex);
+            // SalePo is Invoice # (customer PO). Stored PO # is the purchase lot (display "Lot #").
             string po = DataFiles.SalePo(record);
             string so = DataFiles.GetRecord(record, "SO #");
-            // Cannot look up matching lines without a PO or SO.
+            // Cannot look up matching lines without a customer PO or SO.
             if (po.Length == 0 && so.Length == 0)
                 return;
 
@@ -218,6 +221,7 @@ namespace CastRightCatchInvManagement
             // Null error means the sale lines were added.
             if (error != null)
                 ToastAlert.Error(this, error);
+            // Success toast when Shift+click (or a failed-path retry) stayed on this page.
             else
                 ToastAlert.Success(this, "The information was added.");
         }

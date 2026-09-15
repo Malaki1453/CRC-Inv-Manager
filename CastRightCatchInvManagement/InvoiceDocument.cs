@@ -162,6 +162,7 @@ namespace CastRightCatchInvManagement
                 g.Text(36, 760, "IMPORTANT: NO CLAIMS OR REDUCTIONS ALLOWED UNLESS MADE IMMEDIATELY ON RECEIPT OF GOODS.", 6.5f, false, Theme.Muted);
                 g.Text(36, 776, "RECEIVED BY ________________________________", 8, false, Theme.Ink);
             }
+            // Issued invoices print our overdue-interest and customer-signature footer.
             else
             {
                 g.Text(36, 748, "INTEREST MAY BE CHARGED AT THE RATE OF 1.5% PER MONTH ON ALL OVERDUE ACCOUNTS.", 6.5f, false, Theme.Muted);
@@ -176,6 +177,7 @@ namespace CastRightCatchInvManagement
         private static void DrawTotalRow(PdfDraw g, float y, string label, decimal value)
         {
             g.TextRight(528, y + 12, label, 8, true, Theme.Navy);
+            // Zero discount/freight/tax stays blank so the totals box is not noisy.
             if (value != 0)
                 g.TextRight(572, y + 12, FormatMoney(value), 8, false, Theme.Ink);
             g.Line(422, y + 16, 576, y + 16);
@@ -196,6 +198,7 @@ namespace CastRightCatchInvManagement
         private static string FormatQty(string? value)
         {
             decimal n = InvoiceLineRow.ParseNumber(value);
+            // A blank cell should not print 0; a typed zero still prints.
             if (n == 0 && string.IsNullOrWhiteSpace(value))
                 return "";
             return n.ToString("0.###", CultureInfo.InvariantCulture);

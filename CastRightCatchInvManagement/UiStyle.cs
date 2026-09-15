@@ -63,9 +63,11 @@ namespace CastRightCatchInvManagement
                         MessageBoxIcon.Question) != DialogResult.Yes)
                     return;
 
+                // Persist succeeded: this user's layout for this table is now the default.
                 if (GridLayout.SaveDefault(grid))
                     ToastAlert.Success(form, "Default columns saved for this table.");
                 else
+                    // Fail because they are not signed in, or the write to settings failed.
                     ToastAlert.Error(form, AppState.SignedIn
                         ? "Could not save default columns for this table."
                         : "Sign in to save default columns.");
@@ -141,15 +143,59 @@ namespace CastRightCatchInvManagement
                     DataFiles.GridRowToRecord(grid, e.RowIndex));
             };
 
+            // Three exclusive rows so search, buttons, and table cannot overlap
+            // (Dock Fill siblings on one card were stacking the grid at the page top).
+            // Row 0 search, row 1 buttons, row 2 table. PlaceAboveTableAndButtons
+            // collapses rows 1–2 until the user types.
             var stage = new TableSearchStage(titleText, toolbar, columnSearch);
+            stage.Dock = DockStyle.Fill;
+            stage.Margin = Padding.Empty;
+
+            toolbar.Dock = DockStyle.Fill;
+            // 8px between the bottom of the search bar and the buttons.
+            toolbar.Margin = new Padding(0, 8, 0, 0);
+            toolbar.Visible = false;
+
+            var body = new Panel
+            {
+                Name = "DataBody",
+                Dock = DockStyle.Fill,
+                BackColor = Theme.Paper,
+                Visible = false,
+                // 8px between the bottom of the buttons and the top of the table (headers).
+                Margin = new Padding(0, 8, 0, 0)
+            };
+            grid.Dock = DockStyle.Fill;
+            body.Controls.Add(grid);
+
+            var stack = new TableLayoutPanel
+            {
+                Name = "DataStack",
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+                BackColor = Theme.Paper,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                GrowStyle = TableLayoutPanelGrowStyle.FixedSize
+            };
+            stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            // Idle: search owns the page. Searching: PlaceAboveTableAndButtons sets
+            // row 0 Absolute 56, row 1 Absolute 58 (50px buttons + 8px gap), row 2 Percent.
+            stack.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 0f));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 0f));
+            stack.Controls.Add(stage, 0, 0);
+            stack.Controls.Add(toolbar, 0, 1);
+            stack.Controls.Add(body, 0, 2);
+
             var card = new CardPanel
             {
                 Dock = DockStyle.Fill,
-                Padding = new Padding(1)
+                // Inset from the gold leading edge; do not use 1px or the table hugs the form top.
+                Padding = new Padding(12, 10, 12, 12)
             };
-            card.Controls.Add(grid);
-            card.Controls.Add(toolbar);
-            card.Controls.Add(stage);
+            card.Controls.Add(stack);
             card.Controls.Add(upload);
 
             form.Controls.Add(card);
@@ -159,12 +205,12 @@ namespace CastRightCatchInvManagement
         public static void AddDataPageAction(Form form, string text, EventHandler click, bool gold = false)
         {
             Panel? toolbar = FindDataToolbar(form);
-            // Page did not use ApplyDataPage, so there is no shared toolbar.
+            // Not an ApplyDataPage grid (e.g. Review); there is no Default-columns bar to add to.
             if (toolbar == null)
                 return;
 
             var button = new Button { Text = text, Dock = DockStyle.Fill };
-            // Gold is the primary CTA; navy is a secondary action.
+            // gold true: primary action (e.g. Sync live feed). Otherwise navy secondary.
             if (gold)
                 Theme.StyleGoldButton(button);
             else
@@ -182,8 +228,44 @@ namespace CastRightCatchInvManagement
             toolbar.Controls.Add(host);
         }
 
+        /// <summary>True when this page still shows the idle search overlay and the table should not load yet.</summary>
+        public static bool DataPageHasIdleSearch(Form form)
+        {
+            var stage = FindDataSearch(form);
+            // No DataSearch (Review/Reports): always load. Idle overlay: skip FillGrid until the user types.
+            return stage != null && !stage.IsSearching;
+        }
+
+        private static TableSearchStage? FindDataSearch(Form form)
+        {
+            foreach (Control control in DataPageControls(form))
+            {
+                // DataSearch lives in DataStack row 0 (or was a direct child of the card).
+                if (control is TableSearchStage stage)
+                    return stage;
+            }
+
+            return null;
+        }
+
         /// <summary>Find the shared DataToolbar inside a page's card, if ApplyDataPage ran.</summary>
         private static Panel? FindDataToolbar(Form form)
+        {
+            foreach (Control control in DataPageControls(form))
+            {
+                // Current layout: DataToolbar is DataStack row 1. Older pages put it on the card or in DataBody.
+                if (control is Panel panel && panel.Name == "DataToolbar")
+                    return panel;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Walk the data card: CardPanel children, then DataStack rows.
+        /// Search, toolbar, and table are separate rows of DataStack — not overlapping Dock Fill siblings.
+        /// </summary>
+        private static IEnumerable<Control> DataPageControls(Form form)
         {
             foreach (Control outer in form.Controls)
             {
@@ -192,13 +274,21 @@ namespace CastRightCatchInvManagement
                     continue;
                 foreach (Control inner in card.Controls)
                 {
-                    // The card also hosts the grid and search stage.
-                    if (inner is Panel panel && panel.Name == "DataToolbar")
-                        return panel;
+                    yield return inner;
+                    // DataStack holds search (row 0), toolbar (row 1), DataBody/table (row 2).
+                    if (inner is TableLayoutPanel stack && stack.Name == "DataStack")
+                    {
+                        foreach (Control nested in stack.Controls)
+                        {
+                            yield return nested;
+                            if (nested.Name != "DataBody")
+                                continue;
+                            foreach (Control bodyChild in nested.Controls)
+                                yield return bodyChild;
+                        }
+                    }
                 }
             }
-
-            return null;
         }
 
         /// <summary>Set when BindRowEdit already showed a menu so BindCellCopy does not open a second one.</summary>
@@ -227,6 +317,7 @@ namespace CastRightCatchInvManagement
                 // BindRowEdit runs on the same click and shows the full row menu; skip a second popup.
                 grid.BeginInvoke(new Action(() =>
                 {
+                    // BindRowEdit already opened the full row menu on this click; do not stack a Copy-only menu.
                     if (RowContextMenuShown)
                     {
                         RowContextMenuShown = false;
@@ -257,13 +348,13 @@ namespace CastRightCatchInvManagement
                 try
                 {
                     int col = e.ColumnIndex;
-                    // Hidden or filler columns cannot be the current cell.
+                    // Hidden or filler columns cannot be the current cell; fall back to the first visible column.
                     if (col < 0 || col >= grid.Columns.Count || !grid.Columns[col].Visible)
                     {
                         var first = grid.Columns.GetFirstColumn(DataGridViewElementStates.Visible);
                         col = first?.Index ?? 0;
                     }
-                    // CurrentCell is required for some grid edit paths.
+                    // CurrentCell is required for some grid edit paths (copy / delete).
                     if (col < grid.Columns.Count)
                         grid.CurrentCell = grid.Rows[e.RowIndex].Cells[col];
                 }
@@ -285,9 +376,10 @@ namespace CastRightCatchInvManagement
                     menu.Items.Add(item.Text, null, (_, _) => item.Click(record));
                 }
 
-                // Review-only and denied tables cannot edit live rows.
+                // Review-only and denied tables cannot edit live rows; skip Edit when onEdit is null or mutate is denied.
                 if (onEdit != null && canMutate)
                     menu.Items.Add(editText, null, (_, _) => onEdit(record));
+                // Delete needs a real table name so MutateDelete knows which SQLite table to change.
                 if (canMutate && table.Length > 0)
                 {
                     menu.Items.Add("Delete", null, (_, _) =>
@@ -301,9 +393,10 @@ namespace CastRightCatchInvManagement
                             return;
                         var result = DataFiles.MutateDelete(table, record);
                         var host = grid.FindForm();
-                        // Grid can be disposed mid-click if the page was stolen.
+                        // Grid can be disposed mid-click if the page was closed; nowhere to toast.
                         if (host == null)
                             return;
+                        // Server/SQLite rejected the delete (locked row, permission, etc.).
                         if (!result.Ok)
                             ToastAlert.Error(host, result.Message);
                         else if (result.Queued)
@@ -320,6 +413,7 @@ namespace CastRightCatchInvManagement
 
         private static void ShowCopyCellMenu(DataGridView grid, int row, int col)
         {
+            // Header click or stale index after a reload: there is no cell to copy.
             if (row < 0 || col < 0 || row >= grid.Rows.Count || col >= grid.Columns.Count)
                 return;
             var menu = new ContextMenuStrip();
@@ -329,6 +423,7 @@ namespace CastRightCatchInvManagement
 
         private static void CopyCell(DataGridView grid, int row, int col)
         {
+            // Same bounds check as the menu: ignore header / out-of-range after a reload.
             if (row < 0 || col < 0 || row >= grid.Rows.Count || col >= grid.Columns.Count)
                 return;
             CopyCell(grid.Rows[row].Cells[col]);
@@ -336,6 +431,7 @@ namespace CastRightCatchInvManagement
 
         private static void CopyCell(DataGridViewCell? cell)
         {
+            // CurrentCell can be null when nothing is selected.
             if (cell == null)
                 return;
             string text = Convert.ToString(cell.FormattedValue) ?? "";
@@ -362,6 +458,7 @@ namespace CastRightCatchInvManagement
                 .ToList();
 
             var menu = new ContextMenuStrip();
+            // Nothing user-hidden: show a disabled hint instead of an empty menu.
             if (hidden.Count == 0)
             {
                 menu.Items.Add("All columns are showing").Enabled = false;
@@ -452,6 +549,7 @@ namespace CastRightCatchInvManagement
                     : "Term not set";
 
             string? file = DataFiles.GetDisplayedFileName(page);
+            // Chrome pages (Home/Help) have no table file; show the folder name instead.
             return string.IsNullOrWhiteSpace(file)
                 ? $"{term}  ·  {Path.GetFileName(AppState.InventoryFolder)}"
                 : $"{term}  ·  {file}";

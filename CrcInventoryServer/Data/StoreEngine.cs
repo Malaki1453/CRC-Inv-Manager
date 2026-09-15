@@ -46,6 +46,7 @@ internal static class DbCmd
     /// <summary>Adds a named parameter, mapping null to DBNull and byte[] to Binary.</summary>
     public static void AddParam(this DbCommand cmd, string name, object? value)
     {
+        // cmd is the SQL command being parameterized (SQLite $name or Postgres @name).
         var parameter = cmd.CreateParameter();
         parameter.ParameterName = name;
         parameter.Value = value ?? DBNull.Value;
@@ -102,6 +103,7 @@ internal sealed class SqliteStoreEngine : StoreEngine
         string path = Path.Combine(
             _folder,
             archive ? Schema.ArchiveFileName : Schema.LiveFileName);
+        // db is the live or archive SQLite file connection.
         var db = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = path,
@@ -109,7 +111,7 @@ internal sealed class SqliteStoreEngine : StoreEngine
             DefaultTimeout = 8
         }.ToString());
         db.Open();
-        using var pragma = db.CreateCommand();
+        using var pragma = db.CreateCommand(); // SQL command for SQLite busy_timeout
         pragma.CommandText = "PRAGMA busy_timeout=8000;";
         pragma.ExecuteNonQuery();
         return db;
@@ -161,10 +163,10 @@ internal sealed class PostgresStoreEngine : StoreEngine
     /// <inheritdoc />
     public override DbConnection Open(bool archive)
     {
-        var db = new NpgsqlConnection(_connectionString);
+        var db = new NpgsqlConnection(_connectionString); // live/archive Postgres connection (search_path set below)
         db.Open();
         Bootstrap(db);
-        using var path = db.CreateCommand();
+        using var path = db.CreateCommand(); // SQL command that sets search_path to live or archive
         path.CommandText = archive
             ? "SET search_path TO archive, public"
             : "SET search_path TO live, public";

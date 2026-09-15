@@ -24,7 +24,7 @@ namespace CastRightCatchInvManagement
         {
             get
             {
-                // Local-folder builds never talk to the named-op stream.
+                // UseInventoryServer=false is local SQLite; never treat that as a remote session.
                 if (!UseInventoryServer)
                     return false;
                 lock (Gate)
@@ -39,7 +39,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Open a TLS session to the inventory server and record the hello handshake.</summary>
         public static void Connect(string host, int port, string? fingerprint)
         {
-            // The flag is the only switch between local SQLite and the server.
+            // UseInventoryServer=false is local SQLite; Connect must not open a TLS session.
             if (!UseInventoryServer)
                 throw new InvalidOperationException("The inventory server is turned off in DataLink.");
 
@@ -64,6 +64,7 @@ namespace CastRightCatchInvManagement
                     HasItUser = hello.HasItUser;
                 }
             }
+            // Drop a half-open client so a failed connect cannot leak sockets.
             catch
             {
                 // Drop a half-open client so a failed connect cannot leak sockets.
@@ -106,7 +107,7 @@ namespace CastRightCatchInvManagement
         public static bool Try<T>(string op, object? payload, out T? result)
         {
             result = default;
-            // Local SQLite callers should not hit the network.
+            // Local SQLite (UseInventoryServer=false or not connected) must not hit the network.
             if (!IsRemote)
                 return false;
 
@@ -115,6 +116,7 @@ namespace CastRightCatchInvManagement
                 result = Call<T>(op, payload);
                 return true;
             }
+            // A downed server should not crash table reads; callers fall back or skip.
             catch
             {
                 // A downed server should not crash table reads; callers fall back or skip.

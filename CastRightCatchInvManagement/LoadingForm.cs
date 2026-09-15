@@ -163,9 +163,9 @@ namespace CastRightCatchInvManagement
                 {
                     result = await Task.Run(work);
                 }
+                // Capture so the caller sees the original exception after the dialog closes.
                 catch (Exception ex)
                 {
-                    // Capture so the caller sees the original exception after the dialog closes.
                     error = ex;
                 }
 

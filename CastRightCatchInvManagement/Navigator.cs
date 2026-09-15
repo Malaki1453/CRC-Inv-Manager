@@ -45,6 +45,7 @@ namespace CastRightCatchInvManagement
                 if (!workspace.IsAlive || workspace.CurrentPage == null)
                     continue;
 
+                // Ask the nested page to reload when this workspace still hosts a live instance.
                 if (_instances.TryGetValue(workspace.CurrentPage.Value, out var form) &&
                     form != null && !form.IsDisposed)
                     Highlight(form);
@@ -101,6 +102,7 @@ namespace CastRightCatchInvManagement
         internal static void GoForward(Workspace? workspace)
         {
             workspace ??= _active ?? _main;
+            // App can close while a mouse-side-button message is still queued.
             if (workspace == null || !workspace.IsAlive)
                 return;
 
@@ -154,6 +156,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (var workspace in AllWorkspaces())
             {
+                // Closed extras and empty hosts are not showing a page.
                 if (workspace.IsAlive && workspace.CurrentPage == page)
                     return true;
             }
@@ -173,6 +176,7 @@ namespace CastRightCatchInvManagement
                 _main.Host.Controls.Add(target);
             }
 
+            // CreateControl so child lookups do not throw before the handle exists.
             if (!target.IsHandleCreated)
                 target.CreateControl();
 
@@ -202,6 +206,7 @@ namespace CastRightCatchInvManagement
             // Non-staff cannot open Admin; Settings is the fallback chrome page.
             if (page == AppPage.Admin && !AppState.IsAdmin && !AppState.IsIt)
                 page = AppPage.Settings;
+            // Denied tables bounce to Home with a warning instead of showing a blank page.
             if (!TableAccess.CanPage(page))
             {
                 MessageBox.Show(
@@ -225,9 +230,11 @@ namespace CastRightCatchInvManagement
         /// <summary>Open in a new extra window offset from the source, unless that page is already shown.</summary>
         internal static void OpenDetached(AppPage page, Workspace? from)
         {
+            // OpenDetached cannot create extras before AttachMain.
             if (_main == null || !_main.IsAlive)
                 throw new InvalidOperationException("Navigator host has not been set.");
 
+            // Denied tables cannot open a second window.
             if (!TableAccess.CanPage(page))
             {
                 MessageBox.Show(
@@ -259,6 +266,7 @@ namespace CastRightCatchInvManagement
         internal static bool TryFocus(AppPage page)
         {
             var workspace = WorkspaceShowing(page);
+            // No live window is showing this page.
             if (workspace == null)
                 return false;
             FocusWorkspace(workspace);
@@ -271,6 +279,7 @@ namespace CastRightCatchInvManagement
             var pages = new List<AppPage>();
             foreach (var workspace in AllWorkspaces())
             {
+                // Skip closed extras and empty hosts so the open-windows bar stays accurate.
                 if (workspace.IsAlive && workspace.CurrentPage is AppPage page)
                     pages.Add(page);
             }
@@ -281,6 +290,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Mark this window as the one that receives GoTo and history keys.</summary>
         internal static void Activate(Workspace? workspace)
         {
+            // Ignore activate from a window that already closed.
             if (workspace == null || !workspace.IsAlive)
                 return;
 
@@ -288,6 +298,7 @@ namespace CastRightCatchInvManagement
             // Remember the last extra so closing main can promote it.
             if (!workspace.IsMain)
                 _lastExtra = workspace;
+            // Keep Navigator.CurrentPage in sync with the focused window.
             if (workspace.CurrentPage is AppPage page)
                 CurrentPage = page;
         }
@@ -301,8 +312,10 @@ namespace CastRightCatchInvManagement
                 // Caller already cancelled (unsaved prompt).
                 if (e.Cancel)
                     return;
+                // Closing main may promote an extra so the process stays up.
                 if (workspace.IsMain)
                     TryPromote(workspace);
+                // Extras return nested pages to main instead of disposing them.
                 else
                     CloseExtra(workspace);
             };
@@ -337,6 +350,7 @@ namespace CastRightCatchInvManagement
 
             foreach (var extra in _extras)
             {
+                // Clear Owner so extras are not disposed with the retiring main window.
                 if (extra.IsAlive)
                     extra.Window.Owner = null;
             }
@@ -347,6 +361,7 @@ namespace CastRightCatchInvManagement
             retiring.IsMain = false;
             _extras.Remove(successor);
             _main = successor;
+            // Successor is now main; it is no longer an extra to remember.
             if (_lastExtra == successor)
                 _lastExtra = null;
 
@@ -363,6 +378,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Prefer the last focused extra; otherwise the first remaining extra.</summary>
         private static Workspace? PickSuccessor(Workspace retiring)
         {
+            // Prefer the extra the user last focused so that window becomes the new main.
             if (_lastExtra != null &&
                 _lastExtra.IsAlive &&
                 _lastExtra != retiring &&
@@ -371,6 +387,7 @@ namespace CastRightCatchInvManagement
 
             foreach (var extra in _extras)
             {
+                // Any remaining extra can keep the process alive.
                 if (extra.IsAlive && extra != retiring)
                     return extra;
             }
@@ -381,6 +398,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Move nested page forms from a closing window into the successor without disposing them.</summary>
         private static void SalvagePages(Workspace from, Workspace to)
         {
+            // Both windows must still exist to reparent nested forms.
             if (!from.IsAlive || !to.IsAlive)
                 return;
 
@@ -394,6 +412,7 @@ namespace CastRightCatchInvManagement
             var forms = new List<Form>();
             foreach (Control control in from.Host.Controls)
             {
+                // Only nested page forms move; chrome controls stay on the closing window.
                 if (control is Form form && !form.IsDisposed)
                     forms.Add(form);
             }
@@ -402,10 +421,12 @@ namespace CastRightCatchInvManagement
             {
                 from.Host.Controls.Remove(form);
                 PrepareAsPage(form);
+                // Skip forms already parented to the successor.
                 if (!to.Host.Controls.Contains(form))
                     to.Host.Controls.Add(form);
             }
 
+            // Restore the page the successor was already showing after the reparent.
             if (keepVisible != null && !keepVisible.IsDisposed)
             {
                 keepVisible.Visible = true;
@@ -421,14 +442,17 @@ namespace CastRightCatchInvManagement
         /// <summary>Drop a closed workspace and exit the process when no windows remain.</summary>
         private static void OnWindowClosed(Workspace workspace)
         {
+            // Clear _main only when this closed window was still the registered main.
             if (workspace.IsMain && _main == workspace)
                 _main = null;
 
             _extras.Remove(workspace);
 
+            // Drop a stale last-extra pointer so promotion does not pick a disposed window.
             if (_lastExtra == workspace)
                 _lastExtra = null;
 
+            // Move GoTo/history targeting to main when the focused extra closes.
             if (_active == workspace)
                 Activate(_main);
 
@@ -444,6 +468,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (var workspace in AllWorkspaces())
             {
+                // Any remaining window keeps the message loop running.
                 if (workspace.IsAlive)
                     return true;
             }
@@ -454,6 +479,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Host a page in dest, stealing it from another window if needed.</summary>
         private static void ShowIn(Workspace dest, AppPage page, bool activate = true, bool recordHistory = true)
         {
+            // Do not host a page into a window that already closed.
             if (!dest.IsAlive)
                 return;
 
@@ -463,6 +489,7 @@ namespace CastRightCatchInvManagement
             // Already showing this page here; just refresh and focus.
             if (dest.CurrentPage == page && form.Parent == dest.Host && form.Visible)
             {
+                // Recoveries skip Activate so the stealing window stays in front.
                 if (activate)
                 {
                     Activate(dest);
@@ -489,6 +516,7 @@ namespace CastRightCatchInvManagement
 
             PrepareAsPage(form);
             form.Visible = true;
+            // Add only once; re-adding would reorder and flicker.
             if (!dest.Host.Controls.Contains(form))
                 dest.Host.Controls.Add(form);
             form.BringToFront();
@@ -502,6 +530,7 @@ namespace CastRightCatchInvManagement
 
             RefreshAllChrome();
 
+            // Mark dest as the GoTo/history target after the page is visible.
             if (activate)
             {
                 Activate(dest);
@@ -514,6 +543,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (Control control in workspace.Host.Controls)
             {
+                // Look for a leftover nested page form to show instead of the stolen one.
                 if (control is Form form && !form.IsDisposed)
                 {
                     var page = PageOf(form);
@@ -548,6 +578,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (var page in new[] { AppPage.Dashboard, AppPage.Settings, AppPage.Reports })
             {
+                // Do not steal a page another window is already showing.
                 if (!IsShownElsewhere(page, dest))
                     return page;
             }
@@ -560,6 +591,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (var workspace in AllWorkspaces())
             {
+                // Match any other live window already displaying this page.
                 if (workspace != dest && workspace.IsAlive && workspace.CurrentPage == page)
                     return true;
             }
@@ -572,6 +604,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (var workspace in AllWorkspaces())
             {
+                // First live workspace showing this page wins.
                 if (workspace.IsAlive && workspace.CurrentPage == page)
                     return workspace;
             }
@@ -583,6 +616,7 @@ namespace CastRightCatchInvManagement
         private static bool TryFocusOther(AppPage page, Workspace? from)
         {
             var existing = WorkspaceShowing(page);
+            // Focus only a different live window; same-window or missing is a miss.
             if (existing == null || existing == from || !existing.IsAlive)
                 return false;
             FocusWorkspace(existing);
@@ -592,8 +626,10 @@ namespace CastRightCatchInvManagement
         /// <summary>Restore, show, and activate a workspace window.</summary>
         private static void FocusWorkspace(Workspace workspace)
         {
+            // Closed windows cannot be restored or activated.
             if (!workspace.IsAlive)
                 return;
+            // A minimized window would stay in the taskbar instead of coming forward.
             if (workspace.Window.WindowState == FormWindowState.Minimized)
                 workspace.Window.WindowState = FormWindowState.Normal;
             workspace.Window.Show();
@@ -607,6 +643,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (var workspace in AllWorkspaces())
             {
+                // Skip disposed extras so title/sidebar refresh cannot throw.
                 if (workspace.IsAlive)
                     workspace.RefreshChrome();
             }
@@ -616,6 +653,7 @@ namespace CastRightCatchInvManagement
         private static void CloseExtra(Workspace extra)
         {
             _extras.Remove(extra);
+            // Closing the focused extra moves GoTo/history back to main.
             if (_active == extra)
                 Activate(_main);
 
@@ -626,6 +664,7 @@ namespace CastRightCatchInvManagement
             var forms = new List<Form>();
             foreach (Control control in extra.Host.Controls)
             {
+                // Collect nested page forms so they can be reparented to main.
                 if (control is Form form && !form.IsDisposed)
                     forms.Add(form);
             }
@@ -634,6 +673,7 @@ namespace CastRightCatchInvManagement
             {
                 extra.Host.Controls.Remove(form);
                 PrepareAsPage(form);
+                // Skip forms already sitting on main.
                 if (!_main.Host.Controls.Contains(form))
                     _main.Host.Controls.Add(form);
             }
@@ -653,8 +693,10 @@ namespace CastRightCatchInvManagement
         /// <summary>Reuse the cached page form, or construct it from the factory map.</summary>
         private static Form GetInstance(AppPage page)
         {
+            // Create a new instance only when the cache is empty or the form was disposed.
             if (!_instances.TryGetValue(page, out var target) || target == null || target.IsDisposed)
             {
+                // Unknown pages have no form factory and cannot be hosted.
                 if (!_factories.ContainsKey(page))
                     throw new InvalidOperationException($"No form registered for {page}");
 
@@ -671,6 +713,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (var workspace in AllWorkspaces())
             {
+                // The host that currently parents this nested form owns it.
                 if (workspace.IsAlive && form.Parent == workspace.Host)
                     return workspace;
             }
@@ -681,11 +724,13 @@ namespace CastRightCatchInvManagement
         /// <summary>AppPage for a nested form, or null if it is not in the instance map.</summary>
         private static AppPage? PageOf(Form? form)
         {
+            // No form means no page mapping.
             if (form == null)
                 return null;
 
             foreach (var pair in _instances)
             {
+                // Match the cached instance to its AppPage key.
                 if (pair.Value == form)
                     return pair.Key;
             }
@@ -696,6 +741,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Main first, then extras (including ones that may already be disposed).</summary>
         private static IEnumerable<Workspace> AllWorkspaces()
         {
+            // Main is listed first so fallbacks prefer it.
             if (_main != null)
                 yield return _main;
             foreach (var extra in _extras)
@@ -717,13 +763,14 @@ namespace CastRightCatchInvManagement
             Panel? hint = null;
             foreach (Control control in workspace.Host.Controls)
             {
+                // Reuse the existing empty-state panel if this extra already has one.
                 if (control.Name == "EmptyHint")
                     hint = (Panel)control;
             }
 
+            // Build the empty-state panel once so extras do not stack labels.
             if (hint == null)
             {
-                // Reuse one hint panel so extras do not stack labels.
                 hint = new Panel
                 {
                     Name = "EmptyHint",
@@ -749,6 +796,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Ask a nested page to reload for the current folder and Current/Old view.</summary>
         private static void Highlight(Form form)
         {
+            // Pages that implement INavigationPage reload for the current folder/view.
             if (form is INavigationPage navPage)
                 navPage.HighlightCurrentPage();
         }
@@ -807,6 +855,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Pop back and push the current page onto forward.</summary>
         public AppPage? TakeBack()
         {
+            // Nothing to pop when this window has no back history.
             if (_back.Count == 0)
                 return null;
             var page = _back[^1];
@@ -820,10 +869,12 @@ namespace CastRightCatchInvManagement
         /// <summary>Pop forward and push the current page onto back.</summary>
         public AppPage? TakeForward()
         {
+            // Nothing to pop when this window has no forward history.
             if (_forward.Count == 0)
                 return null;
             var page = _forward[^1];
             _forward.RemoveAt(_forward.Count - 1);
+            // Empty host has nothing to put on the back stack.
             if (CurrentPage is AppPage here)
                 _back.Add(here);
             return page;
@@ -857,32 +908,41 @@ namespace CastRightCatchInvManagement
             if (HasModal())
                 return false;
 
+            // Mouse side buttons (including non-client) map to back/forward.
             if (m.Msg is WmXButtonDown or WmNcXButtonDown)
             {
                 int button = (int)((m.WParam.ToInt64() >> 16) & 0xFFFF);
+                // XButton1 is hardware back.
                 if (button == XButton1)
                     return TryBack();
+                // XButton2 is hardware forward.
                 if (button == XButton2)
                     return TryForward();
                 return false;
             }
 
+            // Keyboard/browser app commands also request back/forward.
             if (m.Msg == WmAppCommand)
             {
                 int command = (int)((m.LParam.ToInt64() >> 16) & 0x0FFF);
+                // Browser-back app command.
                 if (command == AppCommandBrowserBack)
                     return TryBack();
+                // Browser-forward app command.
                 if (command == AppCommandBrowserForward)
                     return TryForward();
                 return false;
             }
 
+            // Alt+Left/Right and dedicated browser keys navigate history.
             if (m.Msg is WmKeyDown or WmSysKeyDown)
             {
                 var key = (Keys)(m.WParam.ToInt64() & 0xFFFF);
                 bool alt = (Control.ModifierKeys & Keys.Alt) != 0;
+                // BrowserBack key or Alt+Left is back.
                 if (key == Keys.BrowserBack || (alt && key == Keys.Left))
                     return TryBack();
+                // BrowserForward key or Alt+Right is forward.
                 if (key == Keys.BrowserForward || (alt && key == Keys.Right))
                     return TryForward();
             }
@@ -894,6 +954,7 @@ namespace CastRightCatchInvManagement
         private static bool TryBack()
         {
             var workspace = Navigator.ActiveWorkspace;
+            // Do not consume the key when a dialog is in front or this window has no back stack.
             if (!WorkspaceIsForeground() || workspace == null || !workspace.CanGoBack)
                 return false;
             Navigator.GoBack(workspace);
@@ -904,6 +965,7 @@ namespace CastRightCatchInvManagement
         private static bool TryForward()
         {
             var workspace = Navigator.ActiveWorkspace;
+            // Do not consume the key when a dialog is in front or this window has no forward stack.
             if (!WorkspaceIsForeground() || workspace == null || !workspace.CanGoForward)
                 return false;
             Navigator.GoForward(workspace);
@@ -922,6 +984,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (Form form in Application.OpenForms)
             {
+                // A visible modal must keep side buttons; navigating under it would hide the dialog.
                 if (form.Visible && form.Modal)
                     return true;
             }
@@ -1064,6 +1127,7 @@ namespace CastRightCatchInvManagement
                 _title.Text = "Cast Right Catch";
                 _subtitle.Text = "Choose a page from the sidebar";
             }
+            // Named page: title bar and header show that page.
             else
             {
                 Text = UiStyle.PageTitle(page.Value) + "  ·  Cast Right Catch";
@@ -1081,6 +1145,7 @@ namespace CastRightCatchInvManagement
             var open = Navigator.ListOpenPages();
             _openBar.Visible = open.Count > 1;
             _openBar.Controls.Clear();
+            // A single window does not need the open-windows chip bar.
             if (open.Count <= 1)
                 return;
 
@@ -1110,6 +1175,7 @@ namespace CastRightCatchInvManagement
                 // Gold marks the page in this window; outline jumps to another.
                 if (here)
                     Theme.StyleGoldButton(btn);
+                // Other windows stay outlined so a click focuses them instead of duplicating.
                 else
                     Theme.StyleOutlineButton(btn);
                 btn.Font = Theme.Small;

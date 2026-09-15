@@ -356,9 +356,9 @@ namespace CastRightCatchInvManagement
                 _web.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = true;
                 NavigatePdf();
             }
+            // WebView2 runtime is optional; offer Open in default app instead of crashing.
             catch (Exception ex)
             {
-                // WebView2 runtime is optional; offer Open in default app instead of crashing.
                 ShowFallback(
                     "This computer needs the Microsoft Edge WebView2 Runtime to show PDFs in the app.\n" +
                     ex.Message);
@@ -408,9 +408,9 @@ namespace CastRightCatchInvManagement
                 NavigatePdf();
                 ToastAlert.Success(this, "Saved to the database.");
             }
+            // Disk/DB write failures should keep the viewer on the last good file.
             catch (Exception ex)
             {
-                // Disk/DB write failures should keep the viewer on the last good file.
                 ToastAlert.Error(this, ex.Message);
             }
         }
@@ -434,9 +434,9 @@ namespace CastRightCatchInvManagement
                 File.Copy(_path, dialog.FileName, overwrite: true);
                 ToastAlert.Success(this, "PDF saved.");
             }
+            // Destination locked in Excel/Adobe is the usual failure.
             catch (Exception ex)
             {
-                // Destination locked in Excel/Adobe is the usual failure.
                 ToastAlert.Error(this, ex.Message);
             }
         }
@@ -484,9 +484,9 @@ namespace CastRightCatchInvManagement
                 {
                     _path = Path.GetFullPath(DataFiles.SaveStoredPdf(_kind, _key, name, bytes));
                 }
+                // Loose files are overwritten in place.
                 else
                 {
-                    // Loose files are overwritten in place.
                     File.WriteAllBytes(_path, bytes);
                 }
 
@@ -494,9 +494,9 @@ namespace CastRightCatchInvManagement
                 NavigatePdf();
                 ToastAlert.Success(this, "PDF replaced.");
             }
+            // Leave the previous PDF on screen if the new file cannot be written.
             catch (Exception ex)
             {
-                // Leave the previous PDF on screen if the new file cannot be written.
                 ToastAlert.Error(this, ex.Message);
             }
         }
@@ -521,6 +521,7 @@ namespace CastRightCatchInvManagement
                 // Prefer editing the existing sale lines when the PO is still live.
                 if (rows.Count > 0)
                     SalesOrder.OpenEdit(rows[0]);
+                // No live sale lines for that PO: open a blank Create Sales Order.
                 else
                     Navigator.GoTo(AppPage.SalesOrder);
             }

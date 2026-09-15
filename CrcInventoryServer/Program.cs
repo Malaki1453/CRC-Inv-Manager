@@ -216,7 +216,7 @@ internal static class Program
         var chars = new List<char>();
         while (true)
         {
-            var key = Console.ReadKey(intercept: true);
+            var key = Console.ReadKey(intercept: true); // one typed keystroke, not echoed
             // Enter ends the secret.
             if (key.Key == ConsoleKey.Enter)
             {

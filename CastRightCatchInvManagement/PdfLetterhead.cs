@@ -59,9 +59,9 @@ namespace CastRightCatchInvManagement
 
                 g.Image(lockup, Left, top, w, used);
             }
+            // Wordmark fallback when the lockup image is missing from the build.
             else
             {
-                // Wordmark fallback when the lockup image is missing from the build.
                 g.Text(Left, top + 18, "CAST RIGHT", 16, PdfFace.SerifBold, Theme.Navy);
                 g.Text(Left + 4, top + 34, "Catch Co.", 10, PdfFace.SerifItalic, Theme.Navy);
                 g.Fill(Left + 78, top + 30, 18, 1.2f, Theme.Gold);
@@ -84,7 +84,9 @@ namespace CastRightCatchInvManagement
             string address = First(AppState.Address, "PO Box 1064, Orting, WA 98360");
             const float x = 392;
             var lines = new List<string>();
+            // Skip empty contact rows so the diamond list stays tight.
             if (phone.Length > 0) lines.Add(phone);
+            // Same for email: a blank setting would print an empty diamond line.
             if (email.Length > 0) lines.Add(email);
             lines.AddRange(SplitAddress(address));
 

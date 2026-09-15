@@ -80,7 +80,7 @@ internal static class Schema
             // Purchase tracker columns through Record Status.
             PurchaseSales =>
                 "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Price Paid / LB,Overhead / LB,Freight / LB,Freight Company,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Record Status",
-            // Sales order columns through Record Status.
+            // Sales: PO # is the purchase lot; Invoice # is the customer PO (Lot # was migrated away).
             Sales =>
                 "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Record Status",
             // Customer master, including sealed routing/account numbers.
@@ -128,7 +128,7 @@ internal static class Schema
                    HasText(values, "Arrival Date");
         }
 
-        // Sales complete once invoiced, paid, or closed.
+        // Sales complete once invoiced, paid, or closed. Invoice # on a sale is the customer PO.
         if (table.Equals(Sales, StringComparison.OrdinalIgnoreCase))
         {
             return HasText(values, "Invoice #") ||
@@ -187,16 +187,18 @@ internal static class Schema
         {
             foreach (var pair in values)
             {
+                // Sale rows have no Customer PO column; the value lives in Invoice #.
                 if (pair.Key.Equals("Invoice #", StringComparison.OrdinalIgnoreCase))
                     return pair.Value ?? "";
             }
         }
 
-        // Older sales rows stored the purchase PO in Lot #.
+        // Older sales rows stored the purchase lot in Lot #; PO # is that lot after migration.
         if (name.Equals("PO #", StringComparison.OrdinalIgnoreCase))
         {
             foreach (var pair in values)
             {
+                // Pre-migration sales: Lot # held the purchase PO and was later copied into PO #.
                 if (pair.Key.Equals("Lot #", StringComparison.OrdinalIgnoreCase) &&
                     !string.IsNullOrWhiteSpace(pair.Value))
                     return pair.Value ?? "";
@@ -210,6 +212,7 @@ internal static class Schema
     {
         foreach (var pair in values)
         {
+            // Same case-insensitive header match Lookup uses for cell values.
             if (pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase))
                 return true;
         }

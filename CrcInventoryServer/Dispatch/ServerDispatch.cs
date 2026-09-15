@@ -19,6 +19,7 @@ internal sealed class ServerDispatch
     /// <summary>Runs one named op. Public ops skip sign-in; everything else requires a session.</summary>
     public object? Handle(string op, JsonElement payload, ClientSession session)
     {
+        // op is the named ServerOps string from the request frame.
         // Hello, login, and resume must work before a session exists.
         if (IsPublic(op))
             return HandlePublic(op, payload, session);

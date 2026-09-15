@@ -201,9 +201,9 @@ namespace CastRightCatchInvManagement
                 grid.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
                 grid.RowStyles.Add(new RowStyle(SizeType.Percent, 20));
             }
+            // Customer identity includes credit, established date, and a full-width address.
             else
             {
-                // Customer identity includes credit, established date, and a full-width address.
                 PutReadout(grid, 0, 1, "CONTACT NAME", DataFiles.GetRecord(record, "Contact Name"));
                 PutReadout(grid, 1, 1, "EMAIL", DataFiles.GetRecord(record, "Email"));
                 PutReadout(grid, 2, 1, "TERMS", DataFiles.GetRecord(record, "Terms"));

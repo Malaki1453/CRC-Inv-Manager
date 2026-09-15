@@ -28,8 +28,10 @@ namespace CastRightCatchInvManagement
             Height = 34;
         }
 
+        /// <summary>Visible data-column headers in display order.</summary>
         public IReadOnlyList<string> Columns => _columns;
 
+        /// <summary>Index of the last jumped-to column, or -1 if none.</summary>
         public int SelectedIndex => _selectedIndex;
 
         /// <summary>Replace the jump list with the grid's current visible headers.</summary>
@@ -45,6 +47,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Close the drop-down before disposing native handles.</summary>
         protected override void Dispose(bool disposing)
         {
+            // disposing is true for managed cleanup; close the drop-down before native handles go away.
             if (disposing)
                 CloseDrop();
             base.Dispose(disposing);
@@ -177,8 +180,10 @@ namespace CastRightCatchInvManagement
             if (!Enabled || _columns.Count == 0)
                 return;
 
+            // Already showing: a second click/key closes the list instead of stacking another drop-down.
             if (_open)
                 CloseDrop();
+            // Closed: build and show the header list under this control.
             else
                 ShowDrop();
         }
@@ -193,6 +198,7 @@ namespace CastRightCatchInvManagement
             foreach (var header in _columns)
             {
                 int w = TextRenderer.MeasureText(header, Theme.Body).Width + 28;
+                // Grow the drop-down so long headers are not clipped; clamped later to 520.
                 if (w > listWidth)
                     listWidth = w;
             }
@@ -215,6 +221,7 @@ namespace CastRightCatchInvManagement
             };
             foreach (var header in _columns)
                 list.Items.Add(header);
+            // Pre-select the last jumped-to column when that index is still in range.
             if (_selectedIndex >= 0 && _selectedIndex < list.Items.Count)
                 list.SelectedIndex = _selectedIndex;
 
@@ -328,14 +335,16 @@ namespace CastRightCatchInvManagement
 
             try
             {
+                // Close only if AutoClose has not already torn down the native window.
                 if (!drop.IsDisposed)
                     drop.Close();
             }
+            // The native drop-down can dispose itself during AutoClose.
             catch (ObjectDisposedException)
             {
-                // The native drop-down can dispose itself during AutoClose.
             }
 
+            // Close() may dispose; skip a second Dispose if it already did.
             if (!drop.IsDisposed)
                 drop.Dispose();
 
@@ -354,6 +363,7 @@ namespace CastRightCatchInvManagement
             using var bg = new SolidBrush(selected ? Theme.GridSelection : Theme.Paper);
             g.FillRectangle(bg, e.Bounds);
 
+            // Selected/hovered row gets the gold leading bar so it matches CardPanel/toolbar chrome.
             if (selected)
             {
                 using var gold = new SolidBrush(Theme.Gold);

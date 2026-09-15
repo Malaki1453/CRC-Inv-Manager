@@ -56,9 +56,9 @@ namespace CastRightCatchInvManagement
 
                 ApplyLocalFallback(settings);
             }
+            // Ignore a corrupt local JSON so a first-run folder prompt still appears.
             catch
             {
-                // ignore bad settings file
             }
         }
 
@@ -92,13 +92,13 @@ namespace CastRightCatchInvManagement
                 // Prefer the shared email for this Windows user.
                 if (email != null)
                     AppState.UserEmail = email;
+                // Seed the shared row from this PC's last-known address.
                 else if (!string.IsNullOrWhiteSpace(AppState.UserEmail))
-                    // Seed the shared row from this PC's last-known address.
                     SqliteInventory.WriteUserEmail(Environment.UserName, AppState.UserEmail);
             }
+            // Keep whatever was loaded from the local file if the shared DB is unavailable.
             catch
             {
-                // keep whatever was loaded from the local file
             }
             finally
             {
@@ -135,9 +135,9 @@ namespace CastRightCatchInvManagement
             {
                 WriteLocalJson();
             }
+            // Local JSON may be locked or the folder read-only; still try the shared write.
             catch
             {
-                // Local JSON may be locked or the folder read-only; still try the shared write.
                 ok = false;
             }
 
@@ -154,9 +154,9 @@ namespace CastRightCatchInvManagement
                     if (!string.IsNullOrWhiteSpace(AppState.CurrentUsername))
                         SqliteInventory.UpdateAccountEmail(AppState.CurrentUsername, AppState.UserEmail);
                 }
+                // Shared write can fail while the local path still saved.
                 catch
                 {
-                    // Shared write can fail while the local path still saved.
                     ok = false;
                 }
             }
@@ -187,9 +187,9 @@ namespace CastRightCatchInvManagement
                 return string.Equals(user ?? "", AppState.SmtpUser ?? "", StringComparison.Ordinal) &&
                        string.Equals(password ?? "", AppState.SmtpPassword ?? "", StringComparison.Ordinal);
             }
+            // Shared DB unavailable; caller should keep the SMTP form open.
             catch
             {
-                // Shared DB unavailable; caller should keep the SMTP form open.
                 return false;
             }
         }
@@ -292,6 +292,7 @@ namespace CastRightCatchInvManagement
             // Invalid or missing port would break Mailer; fall back to the default.
             if (int.TryParse(Get(shared, "smtp_port", AppState.SmtpPort.ToString()), out int port) && port > 0)
                 AppState.SmtpPort = port;
+            // Invalid or missing port would break Mailer; fall back to the default.
             else
                 AppState.SmtpPort = Mailer.DefaultPort;
             AppState.SmtpUser = Get(shared, "smtp_user", AppState.SmtpUser);
@@ -304,6 +305,7 @@ namespace CastRightCatchInvManagement
             if (int.TryParse(Get(shared, "plaid_sync_hours", AppState.PlaidSyncHours.ToString()), out int hours) &&
                 (hours == 0 || hours == 1 || hours == 3))
                 AppState.PlaidSyncHours = hours;
+            // Keep the last successful Plaid sync time when the shared value parses.
             if (DateTime.TryParse(Get(shared, "plaid_last_sync", ""), out var lastSync))
                 AppState.PlaidLastSync = lastSync;
             AppState.StaySignedInEnabled =

@@ -207,6 +207,7 @@ namespace CastRightCatchInvManagement
             // Omit empty resource dictionaries so Acrobat stays happy.
             if (xObject.Length > 0)
                 pageDict.Append("/XObject << ").Append(xObject).Append(" >> ");
+            // Omit empty ExtGState so Acrobat stays happy when there are no watermarks.
             if (gsRes.Length > 0)
                 pageDict.Append("/ExtGState << ").Append(gsRes).Append(" >> ");
             pageDict.Append(">> >>");
@@ -289,6 +290,7 @@ namespace CastRightCatchInvManagement
                 // Win-1252 is not declared; replace other glyphs so the file still parses.
                 if (c < 32 || c > 126)
                     sb.Append('?');
+                // Printable ASCII can go into the PDF literal as-is.
                 else
                     sb.Append(c);
             }
@@ -427,9 +429,9 @@ namespace CastRightCatchInvManagement
                             g = 255;
                             b = 255;
                         }
+                        // Optional wash toward white for a lighter watermark.
                         else if (fade > 0)
                         {
-                            // Optional wash toward white for a lighter watermark.
                             r = (int)(r + (255 - r) * fade);
                             g = (int)(g + (255 - g) * fade);
                             b = (int)(b + (255 - b) * fade);
@@ -446,6 +448,7 @@ namespace CastRightCatchInvManagement
                         // Transparent pixels are not part of the crop box.
                         if (a < 16)
                             continue;
+                        // Grow the crop box to every opaque pixel.
                         if (x < minX) minX = x;
                         if (y < minY) minY = y;
                         if (x > maxX) maxX = x;

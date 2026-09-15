@@ -51,9 +51,9 @@ namespace CastRightCatchInvManagement
             {
                 return new Font(family, size, style, GraphicsUnit.Point);
             }
+            // family (often Georgia) may be missing on locked-down PCs; Segoe UI is always present.
             catch
             {
-                // Georgia (and similar) may be missing on locked-down PCs.
                 return new Font("Segoe UI", size, style, GraphicsUnit.Point);
             }
         }
@@ -199,6 +199,32 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Muted colors while a grid is still loading; restore StyleGrid when fade is false.</summary>
+        public static void FadeGrid(DataGridView grid, bool fade)
+        {
+            grid.EnableHeadersVisualStyles = false;
+            // fade is true while rows are still loading; mute colors so the spinner reads as "in progress".
+            if (fade)
+            {
+                grid.BackgroundColor = Cream;
+                grid.GridColor = Color.FromArgb(210, 214, 210);
+                grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(90, 108, 122);
+                grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(200, 208, 214);
+                grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(90, 108, 122);
+                grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = Color.FromArgb(200, 208, 214);
+                grid.DefaultCellStyle.BackColor = Cream;
+                grid.DefaultCellStyle.ForeColor = Muted;
+                grid.DefaultCellStyle.SelectionBackColor = Cream;
+                grid.DefaultCellStyle.SelectionForeColor = Muted;
+                grid.AlternatingRowsDefaultCellStyle.BackColor = Cream;
+                grid.AlternatingRowsDefaultCellStyle.ForeColor = Muted;
+                return;
+            }
+
+            StyleGrid(grid);
+            grid.EnableHeadersVisualStyles = false;
+        }
+
         /// <summary>Paint default cell contents plus a single hairline under each data cell.</summary>
         private static void PaintGridDataCell(object? sender, DataGridViewCellPaintingEventArgs e)
         {
@@ -261,6 +287,7 @@ namespace CastRightCatchInvManagement
             // Already has the trailing "+" control column.
             if (grid.Columns.Cast<DataGridViewColumn>().Any(IsAddColumn))
                 return;
+            // Empty grids have no data columns to hide/show, so "+" would be the only cell.
             if (grid.Columns.Count == 0)
                 return;
             // Status-only pending grids have no user-hidable fields.
@@ -300,6 +327,7 @@ namespace CastRightCatchInvManagement
             foreach (var col in visible)
                 used += col.Width;
             var add = grid.Columns.Cast<DataGridViewColumn>().FirstOrDefault(IsAddColumn);
+            // Include the fixed-width "+" column in used so leftover space is given only to data columns.
             if (add != null && add.Visible)
             {
                 add.Width = AddColumnWidth;
@@ -436,6 +464,7 @@ namespace CastRightCatchInvManagement
         /// <summary>0 = keep the top of the photo, 1 = keep the bottom.</summary>
         public float AlignY { get; set; } = 0.32f;
 
+        /// <summary>Hero photo cover-cropped into the banner.</summary>
         public Image? Image
         {
             get => _image;
@@ -446,6 +475,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Optional wordmark drawn over the top of the hero.</summary>
         public Image? Overlay
         {
             get => _overlay;
@@ -543,12 +573,14 @@ namespace CastRightCatchInvManagement
         private readonly Label _value;
         private readonly Label _hint;
 
+        /// <summary>Large metric number shown on the card.</summary>
         public string Value
         {
             get => _value.Text;
             set => _value.Text = value;
         }
 
+        /// <summary>Small caption under the metric (units, period, …).</summary>
         public string Hint
         {
             get => _hint.Text;

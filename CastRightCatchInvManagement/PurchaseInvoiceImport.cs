@@ -67,9 +67,9 @@ namespace CastRightCatchInvManagement
             {
                 lines = ExtractLines(draft.Pdf);
             }
+            // Scans and broken PDFs should still be attached; fill the form by hand.
             catch (Exception ex)
             {
-                // Scans and broken PDFs should still be attached; fill the form by hand.
                 draft.Error = ex.Message;
                 return draft;
             }
@@ -116,11 +116,13 @@ namespace CastRightCatchInvManagement
                 if (words.Count == 0)
                 {
                     string pageText = Clean(page.Text);
+                    // Empty page.Text is a scan with nothing to parse.
                     if (pageText.Length > 0)
                     {
                         foreach (string raw in pageText.Split('\n'))
                         {
                             string text = Clean(raw);
+                            // Skip blank splits so they do not become empty product rows.
                             if (text.Length > 0)
                                 result.Add(new PdfLine(pageNo, 0, text, Array.Empty<PdfWord>()));
                         }
@@ -200,6 +202,7 @@ namespace CastRightCatchInvManagement
 
             draft.CustomerCode = best.Hit.Code;
             draft.CustomerName = best.Hit.Name;
+            // Terms from the customer record only fill when the PDF did not already name them.
             if (best.Hit.Extra.Length > 0 && draft.Terms.Length == 0)
                 draft.Terms = best.Hit.Extra;
         }
@@ -263,6 +266,7 @@ namespace CastRightCatchInvManagement
             // Both parties matched: prefer Sold To over letterhead.
             else if (hasVendor && hasCustomer)
                 draft.Incoming = usSold >= usHeader;
+            // No party or company hit: leave direction unset so Create Invoice can ask.
             else
                 draft.Incoming = null;
         }
@@ -285,6 +289,7 @@ namespace CastRightCatchInvManagement
                 return false;
             foreach (string ours in OurNames())
             {
+                // Exact match is our company even when the alias is short.
                 if (name.Equals(ours, StringComparison.OrdinalIgnoreCase))
                     return true;
                 // Longer aliases can appear inside "Cast Right Catch Co. LLC".
@@ -324,6 +329,7 @@ namespace CastRightCatchInvManagement
                             line.Text,
                             label + @"\s*[:.]?\s*(.*)$",
                             RegexOptions.IgnoreCase);
+                        // This line is not the Sold To / Ship To label we are waiting for.
                         if (!match.Success)
                             continue;
                         grab = true;
@@ -344,6 +350,7 @@ namespace CastRightCatchInvManagement
                 // Stop before the next labeled block or the item table.
                 if (LooksLikeHeader(line.Text) || IsSectionLabel(line.Text))
                     break;
+                // Blank lines after the first address line end the Sold To / Ship To block.
                 if (line.Text.Length == 0)
                 {
                     // A blank line after address text ends the block.
@@ -372,6 +379,7 @@ namespace CastRightCatchInvManagement
         private static string CleanBlock(string text)
         {
             text = Clean(text);
+            // Empty address blocks stay empty rather than becoming a newline.
             if (text.Length == 0)
                 return "";
             var lines = text.Replace("\r", "")
@@ -389,6 +397,7 @@ namespace CastRightCatchInvManagement
             // Short names collide with ordinary words on invoices.
             if (name.Length < 4)
                 return 0;
+            // Whole-name hits score higher than a single token.
             if (ContainsWord(hay, name))
                 return 80 + Math.Min(15, name.Length);
             foreach (string part in name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -396,6 +405,7 @@ namespace CastRightCatchInvManagement
                 // Skip "Co", "Inc", and similar tokens that appear on every invoice.
                 if (part.Length < 5 || IsNoise(part))
                     continue;
+                // A distinctive token from the name is enough for a weak match.
                 if (ContainsWord(hay, part))
                     return 72;
             }
@@ -432,6 +442,7 @@ namespace CastRightCatchInvManagement
             {
                 foreach (var line in lines.Take(12))
                 {
+                    // First parseable date in the header is treated as the invoice date.
                     if (TryFindDate(line.Text, out var date))
                     {
                         draft.InvoiceDate = date;
@@ -460,6 +471,7 @@ namespace CastRightCatchInvManagement
                 if (IsTotalLine(line.Text))
                     continue;
                 var parsed = ParseItemLine(line.Text, items);
+                // Keep only rows that looked like a product with qty/price.
                 if (parsed != null)
                     draft.Lines.Add(parsed);
             }
@@ -474,6 +486,7 @@ namespace CastRightCatchInvManagement
             {
                 string text = lines[i].Text;
                 int hits = 0;
+                // Each matching column kind is one vote toward "this is the item table header".
                 if (HasToken(text, "item", "code", "sku", "product", "plu"))
                     hits++;
                 if (HasToken(text, "description", "desc", "product"))
@@ -513,6 +526,7 @@ namespace CastRightCatchInvManagement
             for (int i = headerIndex + 1; i < lines.Count; i++)
             {
                 var line = lines[i];
+                // Skip spacer rows between item lines.
                 if (line.Text.Length == 0)
                     continue;
                 // Totals or another header ends the item table.
@@ -523,6 +537,7 @@ namespace CastRightCatchInvManagement
                 // Column X positions recover rows the free-text parser missed.
                 if (parsed == null)
                     parsed = ParseByColumns(line, columns, items);
+                // Neither parser recognized a product on this row.
                 if (parsed == null)
                     continue;
                 // A qty-only row with no product identity is not a line we can save.
@@ -585,12 +600,14 @@ namespace CastRightCatchInvManagement
                 // Words far from every header column are ignored.
                 if (kind.Length == 0)
                     continue;
+                // First word in a column starts the cell; later words append.
                 if (!buckets.TryGetValue(kind, out var sb))
                 {
                     sb = new StringBuilder();
                     buckets[kind] = sb;
                 }
 
+                // Space-separate words that land in the same column.
                 if (sb.Length > 0)
                     sb.Append(' ');
                 sb.Append(word.Text);
@@ -615,6 +632,7 @@ namespace CastRightCatchInvManagement
             {
                 decimal lbs = PurchaseLineRow.ParseNumber(parsed.Volume);
                 decimal total = PurchaseLineRow.ParseNumber(amount);
+                // Guard against divide-by-zero when the PDF has an amount but no weight.
                 if (lbs > 0 && total > 0)
                     parsed.Price = (total / lbs).ToString("0.####", CultureInfo.InvariantCulture);
             }
@@ -687,6 +705,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Guess cases, volume, and price from the numbers on an invoice row.</summary>
         private static void AssignNumbers(List<decimal> numbers, ref decimal cs, ref decimal volume, ref decimal price)
         {
+            // Nothing to assign when the row had no numeric tokens.
             if (numbers.Count == 0)
                 return;
 
@@ -700,6 +719,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Three numbers: try cases/volume/price, else volume + extension.
             if (copy.Count == 3)
             {
                 // Integer first value in a typical case count, with volume at least as large.
@@ -718,6 +738,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Two numbers: volume+price or cases+volume.
             if (copy.Count == 2)
             {
                 // Larger first value, or a small second value, looks like volume then price.
@@ -726,17 +747,19 @@ namespace CastRightCatchInvManagement
                     volume = copy[0];
                     price = copy[1];
                 }
+                // Small first value, large second: cases then volume.
                 else
                 {
                     cs = copy[0];
                     volume = copy[1];
                 }
             }
+            // A single large number is more often pounds than cases.
             else if (copy[0] >= 10)
             {
-                // A single large number is more often pounds than cases.
                 volume = copy[0];
             }
+            // A single small number is more often a case count.
             else
             {
                 cs = copy[0];
@@ -771,11 +794,13 @@ namespace CastRightCatchInvManagement
             {
                 foreach (var item in items)
                 {
+                    // Catalog code must match the parsed cell exactly (case-insensitive).
                     if (item.Code.Equals(code, StringComparison.OrdinalIgnoreCase))
                         return item;
                 }
             }
 
+            // Short descriptions collide with ordinary invoice words.
             if (desc.Length >= 4)
             {
                 ItemHit? best = null;
@@ -783,6 +808,7 @@ namespace CastRightCatchInvManagement
                 foreach (var item in items)
                 {
                     int score = TextMatch.Score(item.Name, desc);
+                    // Keep the first best score; later ties do not replace it.
                     if (score <= bestScore)
                         continue;
                     bestScore = score;
@@ -808,6 +834,7 @@ namespace CastRightCatchInvManagement
                 // Species is the fallback label when Description is blank.
                 if (description.Length == 0)
                     description = DataFiles.GetRecord(record, "Species").Trim();
+                // An item with no code and no name cannot be matched.
                 if (code.Length == 0 && description.Length == 0)
                     continue;
                 list.Add(new ItemHit(code, description, DataFiles.GetRecord(record, "COO").Trim()));
@@ -826,6 +853,7 @@ namespace CastRightCatchInvManagement
                     blob,
                     label + @"\s*[:#]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
                     RegexOptions.IgnoreCase);
+                // Label + date in the blob is the most reliable invoice/due/ship date.
                 if (match.Success && NumericDateBox.TryParseCell(match.Groups[1].Value, out var dated))
                     return dated;
             }
@@ -835,6 +863,7 @@ namespace CastRightCatchInvManagement
                 // Label and date are often on the same visual line with extra words between.
                 if (!labels.Any(label => Regex.IsMatch(line.Text, label, RegexOptions.IgnoreCase)))
                     continue;
+                // Date on the same visual line as the label, with extra words between.
                 if (TryFindDate(line.Text, out var dated))
                     return dated;
             }
@@ -848,6 +877,7 @@ namespace CastRightCatchInvManagement
             date = default;
             foreach (Match match in Regex.Matches(text, @"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b"))
             {
+                // First token that parses as a real date wins; skip 99/99/99 junk.
                 if (NumericDateBox.TryParseCell(match.Value, out date))
                     return true;
             }
@@ -861,6 +891,7 @@ namespace CastRightCatchInvManagement
             foreach (string pattern in patterns)
             {
                 var match = Regex.Match(blob, pattern, RegexOptions.IgnoreCase);
+                // Try the next pattern when this label is missing from the PDF.
                 if (!match.Success)
                     continue;
                 string value = match.Groups[1].Value.Trim().TrimEnd('.', ',');
@@ -875,6 +906,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Phrase match for multi-word names; whole-word match for codes.</summary>
         private static bool ContainsWord(string hay, string needle)
         {
+            // Blank hay or needle cannot be a word match.
             if (string.IsNullOrWhiteSpace(hay) || string.IsNullOrWhiteSpace(needle))
                 return false;
             // Multi-word names should not require word-boundary regex around every token.
@@ -928,6 +960,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Remove a known item code and numbers so leftover text can be used as description.</summary>
         private static string StripLeadingCode(string text, string? code)
         {
+            // Drop a known item code so leftover text can be used as description.
             if (!string.IsNullOrWhiteSpace(code))
                 text = Regex.Replace(text, @"\b" + Regex.Escape(code) + @"\b", "", RegexOptions.IgnoreCase);
             text = Regex.Replace(text, @"\$?\d[\d,]*\.?\d*", " ");
@@ -955,6 +988,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Strip control characters and collapse whitespace from PDF-extracted text.</summary>
         private static string Clean(string? text)
         {
+            // Null/whitespace PDF text becomes empty so callers can skip it.
             if (string.IsNullOrWhiteSpace(text))
                 return "";
             var sb = new StringBuilder(text.Length);

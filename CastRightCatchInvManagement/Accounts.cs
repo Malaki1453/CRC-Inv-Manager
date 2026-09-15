@@ -77,6 +77,7 @@ namespace CastRightCatchInvManagement
             {
                 return SqliteInventory.ListAccounts().Any(row => row.IsIt);
             }
+            // A missing or locked database still needs the create-IT screen.
             catch
             {
                 // A missing or locked database still needs the create-IT screen.
@@ -206,6 +207,7 @@ namespace CastRightCatchInvManagement
             {
                 return SqliteInventory.CountAccounts();
             }
+            // Treat a locked DB as empty so first-run UI can still appear.
             catch
             {
                 // Treat a locked DB as empty so first-run UI can still appear.
@@ -252,6 +254,7 @@ namespace CastRightCatchInvManagement
                 if (!hash.StartsWith("$argon2id$", StringComparison.Ordinal))
                     SetPassword(username, password, out _);
             }
+            // No leftover row: insert the first local SQLite login.
             else
             {
                 HashPassword(password, out hash, out salt);
@@ -299,10 +302,11 @@ namespace CastRightCatchInvManagement
             // Blank password means generate one so the email can include it.
             if (password.Length == 0)
                 password = GenerateTemporaryPassword();
+            // Weak generated or typed passwords must not be stored or emailed.
             if (!PasswordMeetsPolicy(password, out error))
                 return false;
 
-            // Clients insert through the server so hashes stay on the host.
+            // Clients insert through the server so hashes stay on the host (not local SQLite).
             if (DataLink.IsRemote)
             {
                 try
@@ -316,6 +320,7 @@ namespace CastRightCatchInvManagement
                     });
                     return true;
                 }
+                // Duplicate username and permission errors come back as the server message.
                 catch (Exception ex)
                 {
                     // Duplicate username and permission errors come back as the server message.
@@ -349,10 +354,11 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
+            // IT reset and own-change both use the same complexity rules.
             if (!PasswordMeetsPolicy(password, out error))
                 return false;
 
-            // Clients cannot write hashes locally; the server stores them.
+            // Clients cannot write hashes locally; the server stores them (not local SQLite).
             if (DataLink.IsRemote)
             {
                 try
@@ -365,6 +371,7 @@ namespace CastRightCatchInvManagement
                     });
                     return true;
                 }
+                // Server rejects weak passwords and unknown users with a message.
                 catch (Exception ex)
                 {
                     error = ex.Message;
@@ -404,6 +411,7 @@ namespace CastRightCatchInvManagement
                     });
                     return true;
                 }
+                // Wrong current password or policy errors come back as the server message.
                 catch (Exception ex)
                 {
                     error = ex.Message;
@@ -452,6 +460,7 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
+            // Unique-index or missing-row failures leave both names unchanged.
             if (!SqliteInventory.RenameAccount(oldUsername, newUsername))
             {
                 error = "Could not change that username.";
@@ -516,6 +525,7 @@ namespace CastRightCatchInvManagement
                     account = FromAuth(auth);
                     return true;
                 }
+                // Wrong password, lock, and server-down all surface as the server message.
                 catch (Exception ex)
                 {
                     // Wrong password, lock, and server-down all surface as the server message.
@@ -590,6 +600,7 @@ namespace CastRightCatchInvManagement
                         new AccountWriteRequest { Username = username });
                     return true;
                 }
+                // Permission or transport errors must not look like a successful unlock.
                 catch (Exception ex)
                 {
                     error = ex.Message;
@@ -624,6 +635,7 @@ namespace CastRightCatchInvManagement
             // Zero means the server omitted the value; keep the local default.
             if (auth.StaySignedInDays > 0)
                 AppState.StaySignedInDays = auth.StaySignedInDays;
+            // Zero means the server omitted idle hours; keep the local default.
             if (auth.IdleCloseHours > 0)
                 AppState.IdleCloseHours = auth.IdleCloseHours;
 
@@ -706,6 +718,7 @@ namespace CastRightCatchInvManagement
                     AppState.StaySignedIn = true;
                     return true;
                 }
+                // Bad or revoked token: drop it so the login screen appears.
                 catch
                 {
                     // Bad or revoked token: drop it so the login screen appears.
@@ -870,6 +883,7 @@ namespace CastRightCatchInvManagement
                 byte[] json = ProtectedData.Unprotect(protectedBytes, SessionEntropy, DataProtectionScope.CurrentUser);
                 return ParseSession(Encoding.UTF8.GetString(json));
             }
+            // Another Windows user or a truncated file cannot be decrypted.
             catch
             {
                 // Another Windows user or a truncated file cannot be decrypted.
@@ -882,12 +896,14 @@ namespace CastRightCatchInvManagement
         private static (string Username, string Token, DateTime Expires)? ReadLegacySession()
         {
             string path = LegacySessionPath();
+            // No leftover plaintext session on this PC.
             if (!File.Exists(path))
                 return null;
             try
             {
                 return ParseSession(File.ReadAllText(path));
             }
+            // Corrupt legacy JSON is discarded rather than blocking sign-in.
             catch
             {
                 // Corrupt legacy JSON is discarded rather than blocking sign-in.
@@ -918,9 +934,11 @@ namespace CastRightCatchInvManagement
         {
             try
             {
+                // Skip delete when the file was already removed.
                 if (File.Exists(path))
                     File.Delete(path);
             }
+            // Keep going even if the local file is locked.
             catch
             {
                 // keep going even if the local file is locked
@@ -950,6 +968,7 @@ namespace CastRightCatchInvManagement
                         It = Clean(roles.It)
                     };
                 }
+                // Offline/permission errors should not crash pages that list roles.
                 catch
                 {
                     // Offline/permission errors should not crash pages that list roles.
@@ -970,6 +989,7 @@ namespace CastRightCatchInvManagement
                 file.It = Clean(file.It);
                 return file;
             }
+            // Corrupt admins.json is treated as empty rather than blocking the app.
             catch
             {
                 // Corrupt admins.json is treated as empty rather than blocking the app.
@@ -1125,6 +1145,7 @@ namespace CastRightCatchInvManagement
                     expected.Length);
                 return CryptographicOperations.FixedTimeEquals(actual, expected);
             }
+            // Corrupt base64 or truncated hashes are treated as a wrong password.
             catch
             {
                 // Corrupt base64 or truncated hashes are treated as a wrong password.
@@ -1149,9 +1170,11 @@ namespace CastRightCatchInvManagement
                 if (piece.StartsWith("m=", StringComparison.Ordinal) &&
                     int.TryParse(piece[2..], out int m))
                     memory = m;
+                // Time cost (iterations) stored with older hashes.
                 else if (piece.StartsWith("t=", StringComparison.Ordinal) &&
                          int.TryParse(piece[2..], out int t))
                     iterations = t;
+                // Parallelism stored with older hashes.
                 else if (piece.StartsWith("p=", StringComparison.Ordinal) &&
                          int.TryParse(piece[2..], out int p))
                     parallelism = p;

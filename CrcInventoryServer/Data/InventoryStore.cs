@@ -57,8 +57,8 @@ internal sealed partial class InventoryStore
     /// <summary>Creates tables for one side (live or archive) and, on live, the app/account/PDF tables.</summary>
     private void EnsureCreated(bool archive)
     {
-        using var db = Open(archive);
-        using var cmd = db.CreateCommand();
+        using var db = Open(archive); // live or archive database connection
+        using var cmd = db.CreateCommand(); // SQL command reused for CREATE/PRAGMA on this side
         // WAL is a SQLite pragma; Postgres does not accept it.
         if (!_engine.IsPostgres)
         {
@@ -90,6 +90,7 @@ internal sealed partial class InventoryStore
             // PDF Created was removed from invoices; drop it if an older file still has it.
             if (table.Equals(Schema.Invoices, StringComparison.OrdinalIgnoreCase))
                 DropTextColumn(table, "PDF Created", archive);
+            // Sales: Lot # was the purchase lot; copy into PO # / Invoice # then drop Lot #.
             if (table.Equals(Schema.Sales, StringComparison.OrdinalIgnoreCase))
                 MigrateSalesLotToPo(archive);
         }
@@ -234,10 +235,12 @@ internal sealed partial class InventoryStore
             ON CONFLICT(name) DO UPDATE SET table_access = excluded.table_access;
             """;
         cmd.AddParam("$name", Schema.AdminGroup);
+        // LockedAdminJson: deny every inventory table (admin is settings-only).
         cmd.AddParam("$json", Schema.AdminGroupAccessJson);
         cmd.Exec(_engine);
 
         cmd.Parameters.Clear();
+        // Empty table_access JSON denies nothing, so all tables are allowed (IT default).
         cmd.CommandText =
             """
             INSERT INTO access_groups (name, table_access)
@@ -527,7 +530,7 @@ internal sealed partial class InventoryStore
             }
         }
 
-        foreach (var row in updates)
+        foreach (var row in updates) // (primary key, sealed ciphertext) for one cell
         {
             using var write = db.CreateCommand();
             write.CommandText = $"UPDATE {Quote(table)} SET {Quote(column)} = $value WHERE id = $id;";
@@ -578,6 +581,7 @@ internal sealed partial class InventoryStore
     private void MigrateSalesLotToPo(bool archive)
     {
         var existing = new HashSet<string>(TableColumnsFrom(Schema.Sales, archive), StringComparer.OrdinalIgnoreCase);
+        // Lot # already dropped (or never existed); the purchase-lot migration has nothing to do.
         if (!existing.Contains("Lot #"))
             return;
 

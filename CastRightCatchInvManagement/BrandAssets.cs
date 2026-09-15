@@ -67,9 +67,9 @@ namespace CastRightCatchInvManagement
                     using var img = Image.FromStream(fs);
                     return new Bitmap(img);
                 }
+                // Skip unreadable files and try the next candidate name.
                 catch
                 {
-                    // skip unreadable files
                 }
             }
 
@@ -126,9 +126,13 @@ namespace CastRightCatchInvManagement
                     // Ignore near-clear pixels left by the knockout.
                     if (bmp.GetPixel(x, y).A < 16)
                         continue;
+                    // Left edge of remaining opaque pixels.
                     if (x < minX) minX = x;
+                    // Top edge of remaining opaque pixels.
                     if (y < minY) minY = y;
+                    // Right edge of remaining opaque pixels.
                     if (x > maxX) maxX = x;
+                    // Bottom edge of remaining opaque pixels.
                     if (y > maxY) maxY = y;
                 }
             }
@@ -151,18 +155,20 @@ namespace CastRightCatchInvManagement
         private static Icon? LoadIcon()
         {
             var icoPath = Path.Combine(DirectoryPath, "app.ico");
+            // Prefer the packaged .ico when the asset pack includes it.
             if (File.Exists(icoPath))
             {
                 try
                 {
                     return new Icon(icoPath);
                 }
+                // Corrupt ico: fall through to bitmap conversion.
                 catch
                 {
-                    // fall through to bitmap conversion
                 }
             }
 
+            // No ico, or it failed: convert the seal bitmap to an icon.
             if (Seal is Bitmap bmp)
             {
                 try
@@ -170,9 +176,9 @@ namespace CastRightCatchInvManagement
                     IntPtr handle = bmp.GetHicon();
                     return (Icon)Icon.FromHandle(handle).Clone();
                 }
+                // HICON conversion can fail on some bitmaps; windows keep the default icon.
                 catch
                 {
-                    // HICON conversion can fail on some bitmaps; windows keep the default icon.
                     return null;
                 }
             }

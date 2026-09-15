@@ -103,6 +103,7 @@ namespace CastRightCatchInvManagement
                 // Inside quotes, commas are data; a doubled quote is a literal quote.
                 if (quoted)
                 {
+                    // A quote is either an escaped "" or the end of this field.
                     if (c == '"')
                     {
                         // RFC-style escaped quote inside a quoted field.
@@ -111,28 +112,30 @@ namespace CastRightCatchInvManagement
                             field.Append('"');
                             i++;
                         }
+                        // A lone quote closes the field and returns to comma-separated mode.
                         else
                         {
-                            // Closing quote returns to comma-separated mode.
                             quoted = false;
                         }
                     }
+                    // Any other character is payload inside the quotes.
                     else
                     {
                         field.Append(c);
                     }
                 }
+                // An unquoted quote starts a quoted field so later commas stay inside it.
                 else if (c == '"')
                 {
-                    // Opening quote so the next commas stay inside this field.
                     quoted = true;
                 }
+                // An unquoted comma is the field boundary.
                 else if (c == ',')
                 {
-                    // Field boundary outside quotes.
                     yield return field.ToString();
                     field.Clear();
                 }
+                // Ordinary characters belong to the current field.
                 else
                 {
                     field.Append(c);

@@ -105,6 +105,7 @@ namespace CastRightCatchInvManagement
         private IReadOnlyList<LookupSuggest.Hit> PoHits()
         {
             string item = _item.Text.Trim();
+            // Rebuild the PO list only when the item code changes, not on every keystroke.
             if (!item.Equals(_poHitsItem, StringComparison.OrdinalIgnoreCase))
             {
                 _poHitsItem = item;
@@ -144,6 +145,7 @@ namespace CastRightCatchInvManagement
                 // Keep whatever the user typed when the hit has no code.
                 if (hit.Code.Length > 0)
                     _item.Text = hit.Code;
+                // Name is the catalog description for this item.
                 if (hit.Name.Length > 0)
                     _description.Text = hit.Name;
                 // Extra on item hits is country of origin.
@@ -165,7 +167,7 @@ namespace CastRightCatchInvManagement
         public void FillFromRecord(Dictionary<string, string> record)
         {
             string po = DataFiles.SalePo(record);
-            // Keep the sale PO so later identity checks can skip duplicates.
+            // Customer PO lives in Invoice # on the sale row; keep it for identity checks.
             if (po.Length > 0)
                 _po = po;
             Fill(
@@ -182,6 +184,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Load this line from a draft product line.</summary>
         public void FillFromLine(SalesOrderLine line)
         {
+            // Draft PoNumber is the customer PO (Invoice #), not the purchase lot.
             if (line.PoNumber.Length > 0)
                 _po = line.PoNumber;
             Fill(
@@ -304,7 +307,7 @@ namespace CastRightCatchInvManagement
             }
 
             _filling = true;
-            // Keep a volume the user entered by hand.
+            // Keep a volume the user entered by hand; only fill when the box is still blank.
             if (string.IsNullOrWhiteSpace(_volume.Text))
                 _volume.Text = (pack * cs).ToString("0.##", CultureInfo.InvariantCulture);
             _filling = false;

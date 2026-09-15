@@ -127,6 +127,7 @@ namespace CastRightCatchInvManagement
         private static string FormatQty(string? value)
         {
             decimal n = InvoiceLineRow.ParseNumber(value);
+            // A blank cell should not print 0; a typed zero still prints.
             if (n == 0 && string.IsNullOrWhiteSpace(value))
                 return "";
             return n.ToString("0.###", CultureInfo.InvariantCulture);

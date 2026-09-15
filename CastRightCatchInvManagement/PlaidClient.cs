@@ -216,6 +216,7 @@ namespace CastRightCatchInvManagement
                 if (!response.IsSuccessStatusCode)
                 {
                     string error = "Plaid request failed.";
+                    // Prefer Plaid's error_message so Connect/Sync shows a useful reason.
                     if (doc.RootElement.TryGetProperty("error_message", out var msg))
                         error = msg.GetString() ?? error;
                     return (false, doc, error);
@@ -223,6 +224,7 @@ namespace CastRightCatchInvManagement
 
                 return (true, doc, "");
             }
+            // Timeouts and DNS failures should not crash Connect/Sync.
             catch (Exception ex)
             {
                 // Timeouts and DNS failures should not crash Connect/Sync.

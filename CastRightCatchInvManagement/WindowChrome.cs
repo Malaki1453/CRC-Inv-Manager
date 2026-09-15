@@ -3,8 +3,9 @@ using System.Runtime.InteropServices;
 namespace CastRightCatchInvManagement
 {
     /// <summary>
-    /// Colors the Windows title bar to match the navy sidebar.
+    /// Custom navy title bar: DWM caption, cream text, gold border.
     /// Minimize, maximize, and close stay as system buttons.
+    /// Back/Forward chevrons live on NavHistoryBar and paint gold when usable.
     /// </summary>
     internal static class WindowChrome
     {
@@ -28,7 +29,7 @@ namespace CastRightCatchInvManagement
             void paint(object? _, EventArgs e) => Paint(form);
             form.HandleCreated -= paint;
             form.HandleCreated += paint;
-            // Handle may already exist if Apply is called after Show.
+            // Handle already exists when Apply runs after Show; color the caption now.
             if (form.IsHandleCreated)
                 Paint(form);
         }
@@ -56,9 +57,9 @@ namespace CastRightCatchInvManagement
             {
                 DwmSetWindowAttribute(hwnd, attribute, ref value, sizeof(int));
             }
+            // DWM attribute missing on older Windows; keep the default caption.
             catch
             {
-                // Older Windows keeps the default caption.
             }
         }
 

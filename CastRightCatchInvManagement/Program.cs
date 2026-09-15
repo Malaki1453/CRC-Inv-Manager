@@ -69,15 +69,15 @@ namespace CastRightCatchInvManagement
                         AppState.ServerPort,
                         AppState.ServerFingerprint);
                 }
+                // Keep going with a local folder if the host is unreachable.
                 catch
                 {
-                    // Keep going with a local folder if the host is unreachable.
                     DataLink.Disconnect();
                 }
             }
+            // Shared-folder mode: create missing CSVs/DB and load company settings.
             else if (AppLock.HasFolder())
             {
-                // Shared-folder mode: create missing CSVs/DB and load company settings.
                 DataFiles.EnsureFilesExistOrAsk();
                 AppLock.LoadSharedSettings();
                 Accounts.EnsureFile();
@@ -107,9 +107,9 @@ namespace CastRightCatchInvManagement
                 {
                     ok = await Program.StartAsync(splash);
                 }
+                // Surface folder/server errors instead of leaving a hung splash.
                 catch (Exception ex)
                 {
-                    // Surface folder/server errors instead of leaving a hung splash.
                     MessageBox.Show(
                         ex.Message,
                         "Cast Right Catch Inventory",

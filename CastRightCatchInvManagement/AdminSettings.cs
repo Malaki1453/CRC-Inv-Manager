@@ -484,7 +484,7 @@ namespace CastRightCatchInvManagement
             // No selection: append a top-level tab.
             else if (selected == null)
                 _menu.Root.Add(folder);
-            // Opposite branch of the condition above.
+            // Selected a page: insert the new folder next to it, not nested under it.
             else
             {
                 var loc = _menu.Locate(selected);
@@ -630,7 +630,7 @@ namespace CastRightCatchInvManagement
                 if (!_menu.IsDescendant(source, folder))
                     _menu.Move(source, folder.Children, folder.Children.Count);
             }
-            // Opposite branch of the condition above.
+            // Before/after drop: reorder among siblings instead of nesting.
             else
             {
                 var loc = _menu.Locate(target);
@@ -671,7 +671,7 @@ namespace CastRightCatchInvManagement
             // Middle of the row means nest inside.
             if (y > bounds.Height / 4 && y < (bounds.Height * 3) / 4)
                 kind = MenuDropKind.Inside;
-            // Opposite branch of the condition above.
+            // Top/bottom of the row means reorder before or after that node.
             else
                 kind = y < bounds.Height / 2 ? MenuDropKind.Before : MenuDropKind.After;
             return true;
@@ -1713,6 +1713,7 @@ namespace CastRightCatchInvManagement
                 : "Saved â€” type a new password to change it";
             _smtpHost.Text = row.Host.Length > 0 ? row.Host : Mailer.ResolveHost();
             _smtpPort.Text = row.Port > 0 ? row.Port.ToString() : Mailer.DefaultPort.ToString();
+            // Hint label is optional until the mail card is built.
             if (_smtpPassHint != null)
             {
                 _smtpPassHint.ForeColor = row.Password.Length == 0 ? Theme.Muted : Theme.Success;
@@ -1780,7 +1781,7 @@ namespace CastRightCatchInvManagement
                     (row.Password.Length > 0 ? "  Â·  password saved" : "  Â·  no password");
                 ToastAlert.Success(toastHost, "Saved to the database.");
             }
-            // Opposite branch of the condition above.
+            // SMTP write failed: keep the form dirty and show the database error.
             else
             {
                 _smtpPassHint.ForeColor = Theme.Danger;
@@ -2244,6 +2245,7 @@ namespace CastRightCatchInvManagement
             if (AppState.IsAdmin)
                 menu.Items.Add("Data access", null, (_, _) =>
                 {
+                    // Reload so group/override changes show immediately.
                     if (UserAccessForm.ShowFor(this, user))
                         LoadUsers();
                 });
@@ -2254,7 +2256,7 @@ namespace CastRightCatchInvManagement
                     using var change = new ChangePasswordForm(user, requireCurrent: true);
                     change.ShowDialog(this);
                 });
-            // Opposite branch of the condition above.
+            // IT-only reset for other users; there are no security questions.
             else
                 menu.Items.Add("Reset password", null, (_, _) => ResetPassword(user));
             // Locked accounts get Clear lock and Set password.
@@ -2542,7 +2544,7 @@ namespace CastRightCatchInvManagement
                 Accounts.AddAdmin(picked);
                 SqliteInventory.AddAccessGroup(picked, AccessGroups.Admin);
             }
-            // Opposite branch of the condition above.
+            // Non-admin branch grants IT, not administrator.
             else
             {
                 Accounts.AddIt(picked);
@@ -2572,16 +2574,17 @@ namespace CastRightCatchInvManagement
             // Keep admins.json and the Admin group in sync.
             if (admin)
                 SqliteInventory.RemoveAccessGroup(username, AccessGroups.Admin);
-            // Opposite branch of the condition above.
+            // Non-admin branch drops IT membership only.
             else
                 SqliteInventory.RemoveAccessGroup(username, AccessGroups.IT);
 
+            // Live-refresh sidebar rights if you removed a role from yourself.
             if (username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase))
             {
                 // Keep admins.json and the Admin group in sync.
                 if (admin)
                     AppState.IsAdmin = Accounts.IsAdmin(username);
-                // Opposite branch of the condition above.
+                // Clearing IT must not wipe a remaining administrator flag.
                 else
                     AppState.IsIt = Accounts.IsIt(username);
                 TableAccess.Apply(username);

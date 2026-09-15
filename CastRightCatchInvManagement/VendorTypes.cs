@@ -148,9 +148,9 @@ namespace CastRightCatchInvManagement
                 var loaded = JsonSerializer.Deserialize<VendorTypeCatalog>(json, JsonOptions);
                 return loaded == null ? Seed() : Normalize(loaded);
             }
+            // Corrupt settings must not block vendor forms.
             catch
             {
-                // Corrupt settings must not block vendor forms.
                 return Seed();
             }
         }

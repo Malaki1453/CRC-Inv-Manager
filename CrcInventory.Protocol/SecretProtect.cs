@@ -56,7 +56,7 @@ public static class SecretProtect
         // Empty or already-sealed values must stay as-is so Open can still read them.
         if (string.IsNullOrEmpty(plain) || IsSealed(plain))
             return plain ?? "";
-        byte[]? key = Key();
+        byte[]? key = Key(); // 32-byte AES-GCM key from crc.key, or null when no data folder
         // Without a data-folder key, leave plaintext so older hosts remain readable.
         if (key == null)
             return plain;
@@ -80,7 +80,7 @@ public static class SecretProtect
         // Plaintext (including empty) is returned as-is so pre-encryption rows still work.
         if (string.IsNullOrEmpty(stored) || !IsSealed(stored))
             return stored ?? "";
-        byte[]? key = Key();
+        byte[]? key = Key(); // 32-byte AES-GCM key from crc.key, or null when no data folder
         // No key means we cannot decrypt; return the sealed blob rather than throwing.
         if (key == null)
             return stored;
@@ -110,6 +110,7 @@ public static class SecretProtect
     public static string StoreSetting(string key, string? value)
     {
         string text = value ?? "";
+        // key is the app_settings name (smtp_password, plaid_secret, …).
         // Non-secrets and empty values are stored verbatim.
         if (text.Length == 0 || !IsSecretSetting(key))
             return text;

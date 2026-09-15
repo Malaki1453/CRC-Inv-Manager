@@ -133,6 +133,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Put the caret on PO # unless this line is already locked.</summary>
         public void FocusPo()
         {
+            // Locked rows hide the editors; focusing PO would do nothing useful.
             if (!_locked)
                 _po.Focus();
         }
@@ -266,6 +267,7 @@ namespace CastRightCatchInvManagement
                 return;
 
             string po = _po.Text.Trim();
+            // An empty PO box is not a lookup request.
             if (po.Length == 0)
                 return;
 
@@ -287,10 +289,13 @@ namespace CastRightCatchInvManagement
                 po = DataFiles.GetRecord(record, "PO #").Trim();
             string lot = DataFiles.SaleLot(record);
 
+            // Keep a typed PO when the source row has none.
             if (po.Length > 0)
                 _po.Text = po;
+            // Item code is the product id on the invoice line.
             if (item.Length > 0)
                 _product.Text = item;
+            // Lot is the purchase lot (sales PO #), not the customer PO.
             if (lot.Length > 0)
                 _lot.Text = lot;
             // Ordered and shipped start equal; the user can change shipped later.
@@ -301,15 +306,20 @@ namespace CastRightCatchInvManagement
             }
 
             var parts = new List<string>();
+            // Description, pack, and COO are joined so the PDF has one description cell.
             if (description.Length > 0)
                 parts.Add(description);
+            // Pack size is appended after the product name when present.
             if (pack.Length > 0)
                 parts.Add(pack);
+            // Country of origin is appended last when present.
             if (coo.Length > 0)
                 parts.Add(coo);
+            // Join only when at least one description piece was found.
             if (parts.Count > 0)
                 _description.Text = string.Join("  ·  ", parts);
 
+            // Volume on the sale/purchase becomes invoice weight.
             if (volume.Length > 0)
                 _weight.Text = volume;
 
@@ -320,6 +330,7 @@ namespace CastRightCatchInvManagement
                 "Price / LB Sold",
                 "Price Paid / LB",
                 "Total Cost / LB");
+            // Prefer sell price; fall back to purchase cost when invoicing a PO.
             if (sell.Length > 0)
                 _price.Text = sell;
         }
@@ -530,15 +541,16 @@ namespace CastRightCatchInvManagement
         /// <summary>Restore a stored invoice snapshot, or null when the JSON is missing or invalid.</summary>
         public static InvoiceDraft? FromJson(string? json)
         {
+            // Missing snapshots mean rebuild from sales/purchases instead.
             if (string.IsNullOrWhiteSpace(json))
                 return null;
             try
             {
                 return System.Text.Json.JsonSerializer.Deserialize<InvoiceDraft>(json, JsonOptions);
             }
+            // Corrupt snapshots should not prevent rebuilding from sales/purchases.
             catch
             {
-                // Corrupt snapshots should not prevent rebuilding from sales/purchases.
                 return null;
             }
         }

@@ -66,8 +66,8 @@ internal sealed partial class InventoryStore
         lock (_gate)
         {
             var headers = HeadersUnlocked(table, viewOld: false);
-            using var db = Open();
-            using var cmd = db.CreateCommand();
+            using var db = Open(); // live database connection
+            using var cmd = db.CreateCommand(); // INSERT of one live row
             var cols = new List<string> { Quote("term_start") };
             var pars = new List<string> { "$term" };
             cmd.AddParam("$term", CompletionStamp(table, values));
@@ -130,7 +130,7 @@ internal sealed partial class InventoryStore
         lock (_gate)
         {
             bool archive = id < 0;
-            long rawId = archive ? -id : id;
+            long rawId = archive ? -id : id; // live/archive primary key after unwrapping a negated archive id
             // Zero/negative after unwrapping is not a real primary key.
             if (rawId <= 0)
                 return false;
@@ -219,7 +219,7 @@ internal sealed partial class InventoryStore
                 // Copy then delete so a failed archive insert does not drop live data.
                 if (toArchive.Count > 0)
                 {
-                    using var archive = Open(archive: true);
+                    using var archive = Open(archive: true); // archive-side connection (not the bool flag)
                     using var tx = archive.BeginTransaction();
                     foreach (var (fields, stamp) in toArchive)
                         InsertRow(archive, tx, table, liveColumns, fields, stamp);
@@ -260,6 +260,7 @@ internal sealed partial class InventoryStore
     private string[] HeadersUnlocked(string table, bool viewOld)
     {
         var expected = Schema.Headers(table).ToList();
+        // Lot # was migrated into PO # on sales and must not reappear as a writable header.
         var actual = TableColumns(table, viewOld)
             .Where(c => c != "id" && c != "term_start" &&
                         !c.Equals("PDF Created", StringComparison.OrdinalIgnoreCase) &&
@@ -301,8 +302,8 @@ internal sealed partial class InventoryStore
     /// <summary>Appends every row from live or archive as column maps, revealing secret cells.</summary>
     private void AppendRows(string table, bool archive, List<Dictionary<string, string>> result)
     {
-        using var db = Open(archive);
-        using var cmd = db.CreateCommand();
+        using var db = Open(archive); // live or archive connection for this table
+        using var cmd = db.CreateCommand(); // SELECT * for the column maps
         cmd.CommandText = $"SELECT * FROM {Quote(table)} ORDER BY id;";
         using var reader = cmd.Query(_engine);
         while (reader.Read())

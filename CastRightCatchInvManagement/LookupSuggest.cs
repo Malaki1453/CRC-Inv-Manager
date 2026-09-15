@@ -117,6 +117,7 @@ namespace CastRightCatchInvManagement
             _hits.Clear();
             foreach (var hit in _source())
             {
+                // needle is the typed box text; keep hits whose code, name, or extra search tokens contain it.
                 if (hit.Matches(needle))
                     _hits.Add(hit);
                 // Cap the list so typing a short letter does not flood the form.
@@ -158,6 +159,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Tab is a dialog key; mark it as input so KeyDown can accept the suggestion.</summary>
         private void OnPreviewKeyDown(object? sender, PreviewKeyDownEventArgs e)
         {
+            // Tab is normally a dialog key (next field). Mark it as input so KeyDown can accept the suggestion first.
             if (e.KeyCode == Keys.Tab)
                 e.IsInputKey = true;
         }
@@ -176,8 +178,10 @@ namespace CastRightCatchInvManagement
             // Down opens the list if needed, then moves the highlight.
             if (e.KeyCode == Keys.Down)
             {
+                // List is hidden: rebuild hits from the current box text before moving.
                 if (!_list.Visible)
                     Filter();
+                // Only bump SelectedIndex when there is at least one suggestion.
                 if (_list.Items.Count > 0)
                     _list.SelectedIndex = Math.Min(_list.Items.Count - 1, _list.SelectedIndex + 1);
                 e.SuppressKeyPress = true;
@@ -187,6 +191,7 @@ namespace CastRightCatchInvManagement
             // Up only moves when the list is already showing.
             if (e.KeyCode == Keys.Up)
             {
+                // Ignore Up when the popup is hidden or empty so the caret stays in the box.
                 if (_list.Visible && _list.Items.Count > 0)
                     _list.SelectedIndex = Math.Max(0, _list.SelectedIndex - 1);
                 e.SuppressKeyPress = true;
@@ -201,11 +206,13 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            // Tab accepts the highlighted hit (same as Enter), then moves to the next field.
+            // Tab acts as Enter: accept the highlighted suggestion, then move to the next field.
             if (e.KeyCode == Keys.Tab)
             {
+                // List is hidden: rebuild hits so Tab can still accept a match on the typed text.
                 if (!_list.Visible)
                     Filter();
+                // List is showing after that: pick the highlighted hit into the box (same as Enter).
                 if (_list.Visible)
                     PickSelected();
                 e.SuppressKeyPress = true;
@@ -268,6 +275,7 @@ namespace CastRightCatchInvManagement
         /// <summary>True when the mouse is over the visible list, so Leave on the box should not hide it yet.</summary>
         private bool ListHasMouse()
         {
+            // Hidden list cannot own the mouse, so Leave on the box should hide immediately.
             if (!_list.Visible)
                 return false;
             return _list.ClientRectangle.Contains(_list.PointToClient(Control.MousePosition));

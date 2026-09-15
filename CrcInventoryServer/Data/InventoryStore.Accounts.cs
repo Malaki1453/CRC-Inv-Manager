@@ -10,8 +10,8 @@ internal sealed partial class InventoryStore
     {
         lock (_gate)
         {
-            using var db = Open();
-            using var cmd = db.CreateCommand();
+            using var db = Open(); // live database connection
+            using var cmd = db.CreateCommand(); // SQL command for the account count
             cmd.CommandText = "SELECT COUNT(*) FROM app_accounts;";
             return Convert.ToInt32(cmd.Scalar(_engine));
         }
@@ -391,6 +391,7 @@ internal sealed partial class InventoryStore
         if (!TryGetAccountRecord(username, out var record))
             return "";
         var groups = SplitGroups(GetAccessGroup(username));
+        // No groups (or empty group JSON) is an empty baseline: all tables allowed until overlay denies.
         string baseline = groups.Count == 0
             ? ""
             : groups.Count == 1
@@ -442,6 +443,7 @@ internal sealed partial class InventoryStore
             using var cmd = db.CreateCommand();
             cmd.CommandText = "SELECT COALESCE(table_access, '') FROM access_groups WHERE name = $name;";
             cmd.AddParam("$name", name);
+            // Missing group or empty JSON: no denials, so all tables are allowed.
             return cmd.Scalar(_engine)?.ToString() ?? "";
         }
     }

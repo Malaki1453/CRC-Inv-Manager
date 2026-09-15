@@ -116,6 +116,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Enable/hide buttons by folder lock, table access, and Admin/Review roles.</summary>
         public void RefreshState()
         {
+            // Closed extras still receive AppLock.Changed; skip a disposed sidebar.
             if (IsDisposed)
                 return;
 
@@ -127,6 +128,7 @@ namespace CastRightCatchInvManagement
             }
 
             bool unlocked = AppLock.HasFolder();
+            // Admin saved a new menu tree; rebuild buttons before applying access.
             if (_menuRevision != MenuLayout.Revision)
                 RebuildMenu();
 
@@ -134,9 +136,9 @@ namespace CastRightCatchInvManagement
             {
                 bool isSettings = pair.Key == AppPage.Settings || pair.Key == AppPage.Help;
                 bool isAdminPage = pair.Key == AppPage.Admin;
+                // Admin is staff-only; hide it from regular users.
                 if (isAdminPage)
                 {
-                    // Admin is staff-only; hide it from regular users.
                     bool staff = AppState.IsAdmin || AppState.IsIt;
                     pair.Value.Visible = staff;
                     pair.Value.Enabled = unlocked && staff;
@@ -144,9 +146,9 @@ namespace CastRightCatchInvManagement
                     continue;
                 }
 
+                // Review is only for users who can approve queued edits.
                 if (pair.Key == AppPage.PendingChanges)
                 {
-                    // Review is only for users who can approve queued edits.
                     bool review = DataAccess.CanReview();
                     pair.Value.Visible = review;
                     pair.Value.Enabled = unlocked && review;
@@ -178,6 +180,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // User row is built in the ctor; skip if a layout rebuild omitted the label.
             if (Controls.Find("lblNavUser", true).FirstOrDefault() is Label userLabel)
             {
                 string name = AppState.CurrentDisplayName.Length > 0
@@ -350,6 +353,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Disable the switch until a folder exists; gold the selected Current/Old label.</summary>
         private void SyncDatabaseSwitch(bool unlocked)
         {
+            // RefreshState can run before BuildDatabaseSwitch finishes wiring the switch.
             if (_dbToggle == null)
                 return;
 
@@ -393,6 +397,7 @@ namespace CastRightCatchInvManagement
                 // Admin turned this item off in the menu editor.
                 if (!node.On)
                     continue;
+                // Folders become dropdowns; pages become plain sidebar buttons.
                 if (node.IsFolder)
                 {
                     var drop = BuildDrop(node, 0);
@@ -427,12 +432,14 @@ namespace CastRightCatchInvManagement
                 // Admin turned this child off in the menu editor.
                 if (!child.On)
                     continue;
+                // Nested folders become child dropdowns; pages become buttons under this header.
                 if (child.IsFolder)
                 {
                     // Cap nesting so the navy rail stays readable.
                     if (depth >= 2)
                         continue;
                     var nested = BuildDrop(child, depth + 1);
+                    // Nested folder had no visible children after access filtering.
                     if (nested == null)
                         continue;
                     nested.ExpandedChanged += () =>
@@ -444,6 +451,7 @@ namespace CastRightCatchInvManagement
                     continue;
                 }
 
+                // Stale key from an older catalog version.
                 if (!MenuLayout.TryPage(child.Key, out var page))
                     continue;
                 drop.AddPage(new NavMenuItem(page, child.Title, MenuLayout.OpenAction(page)));
@@ -483,9 +491,9 @@ namespace CastRightCatchInvManagement
             btn.Selected = here;
             btn.OpenElsewhere = !here && Navigator.IsOpen(page);
             string tip = page == AppPage.Help ? "Controls" : "";
+            // Tell the user a click will focus the other window, not duplicate it.
             if (btn.OpenElsewhere)
             {
-                // Tell the user a click will focus the other window, not duplicate it.
                 tip = tip.Length == 0
                     ? "Already open — click to show that window"
                     : tip + " — already open, click to show that window";
@@ -524,6 +532,7 @@ namespace CastRightCatchInvManagement
                     menu.Items.RemoveAt(menu.Items.Count - 1);
 
                 var open = Navigator.ListOpenPages();
+                // No other windows: keep just the Open/Show item.
                 if (open.Count == 0)
                     return;
 
@@ -577,6 +586,7 @@ namespace CastRightCatchInvManagement
             Theme.EnableDoubleBuffer(this);
             Theme.EnableDoubleBuffer(Strip);
             Controls.Add(Strip);
+            // Click-only focus: hover must not Focus() or the parent window would come forward.
             MouseDown += (_, _) => TryFocus();
             Strip.MouseDown += (_, _) => TryFocus();
             Strip.ControlAdded += (_, e) =>
@@ -744,9 +754,11 @@ namespace CastRightCatchInvManagement
             Strip.Size = new Size(ContentWidth, Math.Max(ViewHeight, _contentHeight));
         }
 
-        /// <summary>Take focus so mouse-wheel messages reach this panel.</summary>
+        /// <summary>Take focus so mouse-wheel messages reach this panel. Click-only — never call from hover.</summary>
         private void TryFocus()
         {
+            // MouseDown only: focusing on hover would bring the main window forward
+            // when the pointer merely crosses the navy rail of a background window.
             if (!ContainsFocus)
                 Focus();
         }
@@ -765,6 +777,7 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Focus the scroller when a nested button is clicked so wheel still works.</summary>
+        // MouseDown, not MouseEnter: hover must not activate the parent window.
         private void ChildDown(object? sender, MouseEventArgs e) => TryFocus();
 
         /// <summary>Buttons eat wheel messages; forward them to the navy list.</summary>
@@ -774,6 +787,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Wire nested children added after the parent was already hooked.</summary>
         private void ChildAdded(object? sender, ControlEventArgs e)
         {
+            // ControlAdded can fire with a null Control; skip so Wire does not throw.
             if (e.Control != null)
                 Wire(e.Control);
         }
@@ -785,6 +799,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Capsule fill: ellipse when short, rounded rect when tall.</summary>
         public static void FillRoundedBar(this Graphics g, Rectangle bounds, Brush? brush = null)
         {
+            // Empty or unbrushed bounds have nothing to paint.
             if (bounds.Width <= 0 || bounds.Height <= 0 || brush == null)
                 return;
             // Thumb is circular at the minimum height.
@@ -906,6 +921,7 @@ namespace CastRightCatchInvManagement
                 // AddPurchase/SalesOrder open a dedicated window, not a nested page.
                 if (open != null)
                     open();
+                // Other catalog pages host inside this workspace.
                 else
                     Navigator.GoTo(page, _workspace);
             };
@@ -997,6 +1013,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Review uses CanReview; other pages use table denials.</summary>
         private static bool PageAllowed(AppPage page)
         {
+            // Review is gated by CanReview, not the usual table-denial map.
             if (page == AppPage.PendingChanges)
                 return DataAccess.CanReview();
             return TableAccess.CanPage(page);
@@ -1005,6 +1022,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Hide children the current user cannot open.</summary>
         private bool ChildShouldShow(Control child, int pageIndex)
         {
+            // Nested folders ask their own access; page buttons use the parallel _pages list.
             if (child is NavDropGroup nested)
                 return nested.ShouldShow();
             return pageIndex < _pages.Count && PageAllowed(_pages[pageIndex]);
@@ -1039,6 +1057,7 @@ namespace CastRightCatchInvManagement
             foreach (var child in _order)
             {
                 bool show = ChildShouldShow(child, pageIndex);
+                // Nested folders are not in _pages; only page buttons consume an index.
                 if (child is CrcNavButton)
                     pageIndex++;
                 child.Visible = show;
@@ -1118,6 +1137,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Set the switch without raising Toggled (used when syncing from AppState).</summary>
         public void SetOn(bool on)
         {
+            // Skip a redundant invalidate while RefreshState syncs from AppState.
             if (_on == on)
                 return;
             _on = on;
@@ -1150,9 +1170,9 @@ namespace CastRightCatchInvManagement
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            // Transparent back-color is unreliable; paint the navy rail behind the pill.
             if (Parent != null)
             {
-                // Transparent back-color is unreliable; paint the navy rail behind the pill.
                 using var clear = new SolidBrush(Parent.BackColor);
                 g.FillRectangle(clear, ClientRectangle);
             }
@@ -1254,16 +1274,19 @@ namespace CastRightCatchInvManagement
         /// <summary>Selected is gold on navy-mid; disabled is faded; otherwise cream on navy.</summary>
         private void ApplyColors()
         {
+            // Current page in this window: gold text on navy-mid.
             if (_selected)
             {
                 BackColor = Theme.NavyMid;
                 ForeColor = Theme.GoldLight;
             }
+            // Denied or locked: faded so it cannot look clickable.
             else if (!Enabled)
             {
                 BackColor = Theme.NavyDark;
                 ForeColor = Color.FromArgb(70, Theme.Cream);
             }
+            // Idle allowed page: cream on navy.
             else
             {
                 BackColor = Theme.NavyDark;
@@ -1398,7 +1421,7 @@ namespace CastRightCatchInvManagement
             _back = new HistoryIconButton(back: true);
             _back.Click += (_, _) =>
             {
-                // Faded chevron still receives clicks; ignore them.
+                // Gold/usable only when this window has back history; faded clicks are ignored.
                 if (_workspace.CanGoBack)
                     Navigator.GoBack(_workspace);
             };
@@ -1407,6 +1430,7 @@ namespace CastRightCatchInvManagement
             _forward = new HistoryIconButton(back: false);
             _forward.Click += (_, _) =>
             {
+                // Gold/usable only when this window has forward history; faded clicks are ignored.
                 if (_workspace.CanGoForward)
                     Navigator.GoForward(_workspace);
             };
@@ -1476,6 +1500,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Brighten the chevron while the pointer is over a usable button.</summary>
         protected override void OnMouseEnter(EventArgs e)
         {
+            // Hover only repaints gold; it must not Focus/Activate the parent window.
             _hover = true;
             Invalidate();
             base.OnMouseEnter(e);
@@ -1526,6 +1551,7 @@ namespace CastRightCatchInvManagement
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
+            // Gold when this window can go that way; navy while pressed; faded when unusable.
             Color color = !_usable
                 ? Color.FromArgb(110, Theme.Ink)
                 : _down
@@ -1555,6 +1581,7 @@ namespace CastRightCatchInvManagement
                     new PointF(cx + dx, cy + dy)
                 });
             }
+            // Forward points right so the pair reads as browser-style history.
             else
             {
                 e.Graphics.DrawLines(pen, new[]

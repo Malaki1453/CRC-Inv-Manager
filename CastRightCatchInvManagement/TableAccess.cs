@@ -25,7 +25,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Admin cannot be edited; IT can be edited only by an administrator.</summary>
         public static bool CanEdit(string? name)
         {
-            // Admin permissions are hard-coded (settings only).
+            // Admin group JSON is locked. Empty LockedAdminJson means ALL tables allowed, not only Settings/Users.
             if (IsAdmin(name))
                 return false;
             // Only an administrator may change the IT group's table rights.
@@ -44,6 +44,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Split a stored comma/semicolon group list into unique names.</summary>
         public static List<string> Parse(string? stored)
         {
+            // Blank stored membership means no groups, not a default Admin/IT assignment.
             if (string.IsNullOrWhiteSpace(stored))
                 return new List<string>();
             return stored
@@ -146,7 +147,7 @@ namespace CastRightCatchInvManagement
         {
             var denied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             json = (json ?? "").Trim();
-            // Empty JSON means no extra table restrictions.
+            // Empty JSON (empty LockedAdminJson) means ALL tables allowed, not only Settings/Users.
             if (json.Length == 0)
                 return denied;
 
@@ -160,6 +161,7 @@ namespace CastRightCatchInvManagement
                         denied.Add(pair.Name);
                 }
             }
+            // Bad JSON is treated as empty: ALL tables allowed, not only Settings/Users.
             catch
             {
                 // treat a bad document as “no extra restrictions”
@@ -174,6 +176,7 @@ namespace CastRightCatchInvManagement
             var map = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             foreach (var key in denied)
             {
+                // Blank keys would serialize as an unnamed false flag.
                 if (key.Length > 0)
                     map[key] = false;
             }
@@ -185,8 +188,10 @@ namespace CastRightCatchInvManagement
         public static string Summary(string json)
         {
             var denied = ParseDenied(json);
+            // Empty denied set (empty LockedAdminJson) is full table access, not Settings/Users only.
             if (denied.Count == 0)
                 return "All tables";
+            // Every inventory table is explicitly false.
             if (All.All(item => denied.Contains(item.Key)))
                 return "No tables";
             return "Blocked: " + string.Join(", ",
@@ -200,6 +205,7 @@ namespace CastRightCatchInvManagement
             string json = SqliteInventory.GetEffectiveTableAccess(username);
             string access = Summary(json);
             bool overrides = SqliteInventory.HasAccessOverride(username);
+            // No groups: show only the table summary (or Custom when a per-user overlay exists).
             if (groups.Count == 0)
                 return overrides ? "Custom  ·  " + access : access;
             string prefix = AccessGroups.Join(groups);

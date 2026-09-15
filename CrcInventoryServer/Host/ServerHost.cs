@@ -92,7 +92,7 @@ internal static class ServerHost
 
             while (!cancel.IsCancellationRequested)
             {
-                WireRequest? request;
+                WireRequest? request; // framed named-op from this TLS client
                 // End of stream is a clean disconnect, not a failed op.
                 try
                 {
@@ -114,6 +114,7 @@ internal static class ServerHost
                 // Op failures must answer the client without killing the connection.
                 try
                 {
+                    // request.Op is the named ServerOps string; payload is the JSON result to frame.
                     object? payload = dispatch.Handle(request.Op, request.Payload, session);
                     await Wire.WriteAsync(ssl, Wire.Ok(request.Id, payload), cancel).ConfigureAwait(false);
                 }

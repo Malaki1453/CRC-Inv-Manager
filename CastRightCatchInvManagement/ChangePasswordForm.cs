@@ -50,6 +50,7 @@ namespace CastRightCatchInvManagement
                 _current.UseSystemPasswordChar = true;
                 y += 54;
             }
+            // IT-issued temp password: no current password and no security questions.
             else
             {
                 _current = new TextBox { Visible = false };

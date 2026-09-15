@@ -79,6 +79,7 @@ namespace CastRightCatchInvManagement
             // Distance to an empty string is the other string's length.
             if (n == 0)
                 return m;
+            // Same when the other side is empty.
             if (m == 0)
                 return n;
 

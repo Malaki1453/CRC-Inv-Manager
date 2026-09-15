@@ -53,6 +53,7 @@ namespace CastRightCatchInvManagement
             // Ignore events fired while ApplyNames is rearranging columns.
             if (_applying)
                 return false;
+            // Need a ColumnSearch tag, table name, and inventory folder to write the default layout.
             if (grid.Tag is not ColumnSearch search ||
                 string.IsNullOrWhiteSpace(search.FileBaseName) ||
                 string.IsNullOrWhiteSpace(AppState.InventoryFolder))
@@ -74,9 +75,9 @@ namespace CastRightCatchInvManagement
                 });
                 return true;
             }
+            // Prefs write can fail on a locked or remote-down database; keep the grid usable.
             catch
             {
-                // Prefs write can fail on a locked or remote-down database; keep the grid usable.
                 return false;
             }
         }
@@ -87,6 +88,7 @@ namespace CastRightCatchInvManagement
             // Ignore events fired while ApplyNames is rearranging columns.
             if (_applying)
                 return;
+            // Need a ColumnSearch tag, table name, and inventory folder to persist the current layout.
             if (grid.Tag is not ColumnSearch search ||
                 string.IsNullOrWhiteSpace(search.FileBaseName) ||
                 string.IsNullOrWhiteSpace(AppState.InventoryFolder))
@@ -100,9 +102,9 @@ namespace CastRightCatchInvManagement
                     [CurrentKey(search.FileBaseName)] = JsonSerializer.Serialize(names)
                 });
             }
+            // Prefs write can fail on a locked or remote-down database; keep using the table.
             catch
             {
-                // keep using the table even if settings cannot be written
             }
         }
 
@@ -177,6 +179,7 @@ namespace CastRightCatchInvManagement
                     string.IsNullOrWhiteSpace(json))
                 {
                     var shared = SqliteInventory.ReadPublicSettings();
+                    // Shared folder layout is also missing: first visit uses the page's summary columns.
                     if (!shared.TryGetValue(CurrentKey(baseName), out json) ||
                         string.IsNullOrWhiteSpace(json))
                         return new List<string>();
@@ -184,9 +187,9 @@ namespace CastRightCatchInvManagement
 
                 return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
             }
+            // Corrupt or unreadable prefs should not block opening the table.
             catch
             {
-                // Corrupt prefs should not block opening the table.
                 return new List<string>();
             }
         }
@@ -197,21 +200,24 @@ namespace CastRightCatchInvManagement
             try
             {
                 var settings = SqliteInventory.ReadPrefs();
+                // No saved default JSON for this user/table: callers fall back to summary columns.
                 if (!settings.TryGetValue(DefaultKey(baseName), out var json) ||
                     string.IsNullOrWhiteSpace(json))
                     return new List<string>();
 
                 return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
             }
+            // Corrupt default JSON is treated as "no default saved".
             catch
             {
-                // Corrupt default JSON is treated as "no default saved".
                 return new List<string>();
             }
         }
 
+        /// <summary>Prefs key for this user's last visible columns on the table.</summary>
         private static string CurrentKey(string baseName) => "grid_columns_" + baseName;
 
+        /// <summary>Prefs key for this user's saved default column set on the table.</summary>
         private static string DefaultKey(string baseName) => "grid_columns_default_" + baseName;
 
         /// <summary>Find a data column by stored key or header text, skipping the add-column button.</summary>
@@ -222,6 +228,7 @@ namespace CastRightCatchInvManagement
                 // The add-column button is never a layout target.
                 if (Theme.IsAddColumn(col))
                     continue;
+                // Match the stored key (file header / Name) or the visible HeaderText.
                 if (Key(col).Equals(name, StringComparison.OrdinalIgnoreCase) ||
                     col.HeaderText.Equals(name, StringComparison.OrdinalIgnoreCase))
                     return col;

@@ -305,7 +305,7 @@ namespace CastRightCatchInvManagement
                 _tabs.Visible = true;
                 _tabs.SelectedIndex = 0;
             }
-            // Opposite branch of the condition above.
+            // Single-table reports hide the tab strip.
             else
             {
                 _tabs.Visible = false;
@@ -332,7 +332,7 @@ namespace CastRightCatchInvManagement
                 FillStats(tab.Stats);
                 FillTable(tab.Columns, tab.Rows, tab.Empty, _current.Groups);
             }
-            // Opposite branch of the condition above.
+            // Fill from the report's main table when there are no tabs.
             else
             {
                 FillStats(_current.Stats);
@@ -389,6 +389,18 @@ namespace CastRightCatchInvManagement
 
         /// <summary>Render grouped (species) or flat rows, or an empty-state line.</summary>
         private void FillTable(
+            string[] columns,
+            List<string[]> rows,
+            string empty,
+            List<ReportGroup>? groups)
+        {
+            GridLoadHost.Run(
+                _grid,
+                _ => (columns, rows, empty, groups),
+                data => ApplyTable(data.columns, data.rows, data.empty, data.groups));
+        }
+
+        private void ApplyTable(
             string[] columns,
             List<string[]> rows,
             string empty,
@@ -559,7 +571,7 @@ namespace CastRightCatchInvManagement
                     // Still export the empty-state line so the sheet is not blank.
                     if (tab.Rows.Count == 0)
                         lines.Add(new[] { tab.Empty });
-                    // Opposite branch of the condition above.
+                    // Export the tab's data rows when it is not empty.
                     else
                         lines.AddRange(tab.Rows);
                 }
@@ -577,12 +589,12 @@ namespace CastRightCatchInvManagement
                     lines.AddRange(group.Children);
                 }
             }
-            // Alternative when the previous branch did not apply.
+            // Empty ungrouped reports still export a placeholder row.
             else if (report.Rows.Count == 0)
             {
                 lines.Add(new[] { report.Empty });
             }
-            // Opposite branch of the condition above.
+            // Export the main table rows for a flat, non-empty report.
             else
             {
                 lines.AddRange(report.Rows);

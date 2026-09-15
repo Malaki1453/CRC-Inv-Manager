@@ -92,21 +92,37 @@ namespace CastRightCatchInvManagement
         /// <summary>Show only requests still waiting for Accept or Reject.</summary>
         private void LoadTable()
         {
-            _rows.Clear();
-            _grid.Rows.Clear();
-            foreach (var record in DataFiles.ReadRecords(DataFiles.PendingChanges))
-            {
-                // Already decided rows stay in history but not on this queue.
-                if (!DataFiles.GetRecord(record, "Status").Equals("pending", StringComparison.OrdinalIgnoreCase))
-                    continue;
-                _rows.Add(record);
-                _grid.Rows.Add(
-                    DataFiles.GetRecord(record, "Requested At"),
-                    DataFiles.GetRecord(record, "Requested By"),
-                    DataFiles.GetRecord(record, "Action"),
-                    DataFiles.GetRecord(record, "Summary"),
-                    DataFiles.GetRecord(record, "Status"));
-            }
+            GridLoadHost.Run(
+                _grid,
+                token =>
+                {
+                    var rows = new List<Dictionary<string, string>>();
+                    foreach (var record in DataFiles.ReadRecords(DataFiles.PendingChanges))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        // Already decided rows stay in history but not on this queue.
+                        if (!DataFiles.GetRecord(record, "Status").Equals("pending", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        rows.Add(record);
+                    }
+
+                    return rows;
+                },
+                rows =>
+                {
+                    _rows.Clear();
+                    _grid.Rows.Clear();
+                    foreach (var record in rows)
+                    {
+                        _rows.Add(record);
+                        _grid.Rows.Add(
+                            DataFiles.GetRecord(record, "Requested At"),
+                            DataFiles.GetRecord(record, "Requested By"),
+                            DataFiles.GetRecord(record, "Action"),
+                            DataFiles.GetRecord(record, "Summary"),
+                            DataFiles.GetRecord(record, "Status"));
+                    }
+                });
         }
 
         /// <summary>The pending record for the current grid row, or null if none.</summary>

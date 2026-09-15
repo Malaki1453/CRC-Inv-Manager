@@ -79,8 +79,8 @@ public sealed class ServerClient : IDataChannel
     /// <summary>Sends <paramref name="op"/> and deserializes the success payload as <typeparamref name="T"/>.</summary>
     public T Call<T>(string op, object? payload = null)
     {
-        SslStream ssl = Require();
-        var request = Wire.Request(op, payload);
+        SslStream ssl = Require(); // TLS stream for this connection
+        var request = Wire.Request(op, payload); // op is the ServerOps name; request is the framed envelope
         lock (_gate)
         {
             Wire.WriteAsync(ssl, request).GetAwaiter().GetResult();

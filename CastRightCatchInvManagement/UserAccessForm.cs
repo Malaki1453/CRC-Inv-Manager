@@ -64,7 +64,7 @@ namespace CastRightCatchInvManagement
             // No group name means the caller had no selected row.
             if (groupName.Length == 0)
                 return false;
-            // Admin is locked; IT can only be changed by an administrator.
+            // Admin group JSON is locked (empty LockedAdminJson = all tables); only an admin may edit IT.
             if (!AccessGroups.CanEdit(groupName))
             {
                 MessageBox.Show(
@@ -290,6 +290,7 @@ namespace CastRightCatchInvManagement
                 visible.Checked = !denied.Contains(key);
                 policies.TryGetValue(key, out var policy);
                 policy ??= new DataTablePolicy();
+                // Write combo exists for every editable table on this dialog.
                 if (_write.TryGetValue(key, out var write))
                 {
                     write.SelectedItem = DataAccess.ModeLabel(policy.Write);

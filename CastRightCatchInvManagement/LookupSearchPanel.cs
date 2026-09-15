@@ -3,20 +3,30 @@ namespace CastRightCatchInvManagement
     /// <summary>A lookup row the user can pick to fill a form.</summary>
     internal sealed class LookupPick
     {
+        /// <summary>Source kind shown in the Type column (Vendor, Item, Customer, …).</summary>
         public required string Kind { get; init; }
+        /// <summary>Code written into the form's code field.</summary>
         public required string Code { get; init; }
+        /// <summary>Display name written into the form's name field.</summary>
         public required string Name { get; init; }
+        /// <summary>Optional extra column shown as Detail (phone, species, …).</summary>
         public required string Extra { get; init; }
+        /// <summary>Full source row so the parent form can fill remaining fields.</summary>
         public required Dictionary<string, string> Record { get; init; }
     }
 
     /// <summary>One table the search bar can query (vendors, items, customers, lots, …).</summary>
     internal sealed class LookupSource
     {
+        /// <summary>Label for this table in the Type column.</summary>
         public required string Kind { get; init; }
+        /// <summary>Rows to score against the typed query.</summary>
         public required IReadOnlyList<Dictionary<string, string>> Rows { get; init; }
+        /// <summary>Column used as Code on a hit.</summary>
         public required string CodeColumn { get; init; }
+        /// <summary>Name columns in preference order (Company, Name, Description, …).</summary>
         public required string[] NameColumns { get; init; }
+        /// <summary>Optional extra column shown as Detail.</summary>
         public string? ExtraColumn { get; init; }
     }
 
@@ -37,6 +47,7 @@ namespace CastRightCatchInvManagement
         private IReadOnlyList<LookupSource> _sources = Array.Empty<LookupSource>();
         private readonly List<LookupPick> _hits = new();
 
+        /// <summary>Raised when the user accepts a hit (double-click or Enter).</summary>
         public event Action<LookupPick>? Picked;
 
         /// <summary>Build the collapsed search bar; the results grid stays hidden until a query is typed.</summary>
@@ -140,11 +151,12 @@ namespace CastRightCatchInvManagement
             };
             _grid.KeyDown += (_, e) =>
             {
-                // Enter on a highlighted row is the keyboard equivalent of a double-click.
+                // Enter on a highlighted row is the keyboard equivalent of a double-click; other keys are left to the grid.
                 if (e.KeyCode != Keys.Enter)
                     return;
                 e.Handled = true;
                 e.SuppressKeyPress = true;
+                // No highlighted row (empty grid): Enter should not fill the form.
                 if (_grid.CurrentRow != null)
                     Accept(_grid.CurrentRow.Index);
             };
@@ -192,6 +204,7 @@ namespace CastRightCatchInvManagement
                 e.SuppressKeyPress = true;
                 _debounce.Stop();
                 RunSearch();
+                // Exactly one close match: fill the form immediately instead of making the user click it.
                 if (_hits.Count == 1)
                     Accept(0);
             }
@@ -200,6 +213,7 @@ namespace CastRightCatchInvManagement
             {
                 e.SuppressKeyPress = true;
                 _grid.Focus();
+                // Select the first result row when the grid has rows after RunSearch.
                 if (_grid.Rows.Count > 0)
                     _grid.CurrentCell = _grid.Rows[0].Cells[0];
             }

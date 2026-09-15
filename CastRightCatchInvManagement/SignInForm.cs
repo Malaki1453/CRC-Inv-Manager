@@ -271,7 +271,7 @@ namespace CastRightCatchInvManagement
             {
                 _host.Text = AppState.ServerHost;
                 _port.Text = AppState.ServerPort > 0 ? AppState.ServerPort.ToString() : DataLink.DefaultPort.ToString();
-                // This PC last used a local folder, not the server.
+                // UseInventoryServer=false is local SQLite; also restore folder UI when this PC last used a folder.
                 if (!DataLink.UseInventoryServer ||
                     (!AppState.UseServer &&
                      !string.IsNullOrWhiteSpace(AppState.InventoryFolder) &&
@@ -328,7 +328,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Show host/port and hide the folder picker when the server build is enabled.</summary>
         private void ShowServerUi()
         {
-            // Folder-only builds never expose a server IP card.
+            // UseInventoryServer=false is local SQLite; never show the server IP card.
             if (!DataLink.UseInventoryServer)
                 return;
             _folderCard.Visible = false;
@@ -353,6 +353,7 @@ namespace CastRightCatchInvManagement
         private void ConnectServer()
         {
             DataLink.ParseEndpoint(_host.Text, out string host, out int parsedFromHost);
+            // A blank host cannot resolve; keep them on the connect card.
             if (host.Length == 0)
             {
                 ShowError("Enter the server IP address.");
@@ -369,6 +370,7 @@ namespace CastRightCatchInvManagement
             {
                 DataLink.Connect(host, port, string.IsNullOrWhiteSpace(pin) ? null : pin);
             }
+            // Certificate changed: ask before trusting a new fingerprint (possible MITM).
             catch (Exception ex) when (ex.Message.Contains("fingerprint", StringComparison.OrdinalIgnoreCase))
             {
                 var retry = MessageBox.Show(
@@ -388,12 +390,14 @@ namespace CastRightCatchInvManagement
                 {
                     DataLink.Connect(host, port, fingerprint: null);
                 }
+                // Second connect still failed; stay on the sign-in screen.
                 catch (Exception retryEx)
                 {
                     ShowError(retryEx.Message);
                     return;
                 }
             }
+            // Host/port/TLS errors stay on this screen instead of crashing startup.
             catch (Exception ex)
             {
                 ShowError(ex.Message);
@@ -419,6 +423,7 @@ namespace CastRightCatchInvManagement
             _folder.BackColor = Directory.Exists(AppState.InventoryFolder ?? "") ? Theme.Paper : Theme.DangerFill;
             _folder.ForeColor = Directory.Exists(AppState.InventoryFolder ?? "") ? Theme.Ink : Theme.Danger;
 
+            // Server card is showing: connect first, then sign in over TLS (not local SQLite).
             if (serverUi)
             {
                 _connect.Text = DataLink.IsRemote ? "Connected" : "Connect";
@@ -478,6 +483,7 @@ namespace CastRightCatchInvManagement
                 AcceptButton = _setupPanel.Controls.OfType<Button>().FirstOrDefault();
                 _setupUser.Focus();
             }
+            // IT already exists: show username/password (forgot password is IT-only, no security questions).
             else
             {
                 AcceptButton = _signInPanel.Controls.OfType<Button>().FirstOrDefault();
@@ -491,12 +497,14 @@ namespace CastRightCatchInvManagement
         /// <summary>Create the first IT user (always IT), then enter the app.</summary>
         private void CreateAdmin()
         {
+            // Confirm field is a typed copy, not a second stored secret.
             if (_setupPassword.Text != _setupConfirm.Text)
             {
                 ShowError("The passwords do not match.");
                 return;
             }
 
+            // Policy or duplicate-username failures stay on the setup card.
             if (!Accounts.CreateAdmin(_setupUser.Text, _setupPassword.Text, _setupUser.Text, out string error))
             {
                 ShowError(error);
@@ -522,6 +530,7 @@ namespace CastRightCatchInvManagement
         private void SignIn()
         {
             bool stay = _staySignedIn.Visible && _staySignedIn.Checked;
+            // Wrong password, lock, or missing user must not open the workspace.
             if (!Accounts.TrySignIn(_user.Text, _password.Text, out var account, out string error, stay) ||
                 account == null)
             {
@@ -534,6 +543,7 @@ namespace CastRightCatchInvManagement
             if (account.MustChangePassword)
             {
                 using var change = new ChangePasswordForm(account.Username, requireCurrent: false);
+                // Skipping the change leaves them signed out; reset is IT-only, no security questions.
                 if (change.ShowDialog(this) != DialogResult.OK)
                 {
                     AppState.SignOut();
@@ -559,6 +569,7 @@ namespace CastRightCatchInvManagement
             // Remembered sessions follow Admin policy; otherwise drop any old cookie on this PC.
             if (stay)
                 Accounts.RememberSignIn(account);
+            // Unchecked Stay signed in must not leave a resume token on this PC.
             else
                 Accounts.ForgetThisPc();
             // Remote clients load company settings only after they have a token.

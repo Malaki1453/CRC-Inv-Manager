@@ -14,11 +14,16 @@ namespace CastRightCatchInvManagement
         private CancellationTokenSource? _lotsLoad;
         private string _itemCode = "";
         private string _itemDescription = "";
-        /// <summary>Running totals keyed by normalized PO / lot.</summary>
+        /// <summary>
+        /// Lot totals by normalized PO. Each snap is purchased/sold/vendor plus SO # : lbs.
+        /// The dictionary key is the normalized PO # (or "(no lot)" when PO is blank).
+        /// </summary>
         private readonly Dictionary<string, LotSnap> _lots = new(StringComparer.OrdinalIgnoreCase);
-        /// <summary>Grid row index for each lot key so we update in place instead of appending duplicates.</summary>
+        /// <summary>
+        /// Grid row index for each lot key (normalized PO) so we update in place instead of appending duplicates.
+        /// </summary>
         private readonly Dictionary<string, int> _lotRows = new(StringComparer.OrdinalIgnoreCase);
-        /// <summary>Lot keys whose sales list is currently expanded under the purchase row.</summary>
+        /// <summary>Lot keys (normalized PO) whose sales list is currently expanded under the purchase row.</summary>
         private readonly HashSet<string> _expandedLots = new(StringComparer.OrdinalIgnoreCase);
         private int _lotsPaintedAt;
         private bool _lotsDone;
@@ -59,8 +64,10 @@ namespace CastRightCatchInvManagement
 
             using (form)
             {
+                // owner is the parent window when one was passed; ShowDialog(owner) keeps this popup modal to it.
                 if (owner != null)
                     form.ShowDialog(owner);
+                // No owner (e.g. opened from a modeless host): show an unowned modal so the form still blocks until Close.
                 else
                     form.ShowDialog();
             }
@@ -103,6 +110,7 @@ namespace CastRightCatchInvManagement
             BackColor = Theme.Cream;
             Font = Theme.Body;
             ForeColor = Theme.Ink;
+            // AppIcon is null when brand assets failed to load; skip so WinForms keeps the default icon.
             if (BrandAssets.AppIcon != null)
                 Icon = BrandAssets.AppIcon;
 
@@ -124,6 +132,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(footer);
             Controls.Add(header);
 
+            // item is true for inventory / item-code rows; only those scan purchases and sales into lots.
             if (item)
             {
                 _itemCode = DataFiles.GetRecord(record, "Code").Trim();
@@ -143,6 +152,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Dispose the lots-scan cancellation source with this form.</summary>
         protected override void Dispose(bool disposing)
         {
+            // disposing is true for managed cleanup; skip when the finalizer is running.
             if (disposing)
                 _lotsLoad?.Dispose();
             base.Dispose(disposing);
@@ -309,6 +319,7 @@ namespace CastRightCatchInvManagement
                 int h = Math.Max(24, buttons.ClientSize.Height - buttons.Padding.Vertical);
                 foreach (var button in new[] { _filterAll, _filterInStock, _filterSoldOut })
                 {
+                    // A filter button can still be null if LayoutFilters runs before the bar is fully built.
                     if (button == null)
                         continue;
                     button.Height = h;
@@ -325,6 +336,7 @@ namespace CastRightCatchInvManagement
             return bar;
         }
 
+        /// <summary>Compact All / In stock / Sold out chip used on the lots filter bar.</summary>
         private Button FilterButton(string text)
         {
             var button = new Button
@@ -350,6 +362,7 @@ namespace CastRightCatchInvManagement
                 PaintLot(snap);
         }
 
+        /// <summary>Gold the selected filter chip; outline the other two.</summary>
         private void StyleFilterButtons()
         {
             StyleFilterButton(_filterAll, _lotFilter == LotFilter.All);
@@ -359,10 +372,13 @@ namespace CastRightCatchInvManagement
 
         private static void StyleFilterButton(Button? button, bool selected)
         {
+            // Layout or a closed form can call this before the chips exist.
             if (button == null)
                 return;
+            // selected is true for the active All / In stock / Sold out chip so it reads as the current filter.
             if (selected)
                 Theme.StyleGoldButton(button);
+            // Inactive chips stay navy-outline so they still look clickable.
             else
                 Theme.StyleOutlineButton(button);
         }
@@ -371,9 +387,10 @@ namespace CastRightCatchInvManagement
         private bool LotMatchesFilter(LotSnap snap)
         {
             decimal remain = snap.Purchased - snap.Sold;
-            // In stock: still have pounds. Sold out: remaining is zero or negative (over sold).
+            // In stock: still have pounds remaining on this lot snap.
             if (_lotFilter == LotFilter.InStock)
                 return remain > 0;
+            // Sold out: remaining is zero or negative (over sold).
             if (_lotFilter == LotFilter.SoldOut)
                 return remain <= 0;
             return true;
@@ -399,8 +416,10 @@ namespace CastRightCatchInvManagement
             try
             {
                 // Prefer Item Code. Description is only used when the inventory row has no code.
+                // needle is that item code or description — the value used to scan purchases and sales.
                 string column = code.Length > 0 ? "Item Code" : "Description";
                 string needle = code.Length > 0 ? code : description;
+                // No code and no description: there is nothing to match in Purchases or Sales.
                 if (needle.Length == 0)
                     return;
 
@@ -433,6 +452,7 @@ namespace CastRightCatchInvManagement
                         needle,
                         sale =>
                         {
+                            // Unconfirmed sale adds are not deducted from lots yet.
                             if (DataFiles.IsWaitingAdd(sale))
                                 return;
                             decimal volume = DataFiles.ParseMoney(DataFiles.GetRecord(sale, "Volume"));
@@ -444,9 +464,9 @@ namespace CastRightCatchInvManagement
                         token);
                 }
             }
+            // Form closed (or otherwise cancelled) while the scan was running.
             catch (OperationCanceledException)
             {
-                // Form closed while the scan was running.
                 return;
             }
             finally
@@ -459,12 +479,13 @@ namespace CastRightCatchInvManagement
         private void AddPurchase(string lot, string vendor, decimal volume)
         {
             // Blank PO numbers share one bucket so they still show on the grid.
+            // key is the normalized PO # used to look up this lot's snap (totals).
             string key = lot.Length > 0 ? DataFiles.NormalizePo(lot) : "(no lot)";
             bool isNew;
             lock (_lots)
             {
                 isNew = !_lots.ContainsKey(key);
-                // First purchase line on this PO creates the lot row.
+                // First purchase line on this PO creates the lot snap (purchased/sold/vendor totals).
                 if (!_lots.TryGetValue(key, out var snap))
                 {
                     snap = new LotSnap
@@ -496,7 +517,9 @@ namespace CastRightCatchInvManagement
             if (lot.Length == 0)
                 return false;
 
+            // key is the normalized PO # used to find the lot snap.
             string key = DataFiles.NormalizePo(lot);
+            // NormalizePo can still yield empty (whitespace-only lot); that cannot match a purchase PO.
             if (key.Length == 0)
                 return false;
 
@@ -517,6 +540,7 @@ namespace CastRightCatchInvManagement
                     // A volume-looking SO # is leftover float text, not an order number.
                     if (so.Length == 0 || LooksLikeFloatDust(so))
                         so = "—";
+                    // First lbs for this SO # on the lot: start the expand-list bucket at 0 before adding volume.
                     if (!snap.SalesBySo.ContainsKey(so))
                         snap.SalesBySo[so] = 0;
                     snap.SalesBySo[so] += volume;
@@ -532,6 +556,7 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void QueueLotsPaint(bool immediate, bool done)
         {
+            // done is true when the purchase/sales scan finished; later Paint() calls FinishLotsLoad.
             if (done)
                 _lotsDone = true;
             int now = Environment.TickCount;
@@ -546,19 +571,23 @@ namespace CastRightCatchInvManagement
 
             void Paint()
             {
+                // Form or grid may have closed while this paint was queued.
                 if (IsDisposed || _lotsGrid == null || _lotsGrid.IsDisposed)
                     return;
                 foreach (var snap in copy)
                     PaintLot(snap);
+                // _lotsDone is set when the scan finished so the spinner hides after this last paint.
                 if (_lotsDone)
                     FinishLotsLoad();
             }
 
+            // Do not BeginInvoke onto a disposed form.
             if (IsDisposed)
                 return;
             // Background thread must marshal to the UI thread.
             if (InvokeRequired)
                 BeginInvoke(Paint);
+            // Already on the UI thread (e.g. a filter refresh): paint immediately.
             else
                 Paint();
         }
@@ -566,6 +595,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Insert or refresh one grid row. Remaining is purchased minus sold.</summary>
         private void PaintLot(LotSnap snap)
         {
+            // snap is this lot's totals; skip if the grid was torn down with the form.
             if (_lotsGrid == null)
                 return;
             string key = snap.Key.Length > 0 ? snap.Key : "(no lot)";
@@ -585,19 +615,21 @@ namespace CastRightCatchInvManagement
                 Lbs(remain),
                 note
             };
-            // Update the existing grid row when this lot was already drawn.
+            // Update the existing grid row when this lot (normalized PO `key`) was already drawn.
             if (_lotRows.TryGetValue(key, out int index) && index < _lotsGrid.Rows.Count)
             {
                 var row = _lotsGrid.Rows[index];
                 for (int i = 0; i < cells.Length; i++)
                     row.Cells[i].Value = cells[i];
             }
+            // New lot: append a purchase row and remember its index under `key`.
             else
             {
                 int added = _lotsGrid.Rows.Add(cells);
                 _lotRows[key] = added;
             }
 
+            // Apply filter visibility, Tag (`lot:` vs later `sale:`), and expand/collapse on the purchase row.
             if (_lotRows.TryGetValue(key, out int rowIndex) && rowIndex < _lotsGrid.Rows.Count)
             {
                 bool visible = LotMatchesFilter(snap);
@@ -606,6 +638,7 @@ namespace CastRightCatchInvManagement
                 // Hidden lots should not keep an open sales list.
                 if (!visible)
                     CollapseLotSales(key);
+                // Still expanded: rebuild the SO # / vendor / lbs rows so lbs stay current while the scan runs.
                 else if (_expandedLots.Contains(key))
                     RefreshLotSales(key);
             }
@@ -614,19 +647,24 @@ namespace CastRightCatchInvManagement
         /// <summary>Left-click a purchase lot to expand or collapse its sales. Ignore double-click and sale lines.</summary>
         private void OnLotRowClick(object? sender, DataGridViewCellMouseEventArgs e)
         {
+            // Only a single left-click on a data row toggles expand; ignore header, right-click, and double-click.
             if (e.Button != MouseButtons.Left || e.Clicks != 1 || e.RowIndex < 0 || _lotsGrid == null)
                 return;
+            // Tag is "lot:<normalized PO>" on purchase rows and "sale:<normalized PO>" on inserted SO lines.
             string? tag = _lotsGrid.Rows[e.RowIndex].Tag as string;
-            // Sale lines are not themselves expandable.
+            // Sale lines (tag starts with sale:) are not themselves expandable.
             if (tag != null && tag.StartsWith("sale:", StringComparison.Ordinal))
                 return;
             string key = tag != null && tag.StartsWith("lot:", StringComparison.Ordinal)
                 ? tag.Substring(4)
                 : "";
+            // Missing or unknown Tag: not a purchase-lot row, so a click should not expand anything.
             if (key.Length == 0)
                 return;
+            // Already expanded: a second click collapses the SO # / vendor / lbs rows under this lot.
             if (_expandedLots.Contains(key))
                 CollapseLotSales(key);
+            // Not expanded: insert those sale rows under the purchase lot.
             else
                 ExpandLotSales(key);
         }
@@ -634,6 +672,8 @@ namespace CastRightCatchInvManagement
         /// <summary>Insert sale rows under the purchase lot: SO # in Lot, vendor in Vendor, lbs in Sold.</summary>
         private void ExpandLotSales(string key)
         {
+            // `parent` here is the DataGridView ROW INDEX of the purchase lot, not WinForms Control.Parent.
+            // `key` is the normalized PO. Sale lines are inserted at parent+1 so they sit under that lot row.
             if (_lotsGrid == null || !_lotRows.TryGetValue(key, out int parent) || parent < 0)
                 return;
             CollapseLotSales(key);
@@ -641,6 +681,7 @@ namespace CastRightCatchInvManagement
             string vendor;
             lock (_lots)
             {
+                // snap is this lot's totals; skip if the scan dropped the PO before expand ran.
                 if (!_lots.TryGetValue(key, out var snap))
                     return;
                 vendor = snap.Vendor.Trim();
@@ -654,6 +695,7 @@ namespace CastRightCatchInvManagement
             if (sales.Count == 0)
                 return;
 
+            // Blank vendor on the lot snap: sale rows still need a Vendor cell, so show an em dash.
             if (vendor.Length == 0)
                 vendor = "—";
             int insertAt = parent + 1;
@@ -670,6 +712,7 @@ namespace CastRightCatchInvManagement
                     "",
                     "");
                 var row = _lotsGrid.Rows[index];
+                // Tag "sale:<normalized PO>" marks this as an expand line so clicks do not toggle another lot.
                 row.Tag = "sale:" + key;
                 row.DefaultCellStyle.ForeColor = Theme.Muted;
                 row.DefaultCellStyle.SelectionForeColor = Theme.Muted;
@@ -684,6 +727,8 @@ namespace CastRightCatchInvManagement
         /// <summary>Remove the SO # : lbs rows under this purchase lot.</summary>
         private void CollapseLotSales(string key)
         {
+            // `parent` is again the purchase lot's grid row index (not a WinForms parent control).
+            // `key` is the normalized PO used to find that row. If the row is gone, just drop the expanded flag.
             if (_lotsGrid == null || !_lotRows.TryGetValue(key, out int parent))
             {
                 _expandedLots.Remove(key);
@@ -702,6 +747,7 @@ namespace CastRightCatchInvManagement
                 removed++;
             }
 
+            // Shift later purchase-row indexes back up only when sale lines were actually deleted.
             if (removed > 0)
                 ShiftLotRows(parent, -removed);
             _expandedLots.Remove(key);
@@ -710,6 +756,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Rebuild an open sales list so lbs stay current while the scan is still running.</summary>
         private void RefreshLotSales(string key)
         {
+            // Only rebuild the SO list when this lot (normalized PO `key`) is currently expanded.
             if (!_expandedLots.Contains(key))
                 return;
             ExpandLotSales(key);
@@ -720,6 +767,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (var lotKey in _lotRows.Keys.ToList())
             {
+                // Purchase rows after the insert/remove point (`parent`) must move by delta so indexes stay aligned.
                 if (_lotRows[lotKey] > afterIndex)
                     _lotRows[lotKey] += delta;
             }
@@ -728,8 +776,10 @@ namespace CastRightCatchInvManagement
         /// <summary>Hide the spinner and restore full-contrast grid colors when the scan finishes.</summary>
         private void FinishLotsLoad()
         {
+            // Hide the wait spinner once the scan has a final paint.
             if (_lotsSpinner != null)
                 _lotsSpinner.Visible = false;
+            // Restore full-contrast grid colors now that rows are no longer streaming in.
             if (_lotsGrid != null)
                 FadeLotsGrid(false);
             RefreshFilterCounts();
@@ -746,17 +796,22 @@ namespace CastRightCatchInvManagement
                 foreach (var snap in _lots.Values)
                 {
                     all++;
+                    // snap.Purchased - snap.Sold > 0 means pounds are still on hand (In stock filter).
                     if (snap.Purchased - snap.Sold > 0)
                         inStock++;
+                    // Remaining is zero or negative (sold out / over sold) for the Sold out filter.
                     else
                         soldOut++;
                 }
             }
 
+            // Chips may not exist if the filter bar was never built; skip rather than NRE.
             if (_filterAll != null)
                 _filterAll.Text = all == 0 ? "All" : "All (" + all + ")";
+            // Same guard for the In stock chip.
             if (_filterInStock != null)
                 _filterInStock.Text = inStock == 0 ? "In stock" : "In stock (" + inStock + ")";
+            // Same guard for the Sold out chip.
             if (_filterSoldOut != null)
                 _filterSoldOut.Text = soldOut == 0 ? "Sold out" : "Sold out (" + soldOut + ")";
         }
@@ -764,43 +819,24 @@ namespace CastRightCatchInvManagement
         /// <summary>Muted colors while rows are still arriving; normal theme when done.</summary>
         private void FadeLotsGrid(bool fade)
         {
+            // Grid is created in BuildItemLotsTable; skip if this is not an inventory details view.
             if (_lotsGrid == null)
                 return;
-            _lotsGrid.EnableHeadersVisualStyles = false;
-            // Faded while loading so arriving rows are visible but the grid is not the finished look.
-            if (fade)
-            {
-                _lotsGrid.BackgroundColor = Theme.Cream;
-                _lotsGrid.GridColor = Color.FromArgb(210, 214, 210);
-                _lotsGrid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(90, 108, 122);
-                _lotsGrid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(200, 208, 214);
-                _lotsGrid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(90, 108, 122);
-                _lotsGrid.ColumnHeadersDefaultCellStyle.SelectionForeColor = Color.FromArgb(200, 208, 214);
-                _lotsGrid.DefaultCellStyle.BackColor = Theme.Cream;
-                _lotsGrid.DefaultCellStyle.ForeColor = Theme.Muted;
-                _lotsGrid.DefaultCellStyle.SelectionBackColor = Theme.Cream;
-                _lotsGrid.DefaultCellStyle.SelectionForeColor = Theme.Muted;
-                _lotsGrid.AlternatingRowsDefaultCellStyle.BackColor = Theme.Cream;
-                _lotsGrid.AlternatingRowsDefaultCellStyle.ForeColor = Theme.Muted;
-            }
-            else
-            {
-                Theme.StyleGrid(_lotsGrid);
-                _lotsGrid.EnableHeadersVisualStyles = false;
-            }
+            Theme.FadeGrid(_lotsGrid, fade);
         }
 
-        /// <summary>Format pounds for the lots grid, keeping trailing zeros off.</summary>
         /// <summary>Weights are stored to three decimals so remaining is not 0.04999999999999982.</summary>
         private static decimal Qty(decimal value) =>
             decimal.Round(value, 3, MidpointRounding.AwayFromZero);
 
+        /// <summary>Format pounds for the lots grid, keeping trailing zeros off.</summary>
         private static string Lbs(decimal value) =>
             Qty(value).ToString("0.###", CultureInfo.InvariantCulture);
 
         /// <summary>True when a supposed SO # is actually a raw floating-point volume string.</summary>
         private static bool LooksLikeFloatDust(string text)
         {
+            // Float leftovers always have a decimal point and a long digit run; short SO numbers are real.
             if (text.IndexOf('.') < 0 || text.Length < 10)
                 return false;
             return decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out _);
@@ -813,14 +849,20 @@ namespace CastRightCatchInvManagement
             SoldOut
         }
 
-        /// <summary>One PO lot while the scan is running. Key is the normalized PO #.</summary>
+        /// <summary>One PO lot's running totals while the scan is running. Key is the normalized PO #.</summary>
         private sealed class LotSnap
         {
+            /// <summary>Normalized PO # used as the dictionary key (or "(no lot)").</summary>
             public string Key { get; set; } = "";
+            /// <summary>Display PO # shown in the Lot (PO #) column.</summary>
             public string Lot { get; set; } = "";
+            /// <summary>Vendor kept from the first purchase on this PO.</summary>
             public string Vendor { get; set; } = "";
+            /// <summary>Pounds purchased onto this lot.</summary>
             public decimal Purchased { get; set; }
+            /// <summary>Pounds sold off this lot (only sales whose PO/Lot # matches this purchase PO).</summary>
             public decimal Sold { get; set; }
+            /// <summary>SO # → lbs, used to insert expand rows under the purchase lot.</summary>
             public Dictionary<string, decimal> SalesBySo { get; set; } =
                 new(StringComparer.OrdinalIgnoreCase);
         }
@@ -920,7 +962,7 @@ namespace CastRightCatchInvManagement
             grid.ColumnHeadersHeight = 32;
             grid.RowTemplate.Height = 30;
 
-            // Purchases show cost columns; sales show lot, sell price, and amount.
+            // Purchases show cost columns (price paid, total cost).
             if (purchase)
             {
                 AddCol(grid, "Item Code", 90);
@@ -933,6 +975,7 @@ namespace CastRightCatchInvManagement
                 AddCol(grid, "Total Cost / LB", 90);
                 AddCol(grid, "Total Cost", 80);
             }
+            // Sales show Lot #, sell price, and amount instead of purchase costs.
             else
             {
                 AddCol(grid, "Item Code", 90);
@@ -973,6 +1016,7 @@ namespace CastRightCatchInvManagement
                     select = index;
             }
 
+            // select is the first line matching the clicked item (and lot on sales); highlight it if found.
             if (select >= 0 && select < grid.Rows.Count)
             {
                 grid.ClearSelection();
@@ -1073,10 +1117,13 @@ namespace CastRightCatchInvManagement
                 // Party table may be missing; fall back to the order row for code, name, and terms.
                 if (value.Length == 0)
                 {
+                    // Code on the party card comes from Vendor Code / Customer Code on the order.
                     if (key.Equals("Code", StringComparison.OrdinalIgnoreCase))
                         value = code;
+                    // Name comes from Vendor / Customer on the order when the party row is missing.
                     else if (key.Equals("Name", StringComparison.OrdinalIgnoreCase))
                         value = name;
+                    // Terms live on the order as Vendor Terms / Customer Terms when the party has none.
                     else if (key.Equals("Terms", StringComparison.OrdinalIgnoreCase))
                         value = DataFiles.GetRecord(
                             order,
@@ -1094,6 +1141,7 @@ namespace CastRightCatchInvManagement
         {
             code = (code ?? "").Trim();
             name = (name ?? "").Trim();
+            // Both identifiers blank: there is no customer/vendor to look up.
             if (code.Length == 0 && name.Length == 0)
                 return null;
 
@@ -1158,12 +1206,14 @@ namespace CastRightCatchInvManagement
 
                 var cell = FieldCell(DisplayCaption(title, pair.Key), pair.Value, compact);
                 grid.Controls.Add(cell, wide ? 0 : col, row);
+                // Wide fields (Address, Notes, …) span every column and consume a full row.
                 if (wide)
                 {
                     grid.SetColumnSpan(cell, columns);
                     col = 0;
                     row++;
                 }
+                // Compact/narrow fields share a row until `columns` is filled.
                 else
                 {
                     col++;
@@ -1253,6 +1303,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Purchase Description is labeled Species so it matches the inventory wording.</summary>
         private static string DisplayCaption(string title, string key)
         {
+            // Purchase Description is the species name; relabel so it matches inventory wording.
             if (title.Equals("Purchase", StringComparison.OrdinalIgnoreCase) &&
                 key.Equals("Description", StringComparison.OrdinalIgnoreCase))
                 return "Species";
@@ -1354,6 +1405,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Mask bank account numbers; other fields pass through.</summary>
         private static string DisplayField(string key, string value)
         {
+            // Bank account numbers should not appear in full on a details card.
             if (key.Equals(DataFiles.AccountNumber, StringComparison.OrdinalIgnoreCase))
                 return DataFiles.MaskAccountNumber(value);
             return value ?? "";
@@ -1364,6 +1416,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (var pair in record)
             {
+                // Record keys are compared case-insensitively so "PO #" and "po #" both hit.
                 if (pair.Key.Equals(key, StringComparison.OrdinalIgnoreCase))
                 {
                     value = pair.Value ?? "";

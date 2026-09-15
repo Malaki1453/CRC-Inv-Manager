@@ -84,7 +84,7 @@ namespace CastRightCatchInvManagement
             HashSet<string> blocked)
         {
             json = (json ?? "").Trim();
-            // Empty access JSON means default auto-write and no extra blocks.
+            // Empty JSON (empty LockedAdminJson) means ALL tables, auto-write, and no extra blocks.
             if (json.Length == 0)
                 return;
 
@@ -92,12 +92,14 @@ namespace CastRightCatchInvManagement
             {
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
+                // $write is optional; missing means Auto for every allowed table.
                 if (root.TryGetProperty(WriteKey, out var write) &&
                     write.ValueKind == JsonValueKind.Object)
                 {
                     foreach (var pair in write.EnumerateObject())
                     {
                         string key = TableKey(pair.Name);
+                        // First mention of a table creates the policy bag.
                         if (!policies.TryGetValue(key, out var policy))
                         {
                             policy = new DataTablePolicy();
@@ -108,6 +110,7 @@ namespace CastRightCatchInvManagement
                     }
                 }
 
+                // $hide is optional; missing means every column stays visible.
                 if (root.TryGetProperty(HideKey, out var hide) &&
                     hide.ValueKind == JsonValueKind.Object)
                 {
@@ -117,6 +120,7 @@ namespace CastRightCatchInvManagement
                         if (pair.Value.ValueKind != JsonValueKind.Array)
                             continue;
                         string key = TableKey(pair.Name);
+                        // Hide can appear before $write for the same table.
                         if (!policies.TryGetValue(key, out var policy))
                         {
                             policy = new DataTablePolicy();
@@ -126,23 +130,27 @@ namespace CastRightCatchInvManagement
                         foreach (var item in pair.Value.EnumerateArray())
                         {
                             string name = item.GetString()?.Trim() ?? "";
+                            // Blank hide entries would match every column name.
                             if (name.Length > 0)
                                 policy.HideColumns.Add(name);
                         }
                     }
                 }
 
+                // $block is optional; missing means no companies are hidden.
                 if (root.TryGetProperty(BlockKey, out var block) &&
                     block.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var item in block.EnumerateArray())
                     {
                         string name = item.GetString()?.Trim() ?? "";
+                        // Blank block entries would hide empty party fields.
                         if (name.Length > 0)
                             blocked.Add(name);
                     }
                 }
             }
+            // Keep defaults (all tables, auto-write) when the document cannot be parsed.
             catch
             {
                 // keep defaults
@@ -183,6 +191,7 @@ namespace CastRightCatchInvManagement
                 return CanReview();
             foreach (var item in TableAccess.All)
             {
+                // Match either the access key or the SQLite table name.
                 if (table.Equals(item.Key, StringComparison.OrdinalIgnoreCase) ||
                     table.Equals(TableFile(item.Key), StringComparison.OrdinalIgnoreCase))
                     return TableAccess.Can(item.Key);
@@ -220,14 +229,17 @@ namespace CastRightCatchInvManagement
             string table,
             List<(long Id, Dictionary<string, string> Fields)> rows)
         {
+            // Review needs the unfiltered row to accept or restore it.
             if (ApplyingReview)
                 return rows;
+            // Denied tables return no rows rather than throwing.
             if (!CanReadTable(table))
                 return new List<(long, Dictionary<string, string>)>();
 
             var result = new List<(long, Dictionary<string, string>)>();
             foreach (var (id, fields) in rows)
             {
+                // Blocked parties and products must not appear in grids or lookups.
                 if (IsRecordBlocked(fields))
                     continue;
                 result.Add((id, StripHidden(table, fields)));
@@ -251,6 +263,7 @@ namespace CastRightCatchInvManagement
             {
                 foreach (var key in copy.Keys.ToList())
                 {
+                    // Hide lists are case-insensitive so "Account Number" matches "account number".
                     if (key.Equals(column, StringComparison.OrdinalIgnoreCase))
                         copy.Remove(key);
                 }
@@ -264,6 +277,7 @@ namespace CastRightCatchInvManagement
         {
             foreach (var item in TableAccess.All)
             {
+                // Reviewers need auto-write on at least one table they can open.
                 if (TableAccess.Can(item.Key) && WriteMode(TableFile(item.Key)) == DataWriteMode.Auto)
                     return true;
             }
@@ -274,9 +288,11 @@ namespace CastRightCatchInvManagement
         /// <summary>True when this column is in the user's hide list for the table.</summary>
         public static bool IsColumnHidden(string table, string column)
         {
+            // Blank column names are not in any hide list.
             if (string.IsNullOrWhiteSpace(column))
                 return false;
             table = TableKey(table);
+            // No policy for this table means every column is visible.
             if (!Policies.TryGetValue(table, out var policy))
                 return false;
             return policy.HideColumns.Any(name =>
@@ -290,17 +306,20 @@ namespace CastRightCatchInvManagement
         /// <summary>True when any party or product field on the row matches a blocked key.</summary>
         public static bool IsRecordBlocked(Dictionary<string, string>? record)
         {
+            // Null rows are not blocked parties.
             if (record == null)
                 return false;
             // No blocks configured: every row is visible.
             if (BlockedCompanies.Count == 0 && BlockedKeys.Count == 0)
                 return false;
+            // Expand related codes/names the first time we check a row.
             if (BlockedKeys.Count == 0)
                 ExpandBlockedKeys();
 
             foreach (var key in RecordFields)
             {
                 string value = DataFiles.GetRecord(record, key).Trim();
+                // Empty cells never match a blocked company or product.
                 if (value.Length > 0 && BlockedKeys.Contains(value))
                     return true;
             }
@@ -312,8 +331,10 @@ namespace CastRightCatchInvManagement
         public static bool IsCompanyBlocked(string? value)
         {
             value = (value ?? "").Trim();
+            // Blank typed values are not blocked companies.
             if (value.Length == 0)
                 return false;
+            // Expand related codes when the seed list exists but keys were not built yet.
             if (BlockedKeys.Count == 0 && BlockedCompanies.Count > 0)
                 ExpandBlockedKeys();
             return BlockedKeys.Contains(value) || BlockedCompanies.Contains(value);
@@ -328,6 +349,7 @@ namespace CastRightCatchInvManagement
             BlockedKeys.Clear();
             foreach (var seed in BlockedCompanies)
                 BlockedKeys.Add(seed);
+            // Nothing to expand without seeds or a database to read related codes from.
             if (BlockedKeys.Count == 0 || string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 return;
 
@@ -348,9 +370,11 @@ namespace CastRightCatchInvManagement
                 foreach (var field in fields)
                 {
                     string value = DataFiles.GetRecord(record, field).Trim();
+                    // Skip empty master-table cells so they are not treated as blocked keys.
                     if (value.Length == 0)
                         continue;
                     tokens.Add(value);
+                    // Any matching seed (code, name, or company) blocks the whole row's tokens.
                     if (BlockedCompanies.Contains(value))
                         hit = true;
                 }
@@ -382,6 +406,7 @@ namespace CastRightCatchInvManagement
         public static string Merge(IEnumerable<string> jsons)
         {
             var list = (jsons ?? Array.Empty<string>()).Select(json => json ?? "").ToList();
+            // No groups: empty JSON means ALL tables allowed, not only Settings/Users.
             if (list.Count == 0)
                 return "";
             // One group needs no intersect; keep its JSON as-is.
@@ -419,6 +444,7 @@ namespace CastRightCatchInvManagement
                     continue;
 
                 var allowing = parsed.Where(item => !item.Denied.Contains(table)).ToList();
+                // Every group denied this table; skip write/hide (already in mergedDenied).
                 if (allowing.Count == 0)
                     continue;
 
@@ -428,6 +454,7 @@ namespace CastRightCatchInvManagement
                     var mode = item.Policies.TryGetValue(table, out var policy)
                         ? policy.Write
                         : DataWriteMode.Auto;
+                    // Allowed wins: Auto beats Confirm beats View.
                     if ((int)mode > (int)write)
                         write = mode;
                 }
@@ -441,10 +468,11 @@ namespace CastRightCatchInvManagement
                     var set = new HashSet<string>(
                         cols.Select(name => name.Trim()).Where(name => name.Length > 0),
                         StringComparer.OrdinalIgnoreCase);
+                    // First allowing group seeds the hide intersect.
                     if (hidden == null)
                         hidden = set;
+                    // A column stays hidden only when every allowing group hides it.
                     else
-                        // A column stays hidden only when every allowing group hides it.
                         hidden.IntersectWith(set);
                 }
 
@@ -458,10 +486,11 @@ namespace CastRightCatchInvManagement
             HashSet<string>? blockedMerge = null;
             foreach (var item in parsed)
             {
+                // First group seeds the blocked intersect.
                 if (blockedMerge == null)
                     blockedMerge = new HashSet<string>(item.Blocked, StringComparer.OrdinalIgnoreCase);
+                // A company stays blocked only when every group blocks it.
                 else
-                    // A company stays blocked only when every group blocks it.
                     blockedMerge.IntersectWith(item.Blocked);
             }
 
@@ -497,17 +526,21 @@ namespace CastRightCatchInvManagement
                     // $write / $hide / $block are handled below, not as table flags.
                     if (pair.Name.StartsWith('$'))
                         continue;
+                    // Explicit false on the user overlay denies the table.
                     if (pair.Value.ValueKind == JsonValueKind.False)
                         denied.Add(TableKey(pair.Name));
+                    // Explicit true on the user overlay re-allows a group-denied table.
                     else if (pair.Value.ValueKind == JsonValueKind.True)
                         denied.Remove(TableKey(pair.Name));
                 }
 
+                // User $write replaces group write mode for named tables.
                 if (root.TryGetProperty(WriteKey, out var write) && write.ValueKind == JsonValueKind.Object)
                 {
                     foreach (var pair in write.EnumerateObject())
                     {
                         string key = TableKey(pair.Name);
+                        // Overlay can mention a table the groups never listed.
                         if (!policies.TryGetValue(key, out var policy))
                         {
                             policy = new DataTablePolicy();
@@ -518,11 +551,13 @@ namespace CastRightCatchInvManagement
                     }
                 }
 
+                // User $hide replaces the group's hide list for named tables.
                 if (root.TryGetProperty(HideKey, out var hide) && hide.ValueKind == JsonValueKind.Object)
                 {
                     foreach (var pair in hide.EnumerateObject())
                     {
                         string key = TableKey(pair.Name);
+                        // Overlay can hide columns on a table the groups never listed.
                         if (!policies.TryGetValue(key, out var policy))
                         {
                             policy = new DataTablePolicy();
@@ -536,23 +571,27 @@ namespace CastRightCatchInvManagement
                         foreach (var item in pair.Value.EnumerateArray())
                         {
                             string name = item.GetString()?.Trim() ?? "";
+                            // Blank hide entries would match every column name.
                             if (name.Length > 0)
                                 policy.HideColumns.Add(name);
                         }
                     }
                 }
 
+                // User $block replaces the group's blocked-company list when present.
                 if (root.TryGetProperty(BlockKey, out var block) && block.ValueKind == JsonValueKind.Array)
                 {
                     blocked.Clear();
                     foreach (var item in block.EnumerateArray())
                     {
                         string name = item.GetString()?.Trim() ?? "";
+                        // Blank block entries would hide empty party fields.
                         if (name.Length > 0)
                             blocked.Add(name);
                     }
                 }
             }
+            // Bad overlay JSON must not wipe group access.
             catch
             {
                 // Bad overlay JSON must not wipe group access.
@@ -598,12 +637,15 @@ namespace CastRightCatchInvManagement
                 {
                     var basePolicy = basePolicies.TryGetValue(key, out var left) ? left : new DataTablePolicy();
                     var newPolicy = newPolicies.TryGetValue(key, out var right) ? right : new DataTablePolicy();
+                    // Store write mode only when it no longer matches the group.
                     if (basePolicy.Write != newPolicy.Write)
                         writeDiff[key] = newPolicy.Write;
+                    // Store hide columns only when the list no longer matches the group.
                     if (!SameNames(basePolicy.HideColumns, newPolicy.HideColumns))
                         hideDiff[key] = newPolicy.HideColumns;
                 }
 
+                // Omit $write when every table still uses the group mode.
                 if (writeDiff.Count > 0)
                 {
                     writer.WritePropertyName(WriteKey);
@@ -614,6 +656,7 @@ namespace CastRightCatchInvManagement
                     any = true;
                 }
 
+                // Omit $hide when every table still uses the group hide list.
                 if (hideDiff.Count > 0)
                 {
                     writer.WritePropertyName(HideKey);
@@ -624,6 +667,7 @@ namespace CastRightCatchInvManagement
                         writer.WriteStartArray();
                         foreach (var col in pair.Value)
                         {
+                            // Skip blank typed hide names.
                             if (col.Trim().Length > 0)
                                 writer.WriteStringValue(col.Trim());
                         }
@@ -635,12 +679,14 @@ namespace CastRightCatchInvManagement
                     any = true;
                 }
 
+                // Omit $block when the blocked-company list still matches the group.
                 if (!SameNames(baseBlocked, newBlocked))
                 {
                     writer.WritePropertyName(BlockKey);
                     writer.WriteStartArray();
                     foreach (var name in newBlocked)
                     {
+                        // Skip blank typed company names.
                         if (name.Trim().Length > 0)
                             writer.WriteStringValue(name.Trim());
                     }
@@ -682,6 +728,7 @@ namespace CastRightCatchInvManagement
                 writer.WriteStartObject();
                 foreach (var key in denied)
                 {
+                    // Blank keys would serialize as an unnamed false flag.
                     if (key.Length > 0)
                         writer.WriteBoolean(key, false);
                 }
@@ -700,6 +747,7 @@ namespace CastRightCatchInvManagement
                     writer.WriteStartArray();
                     foreach (var col in pair.Value.HideColumns)
                     {
+                        // Skip blank hide names so JSON stays a clean string array.
                         if (col.Trim().Length > 0)
                             writer.WriteStringValue(col.Trim());
                     }
@@ -714,6 +762,7 @@ namespace CastRightCatchInvManagement
                 foreach (var company in blocked)
                 {
                     string name = company.Trim();
+                    // Skip blank blocked-company names.
                     if (name.Length > 0)
                         writer.WriteStringValue(name);
                 }
@@ -744,25 +793,34 @@ namespace CastRightCatchInvManagement
         public static string TableKey(string fileOrKey)
         {
             fileOrKey = (fileOrKey ?? "").Trim();
+            // Purchases table and "purchases" key both map to the purchases policy.
             if (fileOrKey.Equals(DataFiles.PurchaseSales, StringComparison.OrdinalIgnoreCase) ||
                 fileOrKey.Equals(TableAccess.Purchases, StringComparison.OrdinalIgnoreCase))
                 return TableAccess.Purchases;
+            // Sales SQLite table name maps to the sales access key.
             if (fileOrKey.Equals(DataFiles.Sales, StringComparison.OrdinalIgnoreCase))
                 return TableAccess.Sales;
+            // Invoices SQLite table name maps to the invoices access key.
             if (fileOrKey.Equals(DataFiles.Invoices, StringComparison.OrdinalIgnoreCase))
                 return TableAccess.Invoices;
+            // Customers SQLite table name maps to the customers access key.
             if (fileOrKey.Equals(DataFiles.Customers, StringComparison.OrdinalIgnoreCase))
                 return TableAccess.Customers;
+            // Vendors SQLite table name maps to the vendors access key.
             if (fileOrKey.Equals(DataFiles.Vendors, StringComparison.OrdinalIgnoreCase))
                 return TableAccess.Vendors;
+            // Item codes table and "items" key both map to the items policy.
             if (fileOrKey.Equals(DataFiles.ItemCodes, StringComparison.OrdinalIgnoreCase) ||
                 fileOrKey.Equals(TableAccess.Items, StringComparison.OrdinalIgnoreCase))
                 return TableAccess.Items;
+            // Bank transactions table and "banking" key both map to the banking policy.
             if (fileOrKey.Equals(DataFiles.BankTransactions, StringComparison.OrdinalIgnoreCase) ||
                 fileOrKey.Equals(TableAccess.Banking, StringComparison.OrdinalIgnoreCase))
                 return TableAccess.Banking;
+            // Debits SQLite table name maps to the debits access key.
             if (fileOrKey.Equals(DataFiles.Debits, StringComparison.OrdinalIgnoreCase))
                 return TableAccess.Debits;
+            // Credits SQLite table name maps to the credits access key.
             if (fileOrKey.Equals(DataFiles.Credits, StringComparison.OrdinalIgnoreCase))
                 return TableAccess.Credits;
             return fileOrKey;
@@ -780,9 +838,11 @@ namespace CastRightCatchInvManagement
         public static DataWriteMode ParseMode(string? text)
         {
             text = (text ?? "").Trim();
+            // Stored "view" or UI "View only" both mean read-only.
             if (text.Equals("view", StringComparison.OrdinalIgnoreCase) ||
                 text.StartsWith("View", StringComparison.OrdinalIgnoreCase))
                 return DataWriteMode.View;
+            // Stored "confirm" or UI "Confirm first" both queue writes for Review.
             if (text.Equals("confirm", StringComparison.OrdinalIgnoreCase) ||
                 text.StartsWith("Confirm", StringComparison.OrdinalIgnoreCase))
                 return DataWriteMode.Confirm;

@@ -27,9 +27,10 @@ namespace CastRightCatchInvManagement
 
             AppLock.Changed += UpdateHeader;
 
-            // No shared folder yet: open Settings so the user can pick one.
+            // Shared folder exists: start on Home.
             if (AppLock.HasFolder())
                 Navigator.GoTo(AppPage.Dashboard);
+            // No folder yet: Settings is the only page that can pick one.
             else
                 Navigator.GoTo(AppPage.Settings);
 

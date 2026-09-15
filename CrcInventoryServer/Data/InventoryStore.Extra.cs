@@ -11,8 +11,8 @@ internal sealed partial class InventoryStore
         lock (_gate)
         {
             var list = new List<BankRowDto>();
-            using var db = Open();
-            using var cmd = db.CreateCommand();
+            using var db = Open(); // live database connection
+            using var cmd = db.CreateCommand(); // SQL command for the bank list
             cmd.CommandText =
                 "SELECT id, name, bank, last4, notes FROM bank_accounts ORDER BY name COLLATE NOCASE;";
             using var reader = cmd.Query(_engine);
@@ -162,7 +162,7 @@ internal sealed partial class InventoryStore
     public void SavePdf(string kind, string key, string fileName, byte[] content)
     {
         kind = (kind ?? "").Trim();
-        key = (key ?? "").Trim();
+        key = (key ?? "").Trim(); // document key (invoice number, PO, etc.)
         fileName = (fileName ?? "").Trim();
         // Incomplete keys or empty bytes would store a useless row.
         if (kind.Length == 0 || key.Length == 0 || fileName.Length == 0 || content.Length == 0)
@@ -194,7 +194,7 @@ internal sealed partial class InventoryStore
     public void DeletePdf(string kind, string key)
     {
         kind = (kind ?? "").Trim();
-        key = (key ?? "").Trim();
+        key = (key ?? "").Trim(); // document key (invoice number, PO, etc.)
         // Incomplete keys cannot identify a row.
         if (kind.Length == 0 || key.Length == 0)
             return;
@@ -214,7 +214,7 @@ internal sealed partial class InventoryStore
     public bool HasPdf(string kind, string key)
     {
         kind = (kind ?? "").Trim();
-        key = (key ?? "").Trim();
+        key = (key ?? "").Trim(); // document key (invoice number, PO, etc.)
         // Incomplete keys cannot identify a row.
         if (kind.Length == 0 || key.Length == 0)
             return false;
@@ -235,7 +235,7 @@ internal sealed partial class InventoryStore
     public PdfDto? TryGetPdf(string kind, string key)
     {
         kind = (kind ?? "").Trim();
-        key = (key ?? "").Trim();
+        key = (key ?? "").Trim(); // document key (invoice number, PO, etc.)
         // Incomplete keys cannot identify a row.
         if (kind.Length == 0 || key.Length == 0)
             return null;

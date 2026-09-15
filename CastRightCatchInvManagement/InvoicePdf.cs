@@ -71,6 +71,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Always keep one empty product line to type into.
             if (_lines.Count == 0)
                 AddLine(lockPrevious: false);
             RefreshLines();
@@ -99,6 +100,7 @@ namespace CastRightCatchInvManagement
             {
                 draft = PurchaseInvoiceImport.Read(bytes, fileName);
             }
+            // Unreadable files should not open Create Invoice with a half-parsed draft.
             catch (Exception ex)
             {
                 MessageBox.Show(ex.Message, "Import Invoice PDF", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -126,6 +128,7 @@ namespace CastRightCatchInvManagement
                 (InvoiceHasSale() && (!PrefillMatchesCustomer(prefill) || !InvoiceAlreadyHasPo(key))))
                 ResetDraft();
 
+            // Always keep one empty product line after a reset or first add.
             if (_lines.Count == 0)
                 AddLine(lockPrevious: false);
 
@@ -154,6 +157,7 @@ namespace CastRightCatchInvManagement
                 ResetDraft(received: true);
 
             SetReceivedMode(true);
+            // Always keep one empty product line after switching to received.
             if (_lines.Count == 0)
                 AddLine(lockPrevious: false);
 
@@ -162,6 +166,7 @@ namespace CastRightCatchInvManagement
                 prefill.VendorName,
                 prefill.VendorTerms,
                 prefill.ShipDate);
+            // Received invoices use the header box as PO #.
             if (key.Length > 0)
                 _soNo.Text = key;
 
@@ -235,6 +240,7 @@ namespace CastRightCatchInvManagement
 
                         AddRecordsInBatches(remaining, 0, error =>
                         {
+                            // Batch fill failed; do not store a half-built PDF.
                             if (error != null)
                             {
                                 done(error);
@@ -245,9 +251,9 @@ namespace CastRightCatchInvManagement
                         });
                     }));
                 }
+                // Store lookup errors must surface on the UI thread.
                 catch (Exception ex)
                 {
-                    // Store lookup errors must surface on the UI thread.
                     BeginInvoke(new Action(() =>
                     {
                         _busyAdding = false;
@@ -474,6 +480,7 @@ namespace CastRightCatchInvManagement
             if (lockPrevious)
             {
                 var open = _lines.LastOrDefault(line => !line.Locked);
+                // Reuse the trailing blank row instead of stacking empty lines.
                 if (open != null && !open.HasContent())
                 {
                     open.FocusPo();
@@ -497,8 +504,10 @@ namespace CastRightCatchInvManagement
                         CurrentPartyName(),
                         error =>
                         {
+                            // Lookup/mismatch errors stay on this page; null means the PO filled.
                             if (error != null)
                                 ToastAlert.Error(this, error);
+                            // Null error means the purchase PO filled this received invoice.
                             else
                                 ToastAlert.Success(this, "The information was added.");
                         });
@@ -511,8 +520,10 @@ namespace CastRightCatchInvManagement
                     CurrentPartyName(),
                     error =>
                     {
+                        // Issued invoices fill from sales; same toast contract as purchases.
                         if (error != null)
                             ToastAlert.Error(this, error);
+                        // Null error means the customer PO filled this issued invoice.
                         else
                             ToastAlert.Success(this, "The information was added.");
                     });
@@ -602,6 +613,7 @@ namespace CastRightCatchInvManagement
             {
                 for (int i = 0; i < _customer.Items.Count; i++)
                 {
+                    // Match the previous party by code so the combo does not jump to the first item.
                     if (_customer.Items[i] is CustomerChoice c &&
                         c.Code.Equals(current, StringComparison.OrdinalIgnoreCase))
                     {
@@ -616,6 +628,7 @@ namespace CastRightCatchInvManagement
             if (!_received && string.IsNullOrWhiteSpace(_salesRep.Text))
                 _salesRep.Text = OurContact();
 
+            // Freight combo is created with the footer; skip if BuildUi has not run yet.
             if (_freightCo != null)
                 VendorChoice.Fill(_freightCo);
             _orderHits = DataFiles.SalesOrderSuggestHits();
@@ -636,6 +649,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Selected party code, or the typed Cust/Vend ID when the combo has no pick.</summary>
         private string CurrentPartyCode()
         {
+            // Prefer the combo pick; typed Cust/Vend ID is the fallback.
             if (_customer.SelectedItem is CustomerChoice choice && choice.Code.Length > 0)
                 return choice.Code;
             return _customerCode.Text.Trim();
@@ -644,6 +658,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Selected party name, or the typed combo text when nothing is selected.</summary>
         private string CurrentPartyName()
         {
+            // Prefer the combo pick; typed text is used when the party is not in the list.
             if (_customer.SelectedItem is CustomerChoice choice)
                 return choice.Name;
             return _customer.Text.Trim();
@@ -675,12 +690,14 @@ namespace CastRightCatchInvManagement
         private bool InvoiceAlreadyHasPo(string key)
         {
             string want = DataFiles.NormalizePo(key);
+            // Blank keys cannot match a line and would look like "already on the invoice".
             if (want.Length == 0)
                 return false;
 
             foreach (var line in _lines)
             {
                 var data = line.GetLine();
+                // Normalized compare so "PO-1" and "po-1" count as the same invoice PO.
                 if (DataFiles.NormalizePo(data.PoNumber).Equals(want, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
@@ -693,8 +710,10 @@ namespace CastRightCatchInvManagement
         {
             string code = CurrentCustomerCode();
             string name = CurrentCustomerName();
+            // Codes are unique; prefer them over names.
             if (prefill.CustomerCode.Length > 0 && code.Length > 0)
                 return prefill.CustomerCode.Equals(code, StringComparison.OrdinalIgnoreCase);
+            // Fall back to name when either side has no customer code.
             if (prefill.CustomerName.Length > 0 && name.Length > 0)
                 return prefill.CustomerName.Equals(name, StringComparison.OrdinalIgnoreCase);
             return true;
@@ -708,6 +727,7 @@ namespace CastRightCatchInvManagement
             {
                 var data = line.GetLine();
                 string key = PoItemKey(data.PoNumber, data.ProductId);
+                // Empty identity is an unfinished row, not a used sale line.
                 if (key.Length > 0)
                     used.Add(key);
             }
@@ -736,12 +756,14 @@ namespace CastRightCatchInvManagement
         {
             RefreshLookups();
             string number = DataFiles.GetRecord(invoice, "Invoice #").Trim();
+            // Keep the stored invoice number so Save updates the same row.
             if (number.Length > 0)
                 _invoiceNo.Text = number;
 
             // Received invoices are vendor-issued; others fill the customer.
             if (_received || DataFiles.IsReceivedInvoice(invoice))
                 ApplyVendorFromPurchase(invoice);
+            // Issued invoices fill customer, sold-to, and ship-to from the sale.
             else
                 ApplyCustomerFromPurchase(invoice);
             ApplyStoredHeader(invoice);
@@ -755,10 +777,12 @@ namespace CastRightCatchInvManagement
             _invoiceNo.Text = draft.InvoiceNumber;
             _invoiceDate.Value = draft.InvoiceDate == DateTime.MinValue ? DateTime.Today : draft.InvoiceDate;
             _soNo.Text = draft.Received ? draft.PoNumber : draft.SoNumber;
+            // Received snapshots fill vendor as issuer; issued snapshots fill the customer.
             if (draft.Received)
             {
                 FillVendor(draft.VendorCode, draft.VendorName, draft.Terms, draft.ShipDate);
             }
+            // Issued snapshots fill customer, sold-to, and ship-to.
             else
             {
                 FillCustomer(draft.CustomerCode, draft.CustomerName, draft.Terms, "", draft.ShipTo);
@@ -766,16 +790,21 @@ namespace CastRightCatchInvManagement
             // Combo Text is needed when the party is not in the lookup list.
             if (!draft.Received && draft.CustomerName.Length > 0)
                 _customer.Text = draft.CustomerName;
+            // Received snapshots put the vendor name in the same combo.
             else if (draft.Received && draft.VendorName.Length > 0)
                 _customer.Text = draft.VendorName;
+            // Snapshot fields only overwrite when they have a value.
             if (draft.Terms.Length > 0)
                 _terms.Text = draft.Terms;
             _shipVia.Text = draft.ShipVia;
+            // Snapshot sales-rep only overwrites when it has a value.
             if (draft.SalesRep.Length > 0)
                 _salesRep.Text = draft.SalesRep;
             _shipDate.Value = draft.ShipDate == DateTime.MinValue ? DateTime.Today : draft.ShipDate;
+            // Snapshot Sold To only overwrites when it has a value.
             if (draft.SoldTo.Length > 0)
                 _soldTo.Text = draft.SoldTo;
+            // Snapshot Ship To only overwrites when it has a value.
             if (draft.ShipTo.Length > 0)
                 _shipTo.Text = draft.ShipTo;
             _discount.Text = MoneyField(draft.Discount);
@@ -783,6 +812,7 @@ namespace CastRightCatchInvManagement
             VendorChoice.Select(_freightCo, draft.FreightCompany);
             _tax.Text = MoneyField(draft.TaxRate);
             _taxPercent = draft.TaxIsPercent;
+            // Toggle exists after BuildUi; skip if this ran too early.
             if (_taxMode != null)
                 _taxMode.Text = _taxPercent ? "%" : "#";
 
@@ -809,6 +839,7 @@ namespace CastRightCatchInvManagement
         private void ApplyStoredHeader(Dictionary<string, string> invoice)
         {
             string invoiceDate = DataFiles.GetRecord(invoice, DataFiles.InvoiceDateColumn);
+            // Only overwrite the picker when the invoices row has a date.
             if (DateTime.TryParse(invoiceDate, out var dated))
                 _invoiceDate.Value = dated;
             string terms = DataFiles.GetRecord(invoice, "Terms");
@@ -816,31 +847,40 @@ namespace CastRightCatchInvManagement
             if (terms.Length > 0)
                 _terms.Text = terms;
             string via = DataFiles.GetRecord(invoice, "Ship Via");
+            // Same: only overwrite when the stored row has a value.
             if (via.Length > 0)
                 _shipVia.Text = via;
             string rep = DataFiles.GetRecord(invoice, "Sales Rep");
+            // Empty stored cells should not wipe a value already on the form.
             if (rep.Length > 0)
                 _salesRep.Text = rep;
             string sold = DataFiles.GetRecord(invoice, "Sold To");
+            // Empty Sold To should not wipe a filled address block.
             if (sold.Length > 0)
                 _soldTo.Text = sold;
             string shipTo = DataFiles.GetRecord(invoice, "Ship To");
+            // Empty Ship To should not wipe a filled address block.
             if (shipTo.Length > 0)
                 _shipTo.Text = shipTo;
             string discount = DataFiles.GetRecord(invoice, "Discount");
+            // Empty discount should not overwrite a typed amount with blank.
             if (discount.Length > 0)
                 _discount.Text = discount;
             string freight = DataFiles.GetRecord(invoice, "Freight");
+            // Empty freight should not overwrite a typed amount with blank.
             if (freight.Length > 0)
                 _freight.Text = freight;
             string freightCo = DataFiles.GetRecordAny(invoice, DataFiles.FreightCompanyColumn, "Forwarder", "Logistics");
+            // Empty freight company should not clear a combo pick.
             if (freightCo.Length > 0)
                 VendorChoice.Select(_freightCo, freightCo);
             string tax = DataFiles.GetRecord(invoice, "Tax");
+            // Empty tax should not overwrite a typed amount with blank.
             if (tax.Length > 0)
                 _tax.Text = tax;
             string mode = DataFiles.GetRecord(invoice, DataFiles.InvoiceTaxModeColumn);
             _taxPercent = mode.Trim() == "%";
+            // Toggle exists after BuildUi; skip if this ran too early.
             if (_taxMode != null)
                 _taxMode.Text = _taxPercent ? "%" : "#";
         }
@@ -853,6 +893,7 @@ namespace CastRightCatchInvManagement
         private void FinishCreatedPdf(Action<string?> done)
         {
             var draft = CollectDraft();
+            // A PDF with no product lines is not a usable invoice.
             if (draft.Lines.Count == 0)
             {
                 done("No lines were found for this invoice. Add them here, then Create Invoice.");
@@ -868,6 +909,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Received invoices need a vendor before the PDF can be stored.
             if (draft.Received &&
                 string.IsNullOrWhiteSpace(draft.VendorName) &&
                 string.IsNullOrWhiteSpace(draft.VendorCode))
@@ -882,6 +924,7 @@ namespace CastRightCatchInvManagement
                 ResetDraft();
                 done(null);
             }
+            // Disk/DB failures should leave the form so the user can retry.
             catch (Exception ex)
             {
                 done(ex.Message);
@@ -906,9 +949,10 @@ namespace CastRightCatchInvManagement
         private void ApplyOrderHit(LookupSuggest.Hit hit)
         {
             _soNo.Text = hit.Code;
-            // Extra is "PO" for purchase suggestions and "SO" for sales orders.
+            // PO pick switches this form to a received (vendor) invoice and fills purchase lines.
             if (hit.Extra.Equals("PO", StringComparison.OrdinalIgnoreCase))
                 FillFromPurchaseOrder(hit.Code);
+            // SO pick fills an issued (customer) invoice from that sales order.
             else
                 FillFromSalesOrder(hit.Code);
         }
@@ -921,6 +965,7 @@ namespace CastRightCatchInvManagement
                 return;
 
             string key = _soNo.Text.Trim();
+            // An empty SO/PO box is not a fill request.
             if (key.Length == 0)
                 return;
             // Leave should not reload the same number we just filled.
@@ -932,8 +977,10 @@ namespace CastRightCatchInvManagement
             // Ambiguous numbers wait for an explicit suggestion pick.
             if (so && po)
                 return;
+            // Unique PO pick switches to received and fills purchase lines.
             if (po)
                 FillFromPurchaseOrder(key);
+            // Unique SO pick fills an issued invoice from that sales order.
             else if (so)
                 FillFromSalesOrder(key);
         }
@@ -945,8 +992,10 @@ namespace CastRightCatchInvManagement
             string kind = purchase ? "PO" : "SO";
             foreach (var hit in _orderHits)
             {
+                // Suggestions mix SO and PO; skip the other kind.
                 if (!hit.Extra.Equals(kind, StringComparison.OrdinalIgnoreCase))
                     continue;
+                // Normalized compare so typed punctuation still matches the suggestion.
                 if (DataFiles.NormalizePo(hit.Code).Equals(needle, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
@@ -957,6 +1006,7 @@ namespace CastRightCatchInvManagement
         /// <summary>True when this SO/PO was the last number filled, optionally matching purchase vs sale.</summary>
         private bool AlreadyFilled(string key, bool? purchase)
         {
+            // A different number is never "already filled".
             if (!key.Equals(_filledKey, StringComparison.OrdinalIgnoreCase))
                 return false;
             return purchase == null || purchase == _filledPurchase;
@@ -965,18 +1015,21 @@ namespace CastRightCatchInvManagement
         /// <summary>Replace the draft with every sale line on that sales order, plus customer and ship-to.</summary>
         private void FillFromSalesOrder(string so)
         {
+            // Empty SO box is not a fill request.
             if (string.IsNullOrWhiteSpace(so))
                 return;
+            // Leave/pick should not reload the same issued invoice we just filled.
             if (AlreadyFilled(so, purchase: false))
                 return;
 
             var existing = DataFiles.FindInvoiceByOrder(so, received: false);
-            // Reopen the stored invoice instead of creating a second one for the same SO.
+            // Matching SO opens Edit Invoice; Save Invoice replaces the stored PDF.
             if (existing != null)
             {
                 ResetDraft();
                 BeginEdit(existing);
             }
+            // A different draft (or a received invoice) cannot share this SO.
             else if (InvoiceHasSale() || _received)
             {
                 // A different draft (or a received invoice) cannot share this SO.
@@ -993,8 +1046,10 @@ namespace CastRightCatchInvManagement
                 "",
                 error =>
                 {
+                    // Lookup errors stay here; success names Edit Invoice when a matching SO was opened.
                     if (error != null)
                         ToastAlert.Error(this, error);
+                    // Success names Edit Invoice when a matching SO was opened.
                     else
                         ToastAlert.Success(this, _editing
                             ? "Editing invoice " + _invoiceNo.Text.Trim() + "."
@@ -1006,21 +1061,24 @@ namespace CastRightCatchInvManagement
         /// <summary>Switch to a received invoice and fill every purchase line on that PO.</summary>
         private void FillFromPurchaseOrder(string po)
         {
+            // Empty PO box is not a fill request.
             if (string.IsNullOrWhiteSpace(po))
                 return;
+            // Leave/pick should not reload the same received invoice we just filled.
             if (AlreadyFilled(po, purchase: true))
                 return;
 
             var existing = DataFiles.FindInvoiceByOrder(po, received: true);
-            // Reopen the stored received invoice instead of creating a second one for the same PO.
+            // Matching PO opens Edit Invoice (received); Save Invoice replaces the stored PDF.
             if (existing != null)
             {
                 ResetDraft(received: true);
                 BeginEdit(existing);
             }
+            // An issued draft cannot share this vendor PO; switch to received.
             else if (InvoiceHasSale() || !_received)
             {
-                // An issued draft cannot share this vendor PO.
+                // An issued draft cannot share this vendor PO; switch to received.
                 ResetDraft(received: true);
             }
 
@@ -1034,8 +1092,10 @@ namespace CastRightCatchInvManagement
                 "",
                 error =>
                 {
+                    // Lookup errors stay here; success names Edit Invoice when a matching PO was opened.
                     if (error != null)
                         ToastAlert.Error(this, error);
+                    // Success names Edit Invoice when a matching PO was opened.
                     else
                         ToastAlert.Success(this, _editing
                             ? "Editing invoice " + _invoiceNo.Text.Trim() + "."
@@ -1052,12 +1112,14 @@ namespace CastRightCatchInvManagement
             Action<string?> done,
             bool salesOrderOnly = false)
         {
+            // Lookup is keyed by customer PO or SO #.
             if (string.IsNullOrWhiteSpace(key))
             {
                 done("This sale has no PO or SO number.");
                 return;
             }
 
+            // A second add would race the first background lookup.
             if (_busyAdding)
             {
                 done("Still adding lines to the invoice.");
@@ -1096,6 +1158,7 @@ namespace CastRightCatchInvManagement
                             return;
                         }
 
+                        // No matching sale rows for that SO/PO.
                         if (sources.Count == 0)
                         {
                             _busyAdding = false;
@@ -1105,6 +1168,7 @@ namespace CastRightCatchInvManagement
                             return;
                         }
 
+                        // Every matching sale line is already on this invoice.
                         if (remaining.Count == 0)
                         {
                             _busyAdding = false;
@@ -1117,6 +1181,7 @@ namespace CastRightCatchInvManagement
                         AddRecordsInBatches(remaining, 0, done);
                     }));
                 }
+                // Store lookup errors must surface on the UI thread.
                 catch (Exception ex)
                 {
                     BeginInvoke(new Action(() =>
@@ -1138,12 +1203,14 @@ namespace CastRightCatchInvManagement
             Action<string?> done,
             bool allowShort = false)
         {
+            // Lookup is keyed by vendor PO #.
             if (string.IsNullOrWhiteSpace(key))
             {
                 done("This purchase has no PO number.");
                 return;
             }
 
+            // A second add would race the first background lookup.
             if (_busyAdding)
             {
                 done("Still adding lines to the invoice.");
@@ -1180,6 +1247,7 @@ namespace CastRightCatchInvManagement
                             return;
                         }
 
+                        // No matching purchase rows for that PO.
                         if (sources.Count == 0)
                         {
                             _busyAdding = false;
@@ -1187,6 +1255,7 @@ namespace CastRightCatchInvManagement
                             return;
                         }
 
+                        // Every matching purchase line is already on this invoice.
                         if (remaining.Count == 0)
                         {
                             _busyAdding = false;
@@ -1197,6 +1266,7 @@ namespace CastRightCatchInvManagement
                         AddRecordsInBatches(remaining, 0, done);
                     }));
                 }
+                // Store lookup errors must surface on the UI thread.
                 catch (Exception ex)
                 {
                     BeginInvoke(new Action(() =>
@@ -1226,8 +1296,10 @@ namespace CastRightCatchInvManagement
                     // Header (party, ship-to, freight) comes from the first remaining row.
                     if (i == 0)
                     {
+                        // Received invoices fill vendor as issuer; issued invoices fill the customer.
                         if (_received)
                             ApplyVendorFromPurchase(sources[i]);
+                        // Issued invoices fill customer, sold-to, and ship-to from the sale.
                         else
                             ApplyCustomerFromPurchase(sources[i]);
                         SuggestFreightCompany(sources[i]);
@@ -1306,6 +1378,7 @@ namespace CastRightCatchInvManagement
                 _soldTo.Text = DataFiles.CompanyAddressBlock();
                 _shipTo.Text = (AppState.Address ?? "").Trim();
             }
+            // Issued invoices start with a blank sold-to/ship-to until a customer is picked.
             else
             {
                 _soldTo.Text = "";
@@ -1316,6 +1389,7 @@ namespace CastRightCatchInvManagement
             VendorChoice.Select(_freightCo, "");
             _tax.Text = "";
             _taxPercent = false;
+            // Toggle exists after BuildUi; skip if this ran too early.
             if (_taxMode != null)
                 _taxMode.Text = "#";
             AddLine(lockPrevious: false);
@@ -1334,8 +1408,10 @@ namespace CastRightCatchInvManagement
         private void SetEditMode(bool editing)
         {
             _editing = editing;
+            // Leaving edit mode drops the stored invoice # so the next save inserts.
             if (!editing)
                 _editInvoice = "";
+            // Save caption switches to Save Invoice while editing an existing number.
             if (_save != null)
                 _save.Text = editing ? "Save Invoice" : "Create Invoice";
             RefreshHeading();
@@ -1344,10 +1420,13 @@ namespace CastRightCatchInvManagement
         /// <summary>Update the page title for issued vs received and new vs edit.</summary>
         private void RefreshHeading()
         {
+            // Heading is created with the header card; skip if this ran too early.
             if (_heading == null)
                 return;
+            // Edit vs new, and received vs issued, each need a distinct title.
             if (_editing)
                 _heading.Text = _received ? "Edit received invoice" : "Edit Invoice";
+            // New drafts use Received invoice vs Invoice.
             else
                 _heading.Text = _received ? "Received invoice" : "Invoice";
         }
@@ -1357,14 +1436,19 @@ namespace CastRightCatchInvManagement
         {
             _received = received;
             RefreshHeading();
+            // Captions are created with the header; skip if this ran too early.
             if (_soCaption != null)
                 _soCaption.Text = received ? "PO #" : "SO / PO #";
+            // Party combo is vendor on received invoices, customer on issued ones.
             if (_partyCaption != null)
                 _partyCaption.Text = received ? "VENDOR" : "CUSTOMER";
+            // Same swap for the code caption next to the combo.
             if (_partyCodeCaption != null)
                 _partyCodeCaption.Text = received ? "VEND ID" : "CUST ID";
+            // Received invoices use CONTACT; issued invoices use SALES REP.
             if (_salesRepCaption != null)
                 _salesRepCaption.Text = received ? "CONTACT" : "SALES REP";
+            // Hint text is created with the lines card; skip if this ran too early.
             if (_linesHint != null)
             {
                 _linesHint.Text = received
@@ -1380,8 +1464,10 @@ namespace CastRightCatchInvManagement
             if (_loadingCustomer || _customer.SelectedItem is not CustomerChoice choice)
                 return;
 
+            // Received mode treats the combo as vendors; issued mode treats it as customers.
             if (_received)
                 FillVendor(choice.Code, choice.Name, choice.Terms, null);
+            // Issued mode treats the combo as customers.
             else
                 FillCustomer(choice.Code, choice.Name, choice.Terms, choice.Contact, choice.Address);
         }
@@ -1404,10 +1490,12 @@ namespace CastRightCatchInvManagement
             CustomerChoice? match = null;
             for (int i = 0; i < _customer.Items.Count; i++)
             {
+                // Skip combo items that are not vendor/customer records.
                 if (_customer.Items[i] is not CustomerChoice choice)
                     continue;
                 bool byCode = code.Length > 0 && choice.Code.Equals(code, StringComparison.OrdinalIgnoreCase);
                 bool byName = name.Length > 0 && choice.Name.Equals(name, StringComparison.OrdinalIgnoreCase);
+                // Skip vendors that match neither the purchase's code nor name.
                 if (!byCode && !byName)
                     continue;
                 match = choice;
@@ -1417,8 +1505,10 @@ namespace CastRightCatchInvManagement
                 break;
             }
 
+            // Prefer the purchase/PDF vendor code; fall back to the matched record.
             if (code.Length > 0)
                 _customerCode.Text = code;
+            // No code on the purchase/PDF: use the matched vendor record.
             else if (match != null)
                 _customerCode.Text = match.Code;
 
@@ -1426,8 +1516,10 @@ namespace CastRightCatchInvManagement
             if (match == null && name.Length > 0)
                 _customer.Text = name;
 
+            // PDF/purchase terms win; otherwise use the vendor-record default.
             if (terms.Length > 0)
                 _terms.Text = terms;
+            // No terms on the purchase/PDF: use the vendor-record default.
             else if (match != null && match.Terms.Length > 0)
                 _terms.Text = match.Terms;
 
@@ -1435,6 +1527,7 @@ namespace CastRightCatchInvManagement
             string shipTo = (AppState.Address ?? "").Trim();
             _shipTo.Text = shipTo.Length > 0 ? shipTo : _soldTo.Text;
 
+            // Only overwrite the picker when the purchase actually has a ship/arrival date.
             if (shipDate != null)
                 _shipDate.Value = shipDate.Value;
 
@@ -1447,8 +1540,10 @@ namespace CastRightCatchInvManagement
         {
             string code = CurrentPartyCode();
             string name = CurrentPartyName();
+            // Codes are unique; prefer them over names.
             if (prefill.VendorCode.Length > 0 && code.Length > 0)
                 return prefill.VendorCode.Equals(code, StringComparison.OrdinalIgnoreCase);
+            // Fall back to name when either side has no vendor code.
             if (prefill.VendorName.Length > 0 && name.Length > 0)
                 return prefill.VendorName.Equals(name, StringComparison.OrdinalIgnoreCase);
             return true;
@@ -1470,11 +1565,13 @@ namespace CastRightCatchInvManagement
             CustomerChoice? match = null;
             for (int i = 0; i < _customer.Items.Count; i++)
             {
+                // Skip combo items that are not customer records.
                 if (_customer.Items[i] is not CustomerChoice choice)
                     continue;
 
                 bool byCode = code.Length > 0 && choice.Code.Equals(code, StringComparison.OrdinalIgnoreCase);
                 bool byName = name.Length > 0 && choice.Name.Equals(name, StringComparison.OrdinalIgnoreCase);
+                // Skip customers that match neither the sale's code nor name.
                 if (!byCode && !byName)
                     continue;
 
@@ -1495,17 +1592,21 @@ namespace CastRightCatchInvManagement
                     match.Contact,
                     match.Address);
             }
+            // Unknown sales still get code/name from the sale row itself.
             else
             {
                 FillCustomer(code, name, terms, contact, "");
+                // Combo Text is needed when the customer is not in the lookup list.
                 if (name.Length > 0)
                     _customer.Text = name;
             }
 
+            // Keep a generated SO # when the sale has not been assigned one yet.
             if (so.Length > 0)
                 _soNo.Text = so;
 
             string ship = DataFiles.GetRecordAny(record, "Ship Date");
+            // Only overwrite the picker when the sale actually has a ship date.
             if (DateTime.TryParse(ship, out var shipDate))
                 _shipDate.Value = shipDate;
         }
@@ -1513,16 +1614,21 @@ namespace CastRightCatchInvManagement
         /// <summary>Write customer identity, sold-to, and ship-to from a sale or lookup pick.</summary>
         private void FillCustomer(string code, string name, string terms, string contact, string address)
         {
+            // Customer code is the lookup key; always write when the sale has one.
             if (code.Length > 0)
                 _customerCode.Text = code;
+            // Empty terms should not wipe a value already on the form.
             if (terms.Length > 0)
                 _terms.Text = terms;
 
             var sold = new List<string>();
+            // Sold To is name then contact; skip blanks so the block stays tight.
             if (name.Length > 0)
                 sold.Add(name);
+            // Contact is the second Sold To line when the customer record has one.
             if (contact.Length > 0)
                 sold.Add(contact);
+            // Join only when at least one Sold To piece was found.
             if (sold.Count > 0)
                 _soldTo.Text = string.Join(Environment.NewLine, sold);
 
@@ -1595,6 +1701,7 @@ namespace CastRightCatchInvManagement
             }
 
             var draft = CollectDraft();
+            // Invoice # is the document key for the PDF and the invoices row.
             if (string.IsNullOrWhiteSpace(draft.InvoiceNumber))
             {
                 MessageBox.Show("Enter an invoice number.", "Invoice", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1610,6 +1717,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Received invoices are billed from a vendor.
             if (draft.Received &&
                 string.IsNullOrWhiteSpace(draft.VendorName) &&
                 string.IsNullOrWhiteSpace(draft.VendorCode))
@@ -1639,6 +1747,7 @@ namespace CastRightCatchInvManagement
                     : $"Invoice {draft.InvoiceNumber} was saved.");
                 ResetDraft();
             }
+            // Disk/DB failures should leave the form so the user can retry.
             catch (Exception ex)
             {
                 MessageBox.Show(ex.Message, "Invoice Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -1686,8 +1795,10 @@ namespace CastRightCatchInvManagement
                 return;
 
             string po = (draft.PoNumber ?? "").Trim();
+            // Fall back to the first line PO when the header box was left blank.
             if (po.Length == 0)
                 po = draft.Lines.Select(line => line.PoNumber.Trim()).FirstOrDefault(v => v.Length > 0) ?? "";
+            // Still blank: mint a new CRC PO so the vendor invoice has a key.
             if (po.Length == 0)
                 po = DataFiles.NextPurchasePo();
 
@@ -1730,23 +1841,25 @@ namespace CastRightCatchInvManagement
             {
                 PurchaseDocument.SaveFromPo(po);
             }
+            // Keep the invoice even if the purchase PDF cannot be written.
             catch
             {
-                // keep the invoice even if the purchase PDF cannot be written
             }
 
+            // Attach the imported vendor PDF to this PO when one was picked.
             if (_importPdf is { Length: > 0 })
             {
                 try
                 {
                     PurchaseInvoiceImport.AttachToPo(po, _importName, _importPdf);
                 }
+                // Source PDF is already stored on the invoice; a second copy is optional.
                 catch
                 {
-                    // source PDF is already stored on the invoice
                 }
             }
 
+            // Remember the minted/found PO on the draft so the invoices row stores it.
             if (string.IsNullOrWhiteSpace(draft.PoNumber))
                 draft.PoNumber = po;
         }
@@ -1754,6 +1867,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Pick an invoice PDF on this page and fill the draft after confirmation.</summary>
         private void ImportPdf()
         {
+            // Cancel leaves the current draft unchanged.
             if (!PurchaseInvoiceImport.TryPick(this, out string fileName, out byte[] bytes))
                 return;
 
@@ -1762,12 +1876,14 @@ namespace CastRightCatchInvManagement
             {
                 draft = PurchaseInvoiceImport.Read(bytes, fileName);
             }
+            // Unreadable files should not wipe the draft already on this page.
             catch (Exception ex)
             {
                 ToastAlert.Error(this, ex.Message);
                 return;
             }
 
+            // Scans and unreadable PDFs still ask before attaching a blank draft.
             if (!ConfirmImport(draft))
                 return;
 
@@ -1778,10 +1894,12 @@ namespace CastRightCatchInvManagement
         private void ApplyImport(PurchaseInvoiceDraft draft)
         {
             bool incoming;
+            // Parser already decided incoming vs issued; trust that unless it was unsure.
             if (draft.Incoming is bool known)
             {
                 incoming = known;
             }
+            // Parser was unsure: ask incoming vs issued before filling.
             else
             {
                 var ask = MessageBox.Show(
@@ -1789,6 +1907,7 @@ namespace CastRightCatchInvManagement
                     "Import Invoice PDF",
                     MessageBoxButtons.YesNoCancel,
                     MessageBoxIcon.Question);
+                // Cancel leaves the current draft unchanged.
                 if (ask == DialogResult.Cancel)
                     return;
                 incoming = ask == DialogResult.Yes;
@@ -1798,34 +1917,47 @@ namespace CastRightCatchInvManagement
             _importPdf = draft.Pdf;
             _importName = draft.FileName;
 
+            // Parsed header fields only overwrite when they have a value.
             if (draft.InvoiceNumber.Length > 0)
                 _invoiceNo.Text = draft.InvoiceNumber;
+            // Parsed invoice date only overwrites when the PDF had one.
             if (draft.InvoiceDate != null)
                 _invoiceDate.Value = draft.InvoiceDate.Value.Date;
+            // Parsed ship date only overwrites when the PDF had one.
             if (draft.ShipDate != null)
                 _shipDate.Value = draft.ShipDate.Value.Date;
+            // No ship date on the PDF: use invoice date so the picker is not left at today by accident.
             else if (draft.InvoiceDate != null)
                 _shipDate.Value = draft.InvoiceDate.Value.Date;
+            // Parsed terms only overwrite when the PDF named them.
             if (draft.Terms.Length > 0)
                 _terms.Text = draft.Terms;
 
+            // Incoming PDFs are vendor invoices we received.
             if (incoming)
             {
                 FillVendor(draft.VendorCode, draft.VendorName, draft.Terms, draft.ShipDate);
+                // Incoming PDFs put the vendor PO in the header PO box.
                 if (draft.Po.Length > 0)
                     _soNo.Text = draft.Po;
+                // Combo Text is needed when the vendor is not in the lookup list.
                 if (draft.VendorName.Length > 0 && string.IsNullOrWhiteSpace(_customer.Text))
                     _customer.Text = draft.VendorName;
             }
+            // Outgoing PDFs are invoices we issued to a customer.
             else
             {
                 FillCustomer(draft.CustomerCode, draft.CustomerName, draft.Terms, "", draft.ShipTo);
+                // Combo Text is needed when the customer is not in the lookup list.
                 if (draft.CustomerName.Length > 0)
                     _customer.Text = draft.CustomerName;
+                // Outgoing PDFs put the sales-order number in the header SO box.
                 if (draft.SoNumber.Length > 0)
                     _soNo.Text = draft.SoNumber;
+                // Parsed Sold To only overwrites when the PDF had an address block.
                 if (draft.SoldTo.Length > 0)
                     _soldTo.Text = draft.SoldTo;
+                // Parsed Ship To only overwrites when the PDF had an address block.
                 if (draft.ShipTo.Length > 0)
                     _shipTo.Text = draft.ShipTo;
             }
@@ -1856,6 +1988,7 @@ namespace CastRightCatchInvManagement
                 });
             }
 
+            // Always keep one empty product line under imported rows.
             if (_lines.Count == 0)
                 AddLine(lockPrevious: false);
             UpdateTotals();
@@ -1877,6 +2010,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Ask before attaching an unreadable or scan-only PDF as a blank draft.</summary>
         private static bool ConfirmImport(PurchaseInvoiceDraft draft)
         {
+            // Parse errors still offer to attach the file as a blank draft.
             if (draft.Error is { Length: > 0 })
             {
                 return MessageBox.Show(
@@ -1901,6 +2035,7 @@ namespace CastRightCatchInvManagement
         private static DateTime DueDate(DateTime ship, string terms)
         {
             var match = System.Text.RegularExpressions.Regex.Match(terms ?? "", @"\d+");
+            // NET 15 / NET 30: use the number of days from terms when it parses.
             if (match.Success && int.TryParse(match.Value, out int days))
                 return ship.AddDays(days);
             return ship.AddDays(15);
@@ -1909,6 +2044,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Fill Freight Co from the source row when the combo is still empty.</summary>
         private void SuggestFreightCompany(Dictionary<string, string> record)
         {
+            // Keep a freight company already chosen on this invoice.
             if (VendorChoice.TextOf(_freightCo).Length > 0)
                 return;
             string company = DataFiles.GetRecordAny(
@@ -1916,6 +2052,7 @@ namespace CastRightCatchInvManagement
                 DataFiles.FreightCompanyColumn,
                 "Forwarder",
                 "Logistics");
+            // Empty source values should not clear the combo.
             if (company.Length > 0)
                 VendorChoice.Select(_freightCo, company);
         }
@@ -2083,6 +2220,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Issuer printed on the PDF: our company for issued invoices, the vendor when received.</summary>
         private (string Name, string Address, string Phone) CurrentIssuer()
         {
+            // Issued invoices print our company as the issuer.
             if (!_received)
             {
                 return (
@@ -2095,6 +2233,7 @@ namespace CastRightCatchInvManagement
             string name = CurrentPartyName();
             foreach (var record in DataFiles.VisibleRecords(DataFiles.Vendors))
             {
+                // Skip vendors that are not the party on this received invoice.
                 if (!DataFiles.MatchesVendor(record, code, name))
                     continue;
                 return (
@@ -2116,12 +2255,14 @@ namespace CastRightCatchInvManagement
         /// <summary>Vendor contact name or phone, skipping a contact that is just the company name.</summary>
         private static string VendorContact(string code, string name, string? known)
         {
+            // Prefer a real contact name; skip when the "contact" is just the company name.
             if (!string.IsNullOrWhiteSpace(known) &&
                 !known.Equals(name, StringComparison.OrdinalIgnoreCase))
                 return known.Trim();
 
             foreach (var record in DataFiles.VisibleRecords(DataFiles.Vendors))
             {
+                // Skip vendors that are not this invoice's party.
                 if (!DataFiles.MatchesVendor(record, code, name))
                     continue;
                 return FirstNonEmpty(

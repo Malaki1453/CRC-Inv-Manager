@@ -82,6 +82,7 @@ namespace CastRightCatchInvManagement
             {
                 SqliteInventory.ApplyAdminSmtp();
             }
+            // Send with whatever is already in memory if the database SMTP row cannot be read.
             catch
             {
                 // send with whatever is already in memory
@@ -148,6 +149,7 @@ namespace CastRightCatchInvManagement
                 client.Send(message);
                 return true;
             }
+            // Map SMTP codes to Admin-facing steps instead of a raw exception.
             catch (Exception ex)
             {
                 // Map SMTP codes to Admin-facing steps instead of a raw exception.

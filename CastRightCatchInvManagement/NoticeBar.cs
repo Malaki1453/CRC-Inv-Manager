@@ -70,6 +70,7 @@ namespace CastRightCatchInvManagement
 
             _timer.Stop();
             _timer.Dispose();
+            // Host is null if Show never attached this toast.
             if (_host != null)
                 _host.Resize -= OnHostResize;
             Parent?.Controls.Remove(this);

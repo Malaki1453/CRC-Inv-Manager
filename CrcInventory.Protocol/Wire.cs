@@ -17,6 +17,7 @@ public static class Wire
     /// <summary>Serializes <paramref name="frame"/> to JSON and writes the 4-byte length plus payload.</summary>
     public static async Task WriteAsync(Stream stream, object frame, CancellationToken cancel = default)
     {
+        // frame is the WireRequest/WireResponse envelope; json is its UTF-8 payload.
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(frame, JsonWire.Options);
         // Refuse to send a frame that the peer would reject as oversized.
         if (json.Length > MaxFrameBytes)

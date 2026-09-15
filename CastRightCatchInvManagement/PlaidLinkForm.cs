@@ -49,6 +49,7 @@ namespace CastRightCatchInvManagement
                 };
                 _web.NavigateToString(BuildHtml(_linkToken));
             }
+            // WebView2 missing or blocked — cancel so Connect bank can report the error.
             catch (Exception ex)
             {
                 // WebView2 missing or blocked — cancel so Connect bank can report the error.
@@ -97,6 +98,7 @@ namespace CastRightCatchInvManagement
                 DialogResult = PublicToken.Length > 0 ? DialogResult.OK : DialogResult.Cancel;
                 Close();
             }
+            // Bad JSON from the page must not leave a half-connected bank.
             catch
             {
                 // Bad JSON from the page must not leave a half-connected bank.
