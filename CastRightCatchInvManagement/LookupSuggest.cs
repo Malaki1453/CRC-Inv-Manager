@@ -67,6 +67,7 @@ namespace CastRightCatchInvManagement
                 Height = 8
             };
             _box.TextChanged += (_, _) => Filter();
+            _box.PreviewKeyDown += OnPreviewKeyDown;
             _box.KeyDown += OnKeyDown;
             _box.Leave += (_, _) =>
             {
@@ -154,7 +155,14 @@ namespace CastRightCatchInvManagement
             return 2;
         }
 
-        /// <summary>Arrow keys move the highlight; Enter picks; Escape closes without changing the box.</summary>
+        /// <summary>Tab is a dialog key; mark it as input so KeyDown can accept the suggestion.</summary>
+        private void OnPreviewKeyDown(object? sender, PreviewKeyDownEventArgs e)
+        {
+            if (e.KeyCode == Keys.Tab)
+                e.IsInputKey = true;
+        }
+
+        /// <summary>Arrow keys move the highlight; Enter or Tab picks; Escape closes without changing the box.</summary>
         private void OnKeyDown(object? sender, KeyEventArgs e)
         {
             // Escape dismisses suggestions without applying a hit.
@@ -190,6 +198,18 @@ namespace CastRightCatchInvManagement
             {
                 PickSelected();
                 e.SuppressKeyPress = true;
+                return;
+            }
+
+            // Tab accepts the highlighted hit (same as Enter), then moves to the next field.
+            if (e.KeyCode == Keys.Tab)
+            {
+                if (!_list.Visible)
+                    Filter();
+                if (_list.Visible)
+                    PickSelected();
+                e.SuppressKeyPress = true;
+                _box.FindForm()?.SelectNextControl(_box, !e.Shift, true, true, true);
             }
         }
 

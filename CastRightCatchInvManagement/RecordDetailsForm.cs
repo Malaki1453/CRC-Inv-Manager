@@ -476,7 +476,7 @@ namespace CastRightCatchInvManagement
                     _lots[key] = snap;
                 }
 
-                snap.Purchased += volume;
+                snap.Purchased += Qty(volume);
                 // Keep the vendor from the first purchase on this PO.
                 if (snap.Vendor.Length == 0)
                     snap.Vendor = vendor;
@@ -508,13 +508,19 @@ namespace CastRightCatchInvManagement
                     return false;
 
                 firstSale = snap.Sold == 0;
+                volume = Qty(volume);
                 snap.Sold += volume;
-                string so = soNumber.Trim();
-                if (so.Length == 0)
-                    so = "—";
-                if (!snap.SalesBySo.ContainsKey(so))
-                    snap.SalesBySo[so] = 0;
-                snap.SalesBySo[so] += volume;
+                // Zero-pound lines are noise and should not appear in the expand list.
+                if (volume != 0)
+                {
+                    string so = (soNumber ?? "").Trim();
+                    // A volume-looking SO # is leftover float text, not an order number.
+                    if (so.Length == 0 || LooksLikeFloatDust(so))
+                        so = "—";
+                    if (!snap.SalesBySo.ContainsKey(so))
+                        snap.SalesBySo[so] = 0;
+                    snap.SalesBySo[so] += volume;
+                }
             }
 
             QueueLotsPaint(immediate: firstSale, done: false);
@@ -625,18 +631,21 @@ namespace CastRightCatchInvManagement
                 ExpandLotSales(key);
         }
 
-        /// <summary>Insert SO # : lbs rows under the purchase lot.</summary>
+        /// <summary>Insert sale rows under the purchase lot: SO # in Lot, vendor in Vendor, lbs in Sold.</summary>
         private void ExpandLotSales(string key)
         {
             if (_lotsGrid == null || !_lotRows.TryGetValue(key, out int parent) || parent < 0)
                 return;
             CollapseLotSales(key);
             List<KeyValuePair<string, decimal>> sales;
+            string vendor;
             lock (_lots)
             {
                 if (!_lots.TryGetValue(key, out var snap))
                     return;
+                vendor = snap.Vendor.Trim();
                 sales = snap.SalesBySo
+                    .Where(pair => Qty(pair.Value) != 0)
                     .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
                     .ToList();
             }
@@ -645,16 +654,26 @@ namespace CastRightCatchInvManagement
             if (sales.Count == 0)
                 return;
 
+            if (vendor.Length == 0)
+                vendor = "—";
             int insertAt = parent + 1;
             foreach (var pair in sales)
             {
                 int index = insertAt;
-                _lotsGrid.Rows.Insert(index, pair.Key + " : " + Lbs(pair.Value), "", "", "", "", "");
+                // Lot / Vendor / Sold already exist on the parent row; reuse them for SO #, vendor, and lbs.
+                _lotsGrid.Rows.Insert(
+                    index,
+                    pair.Key,
+                    vendor,
+                    "",
+                    Lbs(pair.Value),
+                    "",
+                    "");
                 var row = _lotsGrid.Rows[index];
                 row.Tag = "sale:" + key;
                 row.DefaultCellStyle.ForeColor = Theme.Muted;
                 row.DefaultCellStyle.SelectionForeColor = Theme.Muted;
-                row.DefaultCellStyle.Padding = new Padding(28, 0, 8, 0);
+                row.Cells[0].Style.Padding = new Padding(28, 0, 8, 0);
                 insertAt++;
             }
 
@@ -772,8 +791,20 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Format pounds for the lots grid, keeping trailing zeros off.</summary>
+        /// <summary>Weights are stored to three decimals so remaining is not 0.04999999999999982.</summary>
+        private static decimal Qty(decimal value) =>
+            decimal.Round(value, 3, MidpointRounding.AwayFromZero);
+
         private static string Lbs(decimal value) =>
-            value.ToString("0.###", CultureInfo.InvariantCulture);
+            Qty(value).ToString("0.###", CultureInfo.InvariantCulture);
+
+        /// <summary>True when a supposed SO # is actually a raw floating-point volume string.</summary>
+        private static bool LooksLikeFloatDust(string text)
+        {
+            if (text.IndexOf('.') < 0 || text.Length < 10)
+                return false;
+            return decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out _);
+        }
 
         private enum LotFilter
         {

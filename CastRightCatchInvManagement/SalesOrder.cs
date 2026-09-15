@@ -609,19 +609,25 @@ namespace CastRightCatchInvManagement
                 CurrentCustomerName(),
                 error =>
                 {
-                    // Null error means unused sale lines were appended.
-                    if (error != null)
-                        ToastAlert.Error(this, error);
-                    else
+                    // Null means existing sale lines were appended. Empty means a new PO with no sales yet.
+                    if (error == null)
                         ToastAlert.Success(this, "The information was added.");
-                });
+                    else if (error.Length > 0)
+                        ToastAlert.Error(this, error);
+                },
+                missingOk: true);
         }
 
         /// <summary>
         /// Look up sale rows for this PO/SO and append each unused line onto the pick ticket,
         /// filling customer and ship-to from the first match.
         /// </summary>
-        private void StartAddItems(string? key, string customerCode, string customerName, Action<string?> done)
+        private void StartAddItems(
+            string? key,
+            string customerCode,
+            string customerName,
+            Action<string?> done,
+            bool missingOk = false)
         {
             // Lookup is keyed by customer PO or SO #.
             if (string.IsNullOrWhiteSpace(key))
@@ -700,7 +706,8 @@ namespace CastRightCatchInvManagement
                         if (sources.Count == 0)
                         {
                             _busyAdding = false;
-                            done("No sales were found for that PO.");
+                            // A new sales order types a customer PO that does not exist yet.
+                            done(missingOk ? "" : "No sales were found for that PO.");
                             return;
                         }
 
