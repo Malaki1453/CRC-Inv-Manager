@@ -676,7 +676,7 @@ namespace CastRightCatchInvManagement
                     "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Price Paid / LB,Overhead / LB,Freight / LB,Freight Company,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Record Status",
 
                 Sales =>
-                    "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Record Status",
+                    "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Record Status",
 
                 Customers =>
                     "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes,Description,Routing Number,Account Number,Record Status",
@@ -1023,39 +1023,64 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
-        /// <summary>
-        /// Customer PO for a sale. The sales table stores that number in PO # when Lot # exists,
-        /// or uses Customer PO when that column is filled.
-        /// </summary>
+        /// <summary>Customer PO for a sale. Stored in Invoice # after Lot # was removed.</summary>
         public static string SalePo(Dictionary<string, string> record)
         {
-            // Current sales schema has Lot #; PO # on that row is the customer PO.
-            if (record.ContainsKey("Lot #"))
-                return GetRecord(record, "PO #").Trim();
-
-            string customerPo = GetRecord(record, "Customer PO").Trim();
+            // After the Lot # drop, Invoice # holds the customer PO.
+            string customerPo = GetRecord(record, "Invoice #").Trim();
             if (customerPo.Length > 0)
                 return customerPo;
 
-            return GetRecord(record, "PO #").Trim();
-        }
+            string named = GetRecord(record, "Customer PO").Trim();
+            if (named.Length > 0)
+                return named;
 
-        /// <summary>
-        /// Purchase lot for a sale. Prefer Lot # (the purchase PO). If Lot # is empty and Customer PO
-        /// is filled, this returns PO #, which on a sale is often the customer PO, not the purchase lot.
-        /// </summary>
-        public static string SaleLot(Dictionary<string, string> record)
-        {
-            string lot = GetRecord(record, "Lot #").Trim();
-            // Lot # is the purchase PO that this sale should draw from.
-            if (lot.Length > 0)
-                return lot;
-
-            // Older rows stored the customer PO in Customer PO and the sale PO # may not be the purchase lot.
-            if (GetRecord(record, "Customer PO").Trim().Length > 0)
+            // Pre-migration rows with a Lot # column stored the customer PO in PO #.
+            if (record.Keys.Any(k => k.Equals("Lot #", StringComparison.OrdinalIgnoreCase)))
                 return GetRecord(record, "PO #").Trim();
 
             return "";
+        }
+
+        /// <summary>Purchase PO for a sale. PO # is the lot; Lot # is only a fallback for old rows.</summary>
+        public static string SaleLot(Dictionary<string, string> record)
+        {
+            string po = GetRecord(record, "PO #").Trim();
+            if (po.Length > 0)
+                return po;
+
+            return GetRecord(record, "Lot #").Trim();
+        }
+
+        /// <summary>Purchase-order suggestions for an item: PO # - vendor, field stores only the PO #.</summary>
+        internal static List<LookupSuggest.Hit> PurchasePosForItem(string itemCode)
+        {
+            itemCode = (itemCode ?? "").Trim();
+            var groups = new Dictionary<string, LookupSuggest.Hit>(StringComparer.OrdinalIgnoreCase);
+            if (itemCode.Length == 0)
+                return new List<LookupSuggest.Hit>();
+
+            SqliteInventory.ForEachWhere(
+                PurchaseSales,
+                "Item Code",
+                itemCode,
+                purchase =>
+                {
+                    if (IsWaitingAdd(purchase))
+                        return;
+                    string po = GetRecord(purchase, "PO #").Trim();
+                    if (po.Length == 0)
+                        return;
+                    string key = NormalizePo(po);
+                    if (groups.ContainsKey(key))
+                        return;
+                    string vendor = GetRecordAny(purchase, "Vendor", "Name");
+                    groups[key] = new LookupSuggest.Hit(po, vendor, GetRecord(purchase, "Vendor Code"));
+                });
+
+            return groups.Values
+                .OrderBy(hit => hit.Code, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         /// <summary>First sale matching a customer PO, optional customer, and optional item.</summary>
@@ -2076,7 +2101,7 @@ namespace CastRightCatchInvManagement
             string[] keys = baseName switch
             {
                 PurchaseSales => new[] { "PO #", "Item Code" },
-                Sales => new[] { "PO #", "Item Code", "Customer Code" },
+                Sales => new[] { "PO #", "Item Code", "Invoice #" },
                 Customers or Vendors or ItemCodes => new[] { "Code" },
                 Invoices => new[] { "Invoice #" },
                 Debits => new[] { "Debit #" },
@@ -2380,16 +2405,11 @@ namespace CastRightCatchInvManagement
             if (baseName != Sales)
                 return name;
 
-            bool hasLot = fileHeader.Any(h =>
-                h.Trim().Equals("Lot #", StringComparison.OrdinalIgnoreCase) ||
-                h.Trim().Equals("Lot Number", StringComparison.OrdinalIgnoreCase));
-            if (hasLot)
-                return name.Equals("Lot Number", StringComparison.OrdinalIgnoreCase) ? "Lot #" : name;
-
+            // PO # on a sale is the purchase lot; Invoice # is the customer PO.
             if (name.Equals("PO #", StringComparison.OrdinalIgnoreCase))
                 return "Lot #";
-            if (name.Equals("Customer PO", StringComparison.OrdinalIgnoreCase))
-                return "PO #";
+            if (name.Equals("Invoice #", StringComparison.OrdinalIgnoreCase))
+                return "Customer PO";
             return name;
         }
 
@@ -2412,7 +2432,7 @@ namespace CastRightCatchInvManagement
                     "Record Status",
                     "Status",
                     "Ship Date",
-                    "PO #"
+                    "Lot #"
                 },
                 Customers => new[]
                 {
@@ -2563,7 +2583,7 @@ namespace CastRightCatchInvManagement
             string[]? visible = baseName switch
             {
                 PurchaseSales => new[] { "PO #", "Record Status", "Status", "Ship Date", "Order Date" },
-                Sales => new[] { "SO #", "Record Status", "Status", "Ship Date", "PO #" },
+                Sales => new[] { "SO #", "Record Status", "Status", "Ship Date", "Lot #" },
                 Customers => new[] { "Record Status", "Name", "Company", "Phone", "Current Balance" },
                 Vendors => new[] { "Record Status", "Name", "Company", "Phone", "Current Balance" },
                 Invoices => new[] { "SO #", "PO #", "Record Status", "Type", "Customer", "Vendor", "Ship Date", "Due Date", "Status", "Paid" },

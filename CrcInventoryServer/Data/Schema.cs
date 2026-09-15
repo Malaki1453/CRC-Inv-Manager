@@ -82,7 +82,7 @@ internal static class Schema
                 "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Price Paid / LB,Overhead / LB,Freight / LB,Freight Company,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Record Status",
             // Sales order columns through Record Status.
             Sales =>
-                "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Lot #,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Record Status",
+                "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Record Status",
             // Customer master, including sealed routing/account numbers.
             Customers =>
                 "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes,Description,Routing Number,Account Number,Record Status",
@@ -180,27 +180,41 @@ internal static class Schema
                 return pair.Value ?? "";
         }
 
-        // Desktop sheets sometimes label the customer PO as "Customer PO".
-        if (name.Equals("Customer PO", StringComparison.OrdinalIgnoreCase))
+        // On a sale row (has SO #, no invoice Type), Invoice # is the customer PO.
+        if (name.Equals("Customer PO", StringComparison.OrdinalIgnoreCase) &&
+            HasKey(values, "SO #") &&
+            !HasKey(values, "Type"))
         {
             foreach (var pair in values)
             {
-                if (pair.Key.Equals("PO #", StringComparison.OrdinalIgnoreCase))
+                if (pair.Key.Equals("Invoice #", StringComparison.OrdinalIgnoreCase))
                     return pair.Value ?? "";
             }
         }
 
-        // Sales lots were historically stored under PO # in some exports.
+        // Older sales rows stored the purchase PO in Lot #.
         if (name.Equals("PO #", StringComparison.OrdinalIgnoreCase))
         {
             foreach (var pair in values)
             {
-                if (pair.Key.Equals("Lot #", StringComparison.OrdinalIgnoreCase))
+                if (pair.Key.Equals("Lot #", StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(pair.Value))
                     return pair.Value ?? "";
             }
         }
 
         return "";
+    }
+
+    private static bool HasKey(Dictionary<string, string> values, string name)
+    {
+        foreach (var pair in values)
+        {
+            if (pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>True when the named column has non-whitespace text.</summary>

@@ -97,7 +97,7 @@ namespace CastRightCatchInvManagement
                 "Middle-click a row to work with a sales order. If that sale already has an SO # and a PDF, the PDF opens. If not, Create Sales Order fills from that PO.");
 
             AddSection(stack, "SalesOrder", "Sales orders",
-                "Create Sales Order is one customer PO with as many product lines as you need, like New Purchase. Type a customer code or name to fill the header. Type an item code on a line to fill description and country of origin. Lines hold item, lot, pack, cases, volume, and price. Freight Co is a vendor list for tracking and is stored on the sale; it is not printed on the PDF. Double-click a Sales row to see customer info, the order header, and every item on that sales order.",
+                "Create Sales Order is one customer PO with as many product lines as you need, like New Purchase. Type a customer code or name to fill the header. Type an item code on a line to fill description and country of origin. Each product is its own line. Lot # is the purchase PO for that item and suggests POs that already have that item. Customer PO is stored on the sale as Invoice #. Freight Co is a vendor list for tracking and is stored on the sale; it is not printed on the PDF. Double-click a Sales row to see customer info, the order header, and every item on that sales order.",
                 "Ship To uses the customer Address. If none is on file, the field says “Not found, please input manually.”",
                 "Enter a customer PO, or middle-click a sale, to add every matching line.",
                 "Save Sales Order writes the sales rows, a sale PDF, and a sales-order PDF, stores them in the database, writes the SO # onto those sales lines, and opens the sales-order PDF.");

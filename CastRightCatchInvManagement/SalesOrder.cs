@@ -1174,13 +1174,13 @@ namespace CastRightCatchInvManagement
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["PO #"] = line.PoNumber.Length > 0 ? line.PoNumber : draft.CustomerPo,
+                ["PO #"] = line.LotNumber,
                 ["SO #"] = draft.SoNumber,
                 ["Customer Code"] = draft.CustomerCode,
                 ["Customer"] = draft.CustomerName,
                 ["Customer Terms"] = draft.Terms,
                 ["Item Code"] = line.ItemCode,
-                ["Lot #"] = line.LotNumber,
+                ["Invoice #"] = line.PoNumber.Length > 0 ? line.PoNumber : draft.CustomerPo,
                 ["Description"] = line.Description,
                 ["COO"] = line.Coo,
                 ["Pack Size"] = line.UnitSize,

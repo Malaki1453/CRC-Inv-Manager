@@ -22,6 +22,9 @@ namespace CastRightCatchInvManagement
         private bool _filling;
         private LookupSuggest? _itemSuggest;
         private LookupSuggest? _descSuggest;
+        private LookupSuggest? _lotSuggest;
+        private string _poHitsItem = "\0";
+        private List<LookupSuggest.Hit> _poHits = new();
 
         public event EventHandler? Changed;
         public event EventHandler? RemoveRequested;
@@ -91,8 +94,42 @@ namespace CastRightCatchInvManagement
         {
             _itemSuggest?.Dispose();
             _descSuggest?.Dispose();
+            _lotSuggest?.Dispose();
             _itemSuggest = new LookupSuggest(_item, items, codeFirst: true, ApplyHit);
             _descSuggest = new LookupSuggest(_description, items, codeFirst: false, ApplyHit);
+            // PO # suggestions are purchase POs that already have this item code.
+            _lotSuggest = new LookupSuggest(_lot, PoHits, codeFirst: true, ApplyPoHit);
+        }
+
+        /// <summary>Purchase POs for the item currently on this line. Cached until the item code changes.</summary>
+        private IReadOnlyList<LookupSuggest.Hit> PoHits()
+        {
+            string item = _item.Text.Trim();
+            if (!item.Equals(_poHitsItem, StringComparison.OrdinalIgnoreCase))
+            {
+                _poHitsItem = item;
+                _poHits = item.Length == 0
+                    ? new List<LookupSuggest.Hit>()
+                    : DataFiles.PurchasePosForItem(item);
+            }
+
+            return _poHits;
+        }
+
+        /// <summary>Write only the purchase PO # into the PO box, not "PO - vendor".</summary>
+        private void ApplyPoHit(LookupSuggest.Hit hit)
+        {
+            _filling = true;
+            try
+            {
+                _lot.Text = hit.Code;
+            }
+            finally
+            {
+                _filling = false;
+            }
+
+            Changed?.Invoke(this, EventArgs.Empty);
         }
 
         /// <summary>Remember the customer PO this line came from.</summary>
@@ -120,6 +157,7 @@ namespace CastRightCatchInvManagement
             }
 
             RecalcVolume();
+            _poHitsItem = "\0";
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
@@ -221,6 +259,7 @@ namespace CastRightCatchInvManagement
             {
                 _itemSuggest?.Dispose();
                 _descSuggest?.Dispose();
+                _lotSuggest?.Dispose();
             }
 
             base.Dispose(disposing);

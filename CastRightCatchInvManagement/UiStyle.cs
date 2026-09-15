@@ -201,7 +201,44 @@ namespace CastRightCatchInvManagement
             return null;
         }
 
-        /// <summary>Right-click row menu: extras, edit, and delete when the user can mutate the table.</summary>
+        /// <summary>Set when BindRowEdit already showed a menu so BindCellCopy does not open a second one.</summary>
+        internal static bool RowContextMenuShown;
+
+        /// <summary>Right-click or Ctrl+C copies the cell under the pointer, not the whole row.</summary>
+        public static void BindCellCopy(DataGridView grid)
+        {
+            grid.KeyDown += (_, e) =>
+            {
+                // Ctrl+C copies the current cell so paste works in other apps.
+                if (e.Control && e.KeyCode == Keys.C)
+                {
+                    CopyCell(grid.CurrentCell);
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                }
+            };
+            grid.CellMouseClick += (_, e) =>
+            {
+                // Header clicks have their own column menu.
+                if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.ColumnIndex < 0)
+                    return;
+                int row = e.RowIndex;
+                int col = e.ColumnIndex;
+                // BindRowEdit runs on the same click and shows the full row menu; skip a second popup.
+                grid.BeginInvoke(new Action(() =>
+                {
+                    if (RowContextMenuShown)
+                    {
+                        RowContextMenuShown = false;
+                        return;
+                    }
+
+                    ShowCopyCellMenu(grid, row, col);
+                }));
+            };
+        }
+
+        /// <summary>Copy the clicked cell, then the rest of the row actions.</summary>
         public static void BindRowEdit(
             DataGridView grid,
             Action<Dictionary<string, string>>? onEdit,
@@ -239,6 +276,9 @@ namespace CastRightCatchInvManagement
                 string table = grid.Tag is ColumnSearch search ? search.FileBaseName ?? "" : "";
                 bool canMutate = DataAccess.CanMutate(table);
                 var menu = new ContextMenuStrip();
+                int copyRow = e.RowIndex;
+                int copyCol = e.ColumnIndex;
+                menu.Items.Add("Copy", null, (_, _) => CopyCell(grid, copyRow, copyCol));
                 foreach (var extra in extras)
                 {
                     var item = extra;
@@ -272,12 +312,38 @@ namespace CastRightCatchInvManagement
                     });
                 }
 
-                // Review-only users get no items; skip an empty menu.
-                if (menu.Items.Count == 0)
-                    return;
-
+                // Copy is always present, so the menu is never empty.
+                RowContextMenuShown = true;
                 menu.Show(grid, grid.PointToClient(Control.MousePosition));
             };
+        }
+
+        private static void ShowCopyCellMenu(DataGridView grid, int row, int col)
+        {
+            if (row < 0 || col < 0 || row >= grid.Rows.Count || col >= grid.Columns.Count)
+                return;
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("Copy", null, (_, _) => CopyCell(grid, row, col));
+            menu.Show(grid, grid.PointToClient(Control.MousePosition));
+        }
+
+        private static void CopyCell(DataGridView grid, int row, int col)
+        {
+            if (row < 0 || col < 0 || row >= grid.Rows.Count || col >= grid.Columns.Count)
+                return;
+            CopyCell(grid.Rows[row].Cells[col]);
+        }
+
+        private static void CopyCell(DataGridViewCell? cell)
+        {
+            if (cell == null)
+                return;
+            string text = Convert.ToString(cell.FormattedValue) ?? "";
+            // Clipboard.SetText throws on empty; Clear still lets paste replace with nothing.
+            if (text.Length == 0)
+                Clipboard.Clear();
+            else
+                Clipboard.SetText(text);
         }
 
         /// <summary>Context menu listing hidden columns the user is allowed to show again.</summary>

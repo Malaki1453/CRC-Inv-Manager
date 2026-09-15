@@ -110,6 +110,9 @@ namespace CastRightCatchInvManagement
                     DropTextColumn(table, "Vendor Invoice #", archive);
                     DropTextColumn(table, "Volume Received", archive);
                 }
+
+                if (table == DataFiles.Sales)
+                    MigrateSalesLotToPo(archive);
                 if (table == DataFiles.Invoices)
                     DropTextColumn(table, "PDF Created", archive);
             }
@@ -324,7 +327,8 @@ namespace CastRightCatchInvManagement
             var actual = TableColumns(table)
                 .Where(c => c != "id" && c != "term_start" &&
                             !c.Equals("PDF Created", StringComparison.OrdinalIgnoreCase) &&
-                            !c.Equals("Volume Received", StringComparison.OrdinalIgnoreCase))
+                            !c.Equals("Volume Received", StringComparison.OrdinalIgnoreCase) &&
+                            !c.Equals("Lot #", StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -2094,6 +2098,35 @@ namespace CastRightCatchInvManagement
                 $"WHERE {Quote(DataFiles.RecordStatus)} IS NULL OR TRIM({Quote(DataFiles.RecordStatus)}) = '';";
             cmd.Parameters.AddWithValue("$live", DataFiles.RecordLive);
             cmd.ExecuteNonQuery();
+        }
+
+        /// <summary>
+        /// Lot # was the purchase PO and PO # was the customer PO. Copy lot into PO #,
+        /// customer PO into Invoice #, then drop Lot #.
+        /// </summary>
+        private static void MigrateSalesLotToPo(bool archive)
+        {
+            var columns = new HashSet<string>(TableColumns(DataFiles.Sales, archive), StringComparer.OrdinalIgnoreCase);
+            if (!columns.Contains("Lot #"))
+                return;
+
+            using var db = Open(archive);
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                """
+                UPDATE sales
+                SET "Invoice #" = "PO #"
+                WHERE TRIM(COALESCE("Lot #", '')) != '';
+                """;
+            cmd.ExecuteNonQuery();
+            cmd.CommandText =
+                """
+                UPDATE sales
+                SET "PO #" = "Lot #"
+                WHERE TRIM(COALESCE("Lot #", '')) != '';
+                """;
+            cmd.ExecuteNonQuery();
+            DropTextColumn(DataFiles.Sales, "Lot #", archive);
         }
 
         /// <summary>Drop a leftover column that is no longer in the schema, if it still exists.</summary>

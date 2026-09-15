@@ -263,7 +263,8 @@ internal sealed partial class InventoryStore
         var actual = TableColumns(table, viewOld)
             .Where(c => c != "id" && c != "term_start" &&
                         !c.Equals("PDF Created", StringComparison.OrdinalIgnoreCase) &&
-                        !c.Equals("Volume Received", StringComparison.OrdinalIgnoreCase))
+                        !c.Equals("Volume Received", StringComparison.OrdinalIgnoreCase) &&
+                        !c.Equals("Lot #", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var list = new List<string>();

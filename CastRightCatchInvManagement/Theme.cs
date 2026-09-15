@@ -191,6 +191,12 @@ namespace CastRightCatchInvManagement
             ApplyTableScrollMode(grid);
             grid.CellPainting -= PaintGridDataCell;
             grid.CellPainting += PaintGridDataCell;
+            // Default grid copy dumps the whole row; we copy the clicked cell instead.
+            if (grid.ClipboardCopyMode != DataGridViewClipboardCopyMode.Disable)
+            {
+                grid.ClipboardCopyMode = DataGridViewClipboardCopyMode.Disable;
+                UiStyle.BindCellCopy(grid);
+            }
         }
 
         /// <summary>Paint default cell contents plus a single hairline under each data cell.</summary>

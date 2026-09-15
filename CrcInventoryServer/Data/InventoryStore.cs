@@ -90,6 +90,8 @@ internal sealed partial class InventoryStore
             // PDF Created was removed from invoices; drop it if an older file still has it.
             if (table.Equals(Schema.Invoices, StringComparison.OrdinalIgnoreCase))
                 DropTextColumn(table, "PDF Created", archive);
+            if (table.Equals(Schema.Sales, StringComparison.OrdinalIgnoreCase))
+                MigrateSalesLotToPo(archive);
         }
 
         // Archive databases only hold process tables; skip live-only app tables.
@@ -570,6 +572,32 @@ internal sealed partial class InventoryStore
             $"WHERE {Quote(Schema.RecordStatus)} IS NULL OR TRIM({Quote(Schema.RecordStatus)}) = '';";
         cmd.AddParam("$live", Schema.RecordLive);
         cmd.Exec(_engine);
+    }
+
+    /// <summary>Lot # was the purchase PO; PO # was the customer PO. Move them, then drop Lot #.</summary>
+    private void MigrateSalesLotToPo(bool archive)
+    {
+        var existing = new HashSet<string>(TableColumnsFrom(Schema.Sales, archive), StringComparer.OrdinalIgnoreCase);
+        if (!existing.Contains("Lot #"))
+            return;
+
+        using var db = Open(archive);
+        using var cmd = db.CreateCommand();
+        cmd.CommandText =
+            $"""
+            UPDATE {Quote(Schema.Sales)}
+            SET {Quote("Invoice #")} = {Quote("PO #")}
+            WHERE TRIM(COALESCE({Quote("Lot #")}, '')) != '';
+            """;
+        cmd.Exec(_engine);
+        cmd.CommandText =
+            $"""
+            UPDATE {Quote(Schema.Sales)}
+            SET {Quote("PO #")} = {Quote("Lot #")}
+            WHERE TRIM(COALESCE({Quote("Lot #")}, '')) != '';
+            """;
+        cmd.Exec(_engine);
+        DropTextColumn(Schema.Sales, "Lot #", archive);
     }
 
     /// <summary>Drops a leftover TEXT column that the current desktop schema no longer uses.</summary>
