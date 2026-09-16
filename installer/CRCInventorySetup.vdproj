@@ -162,6 +162,18 @@
             "Property" = "8:ProgramMenuFolder"
                 "Folders"
                 {
+                    "{9EF0B969-E518-4E46-987F-47570745A589}:_A0B1C2D3E4F5061728394A5B6C7D8E9F"
+                    {
+                    "AlwaysCreate" = "11:TRUE"
+                    "Condition" = "8:"
+                    "DefaultLocation" = "8:"
+                    "Name" = "8:Cast Right Catch Inventory"
+                    "Property" = "8:_A0B1C2D3E4F5061728394A5B6C7D8E9F"
+                    "Transitive" = "11:FALSE"
+                        "Folders"
+                        {
+                        }
+                    }
                 }
             }
             "{1525181F-901A-416C-8A58-119130FE478E}:_4D5E6F708192A3B4C5D6E7F8091A2B3C"
@@ -224,6 +236,154 @@
             {
                 "Keys"
                 {
+                    "{60EA8692-D2D5-43EB-80DC-7906BF13D6EF}:_REGSOFTWARE"
+                    {
+                    "Name" = "8:Software"
+                    "Condition" = "8:"
+                    "AlwaysCreate" = "11:FALSE"
+                    "DeleteAtUninstall" = "11:FALSE"
+                    "Transitive" = "11:FALSE"
+                        "Keys"
+                        {
+                            "{60EA8692-D2D5-43EB-80DC-7906BF13D6EF}:_REGMS"
+                            {
+                            "Name" = "8:Microsoft"
+                            "Condition" = "8:"
+                            "AlwaysCreate" = "11:FALSE"
+                            "DeleteAtUninstall" = "11:FALSE"
+                            "Transitive" = "11:FALSE"
+                                "Keys"
+                                {
+                                    "{60EA8692-D2D5-43EB-80DC-7906BF13D6EF}:_REGWIN"
+                                    {
+                                    "Name" = "8:Windows"
+                                    "Condition" = "8:"
+                                    "AlwaysCreate" = "11:FALSE"
+                                    "DeleteAtUninstall" = "11:FALSE"
+                                    "Transitive" = "11:FALSE"
+                                        "Keys"
+                                        {
+                                            "{60EA8692-D2D5-43EB-80DC-7906BF13D6EF}:_REGCV"
+                                            {
+                                            "Name" = "8:CurrentVersion"
+                                            "Condition" = "8:"
+                                            "AlwaysCreate" = "11:FALSE"
+                                            "DeleteAtUninstall" = "11:FALSE"
+                                            "Transitive" = "11:FALSE"
+                                                "Keys"
+                                                {
+                                                    "{60EA8692-D2D5-43EB-80DC-7906BF13D6EF}:_REGUNINST"
+                                                    {
+                                                    "Name" = "8:Uninstall"
+                                                    "Condition" = "8:"
+                                                    "AlwaysCreate" = "11:FALSE"
+                                                    "DeleteAtUninstall" = "11:FALSE"
+                                                    "Transitive" = "11:FALSE"
+                                                        "Keys"
+                                                        {
+                                                            "{60EA8692-D2D5-43EB-80DC-7906BF13D6EF}:_REGAPP"
+                                                            {
+                                                            "Name" = "8:[ProductCode]"
+                                                            "Condition" = "8:"
+                                                            "AlwaysCreate" = "11:TRUE"
+                                                            "DeleteAtUninstall" = "11:TRUE"
+                                                            "Transitive" = "11:FALSE"
+                                                                "Keys"
+                                                                {
+                                                                }
+                                                                "Values"
+                                                                {
+                                                                    "{ADCFDA98-7B1A-4E90-AF50-B9849A014A32}:_REGDN"
+                                                                    {
+                                                                    "Name" = "8:DisplayName"
+                                                                    "Condition" = "8:"
+                                                                    "External" = "11:FALSE"
+                                                                    "Value" = "8:[ProductName]"
+                                                                    "ValueType" = "3:1"
+                                                                    }
+                                                                    "{ADCFDA98-7B1A-4E90-AF50-B9849A014A32}:_REGPUB"
+                                                                    {
+                                                                    "Name" = "8:Publisher"
+                                                                    "Condition" = "8:"
+                                                                    "External" = "11:FALSE"
+                                                                    "Value" = "8:[Manufacturer]"
+                                                                    "ValueType" = "3:1"
+                                                                    }
+                                                                    "{ADCFDA98-7B1A-4E90-AF50-B9849A014A32}:_REGUS"
+                                                                    {
+                                                                    "Name" = "8:UninstallString"
+                                                                    "Condition" = "8:"
+                                                                    "External" = "11:FALSE"
+                                                                    "Value" = "8:msiexec.exe /x [ProductCode]"
+                                                                    "ValueType" = "3:1"
+                                                                    }
+                                                                    "{ADCFDA98-7B1A-4E90-AF50-B9849A014A32}:_REGDI"
+                                                                    {
+                                                                    "Name" = "8:DisplayIcon"
+                                                                    "Condition" = "8:"
+                                                                    "External" = "11:FALSE"
+                                                                    "Value" = "8:[TARGETDIR]app.ico"
+                                                                    "ValueType" = "3:1"
+                                                                    }
+                                                                    "{ADCFDA98-7B1A-4E90-AF50-B9849A014A32}:_REGDV"
+                                                                    {
+                                                                    "Name" = "8:DisplayVersion"
+                                                                    "Condition" = "8:"
+                                                                    "External" = "11:FALSE"
+                                                                    "Value" = "8:[ProductVersion]"
+                                                                    "ValueType" = "3:1"
+                                                                    }
+                                                                    "{ADCFDA98-7B1A-4E90-AF50-B9849A014A32}:_REGWI"
+                                                                    {
+                                                                    "Name" = "8:WindowsInstaller"
+                                                                    "Condition" = "8:"
+                                                                    "External" = "11:FALSE"
+                                                                    "Value" = "3:1"
+                                                                    "ValueType" = "3:3"
+                                                                    }
+                                                                    "{ADCFDA98-7B1A-4E90-AF50-B9849A014A32}:_REGNM"
+                                                                    {
+                                                                    "Name" = "8:NoModify"
+                                                                    "Condition" = "8:"
+                                                                    "External" = "11:FALSE"
+                                                                    "Value" = "3:1"
+                                                                    "ValueType" = "3:3"
+                                                                    }
+                                                                    "{ADCFDA98-7B1A-4E90-AF50-B9849A014A32}:_REGNR"
+                                                                    {
+                                                                    "Name" = "8:NoRepair"
+                                                                    "Condition" = "8:"
+                                                                    "External" = "11:FALSE"
+                                                                    "Value" = "3:1"
+                                                                    "ValueType" = "3:3"
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        "Values"
+                                                        {
+                                                        }
+                                                    }
+                                                }
+                                                "Values"
+                                                {
+                                                }
+                                            }
+                                        }
+                                        "Values"
+                                        {
+                                        }
+                                    }
+                                }
+                                "Values"
+                                {
+                                }
+                            }
+                        }
+                        "Values"
+                        {
+                        }
+                    }
                 }
             }
             "HKCU"
@@ -265,7 +425,7 @@
             "IconIndex" = "3:0"
             "Transitive" = "11:FALSE"
             "Target" = "8:_005D06F670D4459F8344E0D8E94CEFE7"
-            "Folder" = "8:_3C4D5E6F708192A3B4C5D6E7F8091A2B"
+            "Folder" = "8:_A0B1C2D3E4F5061728394A5B6C7D8E9F"
             "WorkingFolder" = "8:_2B3C4D5E6F708192A3B4C5D6E7F8091A"
             "Icon" = "8:_7C1E4A92B0D3486F9E5A2C8D1F3B6E40"
             "Feature" = "8:"
