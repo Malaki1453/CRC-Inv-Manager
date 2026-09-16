@@ -10,6 +10,12 @@ That link always downloads the newest installer. A git push of source code does 
 2. Run the MSI on Windows. Allow admin if Windows asks.
 3. Open **Cast Right Catch Inventory** from the Start Menu.
 
+## Uninstall
+
+Windows **Settings → Apps → Installed apps** (or Control Panel → Programs and Features). Search **Cast Right Catch Inventory** → Uninstall.
+
+The shared data folder is not deleted.
+
 Installed copies check GitHub on launch. If a newer release exists, they are forced to install it before the workspace opens.
 
 This repo is private. People downloading the MSI must be signed into GitHub with access. PCs that auto-update need a GitHub token (see below).
