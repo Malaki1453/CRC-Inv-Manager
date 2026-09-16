@@ -10,14 +10,16 @@
     <AssemblyTitle>Cast Right Catch Inventory</AssemblyTitle>
     <Product>Cast Right Catch Inventory</Product>
     <Authors>Cast Right Catch Co.</Authors>
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
-    <InformationalVersion>1.0.0</InformationalVersion>
+    <Version>1.0.1</Version>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
+    <InformationalVersion>1.0.1</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <Content Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Sidecar .ico next to the exe so Explorer / shortcuts can show the CRC seal. -->
+    <Content Include="Assets\app.ico" Link="CastRightCatchInvManagement.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
