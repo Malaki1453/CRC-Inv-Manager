@@ -33,4 +33,7 @@ Desktop.ini
 
 ## Inventory server host files
 *.pfx
+
+## Installer harvest / MSI output (built locally, uploaded to GitHub Releases)
+installer/publish/
 # Runtime folder next to the exe (bin/ already ignored). Do not ignore source CrcInventoryServer/Data/.

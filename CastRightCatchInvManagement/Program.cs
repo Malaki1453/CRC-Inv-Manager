@@ -105,6 +105,15 @@ namespace CastRightCatchInvManagement
                 bool ok = false;
                 try
                 {
+                    // Newer GitHub Release than this exe: download the MSI and exit. Do not open the workspace.
+                    if (!AppUpdate.TryContinueAfterCheck(splash))
+                    {
+                        if (!splash.IsDisposed)
+                            splash.Close();
+                        ExitThread();
+                        return;
+                    }
+
                     ok = await Program.StartAsync(splash);
                 }
                 // Surface folder/server errors instead of leaving a hung splash.
