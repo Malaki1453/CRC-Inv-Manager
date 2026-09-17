@@ -538,10 +538,10 @@ namespace CastRightCatchInvManagement
             if (!SqliteInventory.AllowLogin(username, out error))
                 return false;
 
-            // Same generic message whether the user is missing or the password is wrong.
+            // Missing user still counts as a failed try so "N tries left" always appears.
             if (!SqliteInventory.TryGetAccount(username, out string hash, out string salt, out string display, out string email, out bool mustChange))
             {
-                error = "That username or password is not right.";
+                error = SqliteInventory.NoteLoginFailure(username);
                 return false;
             }
 

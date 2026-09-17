@@ -501,6 +501,17 @@ internal sealed partial class InventoryStore
                 untilText = cmd.Scalar(_engine)?.ToString() ?? "";
             }
 
+            // No app_accounts row: still honor a lock recorded for this typed name.
+            if (untilText.Length == 0)
+            {
+                using var db = Open();
+                using var ghost = db.CreateCommand();
+                ghost.CommandText =
+                    "SELECT COALESCE(login_lock_until, '') FROM login_attempts WHERE username = $user;";
+                ghost.AddParam("$user", username);
+                untilText = ghost.Scalar(_engine)?.ToString() ?? "";
+            }
+
             // IT lock is not time-based; only IT can clear it.
             if (RecoveryGuard.IsItLock(untilText))
             {
@@ -522,11 +533,11 @@ internal sealed partial class InventoryStore
         }
     }
 
-    /// <summary>Increments login failures and returns the lock/tries message; generic text when the user is missing.</summary>
+    /// <summary>Increments login failures and returns the lock/tries message, including unknown usernames.</summary>
     public string NoteLoginFailure(string username)
     {
         username = (username ?? "").Trim();
-        // Do not reveal whether the username exists.
+        // Blank name is not an attempt; the form already asked for both fields.
         if (username.Length == 0)
             return "That username or password is not right.";
 
@@ -538,9 +549,9 @@ internal sealed partial class InventoryStore
                 "SELECT COALESCE(login_fails, 0) FROM app_accounts WHERE username = $user;";
             read.AddParam("$user", username);
             object? raw = read.Scalar(_engine);
-            // Unknown username gets the same wording as a wrong password.
+            // Unknown username: count against login_attempts so tries-left still shows.
             if (raw == null)
-                return "That username or password is not right.";
+                return NoteUnknownLoginFailure(db, username);
 
             int fails = Convert.ToInt32(raw) + 1;
             var penalty = RecoveryGuard.NextLoginPenalty(fails);
@@ -559,6 +570,32 @@ internal sealed partial class InventoryStore
 
             return penalty.Message;
         }
+    }
+
+    /// <summary>Same 5-try / 15-minute / IT lock as a real account, keyed by the typed name.</summary>
+    private string NoteUnknownLoginFailure(DbConnection db, string username)
+    {
+        using var read = db.CreateCommand();
+        read.CommandText =
+            "SELECT COALESCE(login_fails, 0) FROM login_attempts WHERE username = $user;";
+        read.AddParam("$user", username);
+        int fails = Convert.ToInt32(read.Scalar(_engine) ?? 0) + 1;
+        var penalty = RecoveryGuard.NextLoginPenalty(fails);
+
+        using var write = db.CreateCommand();
+        write.CommandText =
+            """
+            INSERT INTO login_attempts (username, login_fails, login_lock_until)
+            VALUES ($user, $fails, $until)
+            ON CONFLICT(username) DO UPDATE SET
+                login_fails = excluded.login_fails,
+                login_lock_until = excluded.login_lock_until;
+            """;
+        write.AddParam("$user", username);
+        write.AddParam("$fails", fails);
+        write.AddParam("$until", penalty.Until);
+        write.Exec(_engine);
+        return penalty.Message;
     }
 
     /// <summary>Clears login-failure counters and lock; no-ops on a blank name.</summary>
@@ -581,6 +618,10 @@ internal sealed partial class InventoryStore
             "UPDATE app_accounts SET login_fails = 0, login_lock_until = '' WHERE username = $user;";
         cmd.AddParam("$user", username);
         cmd.Exec(_engine);
+        using var ghost = db.CreateCommand();
+        ghost.CommandText = "DELETE FROM login_attempts WHERE username = $user;";
+        ghost.AddParam("$user", username);
+        ghost.Exec(_engine);
     }
 
     /// <summary>Clears only an expired timed lock, leaving the failure count in place.</summary>
@@ -592,6 +633,11 @@ internal sealed partial class InventoryStore
             "UPDATE app_accounts SET login_lock_until = '' WHERE username = $user;";
         cmd.AddParam("$user", username);
         cmd.Exec(_engine);
+        using var ghost = db.CreateCommand();
+        ghost.CommandText =
+            "UPDATE login_attempts SET login_lock_until = '' WHERE username = $user;";
+        ghost.AddParam("$user", username);
+        ghost.Exec(_engine);
     }
 
     /// <summary>Stores a hashed stay-signed-in token and returns the raw token for the client.</summary>

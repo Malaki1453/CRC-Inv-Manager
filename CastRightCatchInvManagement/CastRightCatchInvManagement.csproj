@@ -10,10 +10,10 @@
     <AssemblyTitle>Cast Right Catch Inventory</AssemblyTitle>
     <Product>Cast Right Catch Inventory</Product>
     <Authors>Cast Right Catch Co.</Authors>
-    <Version>1.0.1</Version>
-    <AssemblyVersion>1.0.1.0</AssemblyVersion>
-    <FileVersion>1.0.1.0</FileVersion>
-    <InformationalVersion>1.0.1</InformationalVersion>
+    <Version>1.0.3</Version>
+    <AssemblyVersion>1.0.3.0</AssemblyVersion>
+    <FileVersion>1.0.3.0</FileVersion>
+    <InformationalVersion>1.0.3</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>

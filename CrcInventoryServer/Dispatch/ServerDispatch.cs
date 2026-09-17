@@ -172,9 +172,9 @@ internal sealed class ServerDispatch
         if (!_store.AllowLogin(request.Username, out string error))
             throw new InvalidOperationException(error);
 
-        // Same wording as a wrong password so missing users are not revealed.
+        // Missing user still counts as a failed try so "N tries left" always appears.
         if (!_store.TryGetAccountRecord(request.Username, out var record))
-            throw new InvalidOperationException("That username or password is not right.");
+            throw new InvalidOperationException(_store.NoteLoginFailure(request.Username));
 
         // Wrong password records a failure and may lock the account.
         if (!Passwords.Verify(request.Password, record.PasswordHash, record.PasswordSalt))

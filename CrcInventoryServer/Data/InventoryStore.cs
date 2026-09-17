@@ -186,6 +186,16 @@ internal sealed partial class InventoryStore
 
         cmd.CommandText =
             $"""
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                username {_engine.NoCaseText} PRIMARY KEY,
+                login_fails INTEGER NOT NULL DEFAULT 0,
+                login_lock_until TEXT NOT NULL DEFAULT ''
+            );
+            """;
+        cmd.Exec(_engine);
+
+        cmd.CommandText =
+            $"""
             CREATE TABLE IF NOT EXISTS access_groups (
                 name {_engine.NoCaseText} PRIMARY KEY,
                 table_access TEXT NOT NULL DEFAULT ''

@@ -220,6 +220,16 @@ namespace CastRightCatchInvManagement
 
             cmd.CommandText =
                 """
+                CREATE TABLE IF NOT EXISTS login_attempts (
+                    username TEXT PRIMARY KEY NOT NULL COLLATE NOCASE,
+                    login_fails INTEGER NOT NULL DEFAULT 0,
+                    login_lock_until TEXT NOT NULL DEFAULT ''
+                );
+                """;
+            cmd.ExecuteNonQuery();
+
+            cmd.CommandText =
+                """
                 CREATE TABLE IF NOT EXISTS access_groups (
                     name TEXT PRIMARY KEY NOT NULL COLLATE NOCASE,
                     table_access TEXT NOT NULL DEFAULT ''
@@ -1424,12 +1434,21 @@ namespace CastRightCatchInvManagement
 
             EnsureCreated();
             using var db = Open();
-            // cmd: SELECT login_lock_until for this username (IT lock or timed lock).
+            // cmd: lock text from the account row, or from login_attempts when the name is not a user.
             using var cmd = db.CreateCommand();
             cmd.CommandText =
                 "SELECT COALESCE(login_lock_until, '') FROM app_accounts WHERE username = $user;";
             cmd.Parameters.AddWithValue("$user", username);
             string untilText = cmd.ExecuteScalar()?.ToString() ?? "";
+            // No app_accounts row: still honor a lock recorded for this typed name.
+            if (untilText.Length == 0)
+            {
+                using var ghost = db.CreateCommand();
+                ghost.CommandText =
+                    "SELECT COALESCE(login_lock_until, '') FROM login_attempts WHERE username = $user;";
+                ghost.Parameters.AddWithValue("$user", username);
+                untilText = ghost.ExecuteScalar()?.ToString() ?? "";
+            }
             // untilText is the IT-lock sentinel; refuse login until an admin unlocks.
             if (RecoveryGuard.IsItLock(untilText))
             {
@@ -1465,9 +1484,9 @@ namespace CastRightCatchInvManagement
                 "SELECT COALESCE(login_fails, 0) FROM app_accounts WHERE username = $user;";
             read.Parameters.AddWithValue("$user", username);
             object? raw = read.ExecuteScalar();
-            // No app_accounts row for this username; do not say the name is unknown.
+            // Unknown username: count against login_attempts so tries-left still shows.
             if (raw == null)
-                return "That username or password is not right.";
+                return NoteUnknownLoginFailure(db, username);
 
             int fails = Convert.ToInt32(raw) + 1;
             var penalty = RecoveryGuard.NextLoginPenalty(fails);
@@ -1487,6 +1506,32 @@ namespace CastRightCatchInvManagement
             return penalty.Message;
         }
 
+        /// <summary>Same 5-try / 15-minute / IT lock as a real account, keyed by the typed name.</summary>
+        private static string NoteUnknownLoginFailure(SqliteConnection db, string username)
+        {
+            using var read = db.CreateCommand();
+            read.CommandText =
+                "SELECT COALESCE(login_fails, 0) FROM login_attempts WHERE username = $user;";
+            read.Parameters.AddWithValue("$user", username);
+            int fails = Convert.ToInt32(read.ExecuteScalar() ?? 0) + 1;
+            var penalty = RecoveryGuard.NextLoginPenalty(fails);
+
+            using var write = db.CreateCommand();
+            write.CommandText =
+                """
+                INSERT INTO login_attempts (username, login_fails, login_lock_until)
+                VALUES ($user, $fails, $until)
+                ON CONFLICT(username) DO UPDATE SET
+                    login_fails = $fails,
+                    login_lock_until = $until;
+                """;
+            write.Parameters.AddWithValue("$user", username);
+            write.Parameters.AddWithValue("$fails", fails);
+            write.Parameters.AddWithValue("$until", penalty.Until);
+            write.ExecuteNonQuery();
+            return penalty.Message;
+        }
+
         /// <summary>Clear an expired timed lock so the next login is not still blocked.</summary>
         private static void ClearLoginTimeLock(string username)
         {
@@ -1496,6 +1541,11 @@ namespace CastRightCatchInvManagement
                 "UPDATE app_accounts SET login_lock_until = '' WHERE username = $user;";
             cmd.Parameters.AddWithValue("$user", username);
             cmd.ExecuteNonQuery();
+            using var ghost = db.CreateCommand();
+            ghost.CommandText =
+                "UPDATE login_attempts SET login_lock_until = '' WHERE username = $user;";
+            ghost.Parameters.AddWithValue("$user", username);
+            ghost.ExecuteNonQuery();
         }
 
         /// <summary>Reset failed-login count and lock after a successful sign-in.</summary>
@@ -1513,6 +1563,10 @@ namespace CastRightCatchInvManagement
                 "UPDATE app_accounts SET login_fails = 0, login_lock_until = '' WHERE username = $user;";
             cmd.Parameters.AddWithValue("$user", username);
             cmd.ExecuteNonQuery();
+            using var ghost = db.CreateCommand();
+            ghost.CommandText = "DELETE FROM login_attempts WHERE username = $user;";
+            ghost.Parameters.AddWithValue("$user", username);
+            ghost.ExecuteNonQuery();
         }
 
         /// <summary>Delete an account and its stay-signed-in sessions.</summary>
