@@ -5,5 +5,7 @@
 ## Install
 
 1. Click the download link above.
-2. Run the MSI on Windows. Allow admin if Windows asks.
-3. Open **Cast Right Catch Inventory** from the Start Menu.
+2. Run the MSI. Windows may say **Windows protected your PC**.
+3. Click **More info**, then **Run anyway**.
+4. Allow admin if Windows asks.
+5. Open **Cast Right Catch Inventory** from the Start Menu.
