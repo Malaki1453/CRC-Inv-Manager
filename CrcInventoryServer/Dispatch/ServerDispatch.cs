@@ -38,8 +38,8 @@ internal sealed class ServerDispatch
             ServerOps.AuthChangePassword => ChangePassword(payload, session),
             // Create missing tables on first use.
             ServerOps.TableEnsure => EnsureTables(),
-            // Header names for a table.
-            ServerOps.TableHeaders => Headers(payload),
+            // Header names for a table (denied → empty; $hide stripped).
+            ServerOps.TableHeaders => Headers(payload, session),
             // Rows filtered by the caller's table-access policy.
             ServerOps.TableRead => Read(payload, session),
             // Rows with ids, same policy filter.
@@ -50,12 +50,12 @@ internal sealed class ServerDispatch
             ServerOps.TableInsertMany => InsertMany(payload, session),
             // Update by id if the caller may write the row.
             ServerOps.TableUpdate => Update(payload, session),
-            // Add missing TEXT columns.
-            ServerOps.TableEnsureColumns => EnsureColumns(payload),
-            // Live (+ archive when viewing old) row count.
-            ServerOps.TableCount => Count(payload),
-            // Move completed process rows to archive.
-            ServerOps.TableArchive => Archive(payload),
+            // Add missing TEXT columns if the caller may write the table.
+            ServerOps.TableEnsureColumns => EnsureColumns(payload, session),
+            // Live (+ archive when viewing old) row count after the same filter as table.read.
+            ServerOps.TableCount => Count(payload, session),
+            // Move completed process rows to archive if the caller may write those tables.
+            ServerOps.TableArchive => Archive(payload, session),
             // Latest term_start date.
             ServerOps.TableLatestTerm => LatestTerm(),
             // Admin-only settings with secrets revealed.
@@ -68,10 +68,10 @@ internal sealed class ServerDispatch
             ServerOps.PrefsRead => _store.ReadPrefs(session.Username),
             // Write UI preferences for the signed-in user.
             ServerOps.PrefsWrite => WritePrefs(payload, session),
-            // Windows-user email lookup.
-            ServerOps.UserEmailRead => ReadUserEmail(payload),
-            // Windows-user email write.
-            ServerOps.UserEmailWrite => WriteUserEmail(payload),
+            // Windows-user email lookup (self or IT).
+            ServerOps.UserEmailRead => ReadUserEmail(payload, session),
+            // Windows-user email write (self or IT).
+            ServerOps.UserEmailWrite => WriteUserEmail(payload, session),
             // IT-only account count.
             ServerOps.AccountsCount => RequireIt(session, () => _store.CountAccounts()),
             // Self or IT: one account.
@@ -104,28 +104,28 @@ internal sealed class ServerDispatch
             ServerOps.AccountsAccessGet => AccessGet(payload, session),
             // Admin or IT: write overlay.
             ServerOps.AccountsAccessSet => AccessSet(payload, session),
-            // Bank list without Plaid secrets.
-            ServerOps.BankList => _store.ListBankAccounts(),
-            // Insert bank row.
-            ServerOps.BankInsert => BankInsert(payload),
-            // Update bank row.
-            ServerOps.BankUpdate => BankUpdate(payload),
-            // Delete bank row.
-            ServerOps.BankDelete => BankDelete(payload),
+            // Bank list without Plaid secrets (banking policy).
+            ServerOps.BankList => BankList(session),
+            // Insert bank row if the caller may write banking.
+            ServerOps.BankInsert => BankInsert(payload, session),
+            // Update bank row if the caller may write banking.
+            ServerOps.BankUpdate => BankUpdate(payload, session),
+            // Delete bank row if the caller may write banking.
+            ServerOps.BankDelete => BankDelete(payload, session),
             // Admin: decrypted Plaid link.
             ServerOps.BankLinkGet => BankLinkGet(payload, session),
             // Admin: write Plaid link.
             ServerOps.BankLinkSet => BankLinkSet(payload, session),
             // Admin: Plaid cursor only.
             ServerOps.BankCursor => BankCursor(payload, session),
-            // Store a PDF.
-            ServerOps.PdfSave => PdfSave(payload),
-            // PDF exists?
-            ServerOps.PdfHas => PdfHas(payload),
-            // Load a PDF.
-            ServerOps.PdfGet => PdfGet(payload),
-            // Delete a PDF.
-            ServerOps.PdfDelete => PdfDelete(payload),
+            // Store a PDF if the caller may write invoices or purchases for that kind.
+            ServerOps.PdfSave => PdfSave(payload, session),
+            // PDF exists? Denied kinds look missing.
+            ServerOps.PdfHas => PdfHas(payload, session),
+            // Load a PDF if the caller may read that kind's table.
+            ServerOps.PdfGet => PdfGet(payload, session),
+            // Delete a PDF if the caller may write that kind's table.
+            ServerOps.PdfDelete => PdfDelete(payload, session),
             // IT: admins.json lists.
             ServerOps.RolesRead => RequireIt(session, () => new RolesDto
             {
@@ -255,11 +255,16 @@ internal sealed class ServerDispatch
         return true;
     }
 
-    /// <summary>Header names for the requested table.</summary>
-    private string[] Headers(JsonElement payload)
+    /// <summary>Header names for the requested table after $hide; denied tables return none.</summary>
+    private string[] Headers(JsonElement payload, ClientSession session)
     {
         var request = Read<TableRequest>(payload);
-        return _store.Headers(request.Table, request.ViewOld);
+        return AccessFilter.RestrictHeaders(
+            _store,
+            request.Table,
+            _store.Headers(request.Table, request.ViewOld),
+            session.Username,
+            fullAccess: false);
     }
 
     /// <summary>Reads rows and strips blocked rows/hidden columns for the signed-in user.</summary>
@@ -326,24 +331,33 @@ internal sealed class ServerDispatch
             throw new InvalidOperationException("You do not have access to that data.");
     }
 
-    /// <summary>Adds missing TEXT columns on live (and archive when viewing old).</summary>
-    private bool EnsureColumns(JsonElement payload)
+    /// <summary>Adds missing TEXT columns on live (and archive when viewing old) if the caller may write the table.</summary>
+    private bool EnsureColumns(JsonElement payload, ClientSession session)
     {
         var request = Read<TableRequest>(payload);
+        RequireRowAccess(request.Table, new Dictionary<string, string>(), session);
         _store.EnsureColumns(request.Table, request.Columns ?? Array.Empty<string>(), request.ViewOld);
         return true;
     }
 
-    /// <summary>Row count for the requested table.</summary>
-    private int Count(JsonElement payload)
+    /// <summary>Row count matching table.read (denied → 0; $block rows omitted).</summary>
+    private int Count(JsonElement payload, ClientSession session)
     {
         var request = Read<TableRequest>(payload);
-        return _store.Count(request.Table, request.ViewOld);
+        var rows = _store.Read(request.Table, request.ViewOld);
+        return AccessFilter.Restrict(
+            _store,
+            request.Table,
+            rows,
+            session.Username,
+            fullAccess: false).Count;
     }
 
-    /// <summary>Archives completed process rows for the optional term in the request.</summary>
-    private int Archive(JsonElement payload)
+    /// <summary>Archives completed process rows if the caller may write each process table.</summary>
+    private int Archive(JsonElement payload, ClientSession session)
     {
+        foreach (var table in Schema.ProcessTables)
+            RequireRowAccess(table, new Dictionary<string, string>(), session);
         var request = Read<TableRequest>(payload);
         DateTime? term = DateTime.TryParse(request.Term, out var parsed) ? parsed : null;
         return _store.ArchiveCompleted(term);
@@ -376,17 +390,23 @@ internal sealed class ServerDispatch
         return true;
     }
 
-    /// <summary>Looks up the email stored for a Windows user name.</summary>
-    private string? ReadUserEmail(JsonElement payload)
+    /// <summary>Looks up the email stored for a Windows user name. Non-IT may only read their own.</summary>
+    private string? ReadUserEmail(JsonElement payload, ClientSession session)
     {
         var request = Read<UserEmailRequest>(payload);
+        // Non-IT must not read another Windows user's stored email.
+        if (!SelfOrIt(session, request.WindowsUser))
+            throw new InvalidOperationException("You do not have access to that data.");
         return _store.ReadUserEmail(request.WindowsUser);
     }
 
-    /// <summary>Stores the email for a Windows user name.</summary>
-    private bool WriteUserEmail(JsonElement payload)
+    /// <summary>Stores the email for a Windows user name. Non-IT may only write their own.</summary>
+    private bool WriteUserEmail(JsonElement payload, ClientSession session)
     {
         var request = Read<UserEmailRequest>(payload);
+        // Non-IT must not write another Windows user's stored email.
+        if (!SelfOrIt(session, request.WindowsUser))
+            throw new InvalidOperationException("You do not have access to that data.");
         _store.WriteUserEmail(request.WindowsUser, request.Email);
         return true;
     }
@@ -549,9 +569,19 @@ internal sealed class ServerDispatch
         return true;
     }
 
-    /// <summary>Inserts a bank_accounts row and returns its id.</summary>
-    private long BankInsert(JsonElement payload)
+    /// <summary>Bank accounts the caller may see; denied banking policy returns none.</summary>
+    private List<BankRowDto> BankList(ClientSession session)
     {
+        // Same as table.read: a denied banking table looks empty rather than throwing.
+        if (!AccessFilter.CanRead(_store, Schema.BankTransactions, session.Username, fullAccess: false))
+            return new List<BankRowDto>();
+        return _store.ListBankAccounts();
+    }
+
+    /// <summary>Inserts a bank_accounts row and returns its id.</summary>
+    private long BankInsert(JsonElement payload, ClientSession session)
+    {
+        RequireRowAccess(Schema.BankTransactions, new Dictionary<string, string>(), session);
         var request = Read<BankWriteRequest>(payload);
         return _store.InsertBankAccount(
             request.Name ?? "",
@@ -561,8 +591,9 @@ internal sealed class ServerDispatch
     }
 
     /// <summary>Updates non-secret fields on a bank_accounts row.</summary>
-    private bool BankUpdate(JsonElement payload)
+    private bool BankUpdate(JsonElement payload, ClientSession session)
     {
+        RequireRowAccess(Schema.BankTransactions, new Dictionary<string, string>(), session);
         var request = Read<BankWriteRequest>(payload);
         _store.UpdateBankAccount(
             request.Id,
@@ -574,8 +605,9 @@ internal sealed class ServerDispatch
     }
 
     /// <summary>Deletes a bank_accounts row.</summary>
-    private bool BankDelete(JsonElement payload)
+    private bool BankDelete(JsonElement payload, ClientSession session)
     {
+        RequireRowAccess(Schema.BankTransactions, new Dictionary<string, string>(), session);
         var request = Read<BankWriteRequest>(payload);
         _store.DeleteBankAccount(request.Id);
         return true;
@@ -612,32 +644,40 @@ internal sealed class ServerDispatch
         return true;
     }
 
-    /// <summary>Stores a PDF under kind+key.</summary>
-    private bool PdfSave(JsonElement payload)
+    /// <summary>Stores a PDF under kind+key if the caller may write that kind's table.</summary>
+    private bool PdfSave(JsonElement payload, ClientSession session)
     {
         var request = Read<PdfRequest>(payload);
+        RequireRowAccess(AccessFilter.TableForPdfKind(request.Kind), new Dictionary<string, string>(), session);
         _store.SavePdf(request.Kind, request.Key, request.FileName ?? "", request.Content ?? Array.Empty<byte>());
         return true;
     }
 
-    /// <summary>True when a PDF exists for kind+key.</summary>
-    private bool PdfHas(JsonElement payload)
+    /// <summary>True when a PDF exists for kind+key and the caller may read that kind's table.</summary>
+    private bool PdfHas(JsonElement payload, ClientSession session)
     {
         var request = Read<PdfRequest>(payload);
+        // Denied invoices/purchases must not reveal that a PDF is stored.
+        if (!AccessFilter.CanRead(_store, AccessFilter.TableForPdfKind(request.Kind), session.Username, fullAccess: false))
+            return false;
         return _store.HasPdf(request.Kind, request.Key);
     }
 
-    /// <summary>Loads a stored PDF, or null when missing.</summary>
-    private PdfDto? PdfGet(JsonElement payload)
+    /// <summary>Loads a stored PDF, or null when missing or the caller may not read that kind.</summary>
+    private PdfDto? PdfGet(JsonElement payload, ClientSession session)
     {
         var request = Read<PdfRequest>(payload);
+        // Same as table.read: denied tables look empty.
+        if (!AccessFilter.CanRead(_store, AccessFilter.TableForPdfKind(request.Kind), session.Username, fullAccess: false))
+            return null;
         return _store.TryGetPdf(request.Kind, request.Key);
     }
 
-    /// <summary>Deletes a stored PDF by kind+key.</summary>
-    private bool PdfDelete(JsonElement payload)
+    /// <summary>Deletes a stored PDF by kind+key if the caller may write that kind's table.</summary>
+    private bool PdfDelete(JsonElement payload, ClientSession session)
     {
         var request = Read<PdfRequest>(payload);
+        RequireRowAccess(AccessFilter.TableForPdfKind(request.Kind), new Dictionary<string, string>(), session);
         _store.DeletePdf(request.Kind, request.Key);
         return true;
     }

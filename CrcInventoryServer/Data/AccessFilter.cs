@@ -88,6 +88,69 @@ internal static class AccessFilter
         return !policy.IsBlocked(values);
     }
 
+    /// <summary>True when the user may read this table (empty policy allows every table).</summary>
+    public static bool CanRead(
+        InventoryStore store,
+        string table,
+        string username,
+        bool fullAccess)
+    {
+        // Callers that already passed an admin/IT check skip per-table policy.
+        if (fullAccess)
+            return true;
+        return Load(store, username).CanRead(table);
+    }
+
+    /// <summary>
+    /// Headers the user may see: denied table → empty; $hide columns are omitted.
+    /// Matches what Restrict would leave on a row from table.read.
+    /// </summary>
+    public static string[] RestrictHeaders(
+        InventoryStore store,
+        string table,
+        string[] headers,
+        string username,
+        bool fullAccess)
+    {
+        headers ??= Array.Empty<string>();
+        // Admins/IT calling with fullAccess see every column name.
+        if (fullAccess)
+            return headers;
+
+        var policy = Load(store, username);
+        // Denied tables must not leak column names.
+        if (!policy.CanRead(table))
+            return Array.Empty<string>();
+
+        var dummy = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in headers)
+        {
+            // Skip blank header strings so Strip only sees real columns.
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+            dummy[name] = "";
+        }
+
+        var kept = policy.Strip(table, dummy);
+        return headers.Where(name => kept.ContainsKey(name)).ToArray();
+    }
+
+    /// <summary>Inventory table whose policy gates stored PDFs of this kind (invoices vs purchases, plus sales orders).</summary>
+    public static string TableForPdfKind(string kind)
+    {
+        kind = (kind ?? "").Trim();
+        // Purchase PDFs (PO and vendor invoice) follow the purchases table.
+        if (kind.Equals("purchase", StringComparison.OrdinalIgnoreCase) ||
+            kind.Equals("purchase_invoice", StringComparison.OrdinalIgnoreCase))
+            return Schema.PurchaseSales;
+        // Sales-order and sale PDFs follow the sales table.
+        if (kind.Equals("sales_order", StringComparison.OrdinalIgnoreCase) ||
+            kind.Equals("sale", StringComparison.OrdinalIgnoreCase))
+            return Schema.Sales;
+        // Invoice and invoice-source PDFs follow invoices.
+        return Schema.Invoices;
+    }
+
     /// <summary>Combine group policies so allowed wins over blocked.</summary>
     public static string Merge(IEnumerable<string> jsons)
     {
@@ -592,6 +655,9 @@ internal static class AccessFilter
             // credits table is "credits".
             if (table.Equals(Schema.Credits, StringComparison.OrdinalIgnoreCase))
                 return "credits";
+            // pending_changes is "pending" so deny-all Admin JSON covers the review queue.
+            if (table.Equals(Schema.PendingChanges, StringComparison.OrdinalIgnoreCase))
+                return "pending";
             return table;
         }
     }

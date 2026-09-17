@@ -43,7 +43,7 @@ internal static class Schema
 
     /// <summary>Admin group: Settings and user management only; every inventory table is denied.</summary>
     public const string AdminGroupAccessJson =
-        "{\"purchases\":false,\"sales\":false,\"invoices\":false,\"customers\":false,\"vendors\":false,\"items\":false,\"banking\":false,\"debits\":false,\"credits\":false,\"reports\":false}";
+        "{\"purchases\":false,\"sales\":false,\"invoices\":false,\"customers\":false,\"vendors\":false,\"items\":false,\"banking\":false,\"debits\":false,\"credits\":false,\"reports\":false,\"pending\":false}";
 
     /// <summary>Every inventory table created in the live database.</summary>
     public static readonly string[] All =
