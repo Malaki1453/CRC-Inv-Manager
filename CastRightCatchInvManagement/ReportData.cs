@@ -747,7 +747,7 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Currency for chips and table cells.</summary>
-        private static string Money(decimal amount) => amount.ToString("C");
+        private static string Money(decimal amount) => MoneyFormat.Display(amount);
 
         /// <summary>Margin percent, or em dash when whole is zero.</summary>
         private static string Percent(decimal part, decimal whole)

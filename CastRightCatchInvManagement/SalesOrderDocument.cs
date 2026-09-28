@@ -12,7 +12,7 @@ namespace CastRightCatchInvManagement
                 ? draft.CustomerName
                 : draft.CustomerCode;
             string fileName = SanitizeFile($"Sales Order {draft.SoNumber} - {customer}.pdf");
-            return DataFiles.SaveStoredPdf(
+            return DataFiles.ReplaceStoredPdf(
                 DataFiles.PdfKindSalesOrder,
                 draft.SoNumber.Trim(),
                 fileName,
@@ -41,15 +41,15 @@ namespace CastRightCatchInvManagement
             y += 14;
             var addressLines = (draft.Address ?? "").Replace("\r", "").Split('\n');
             g.Text(36, y, "Ship To:", 8, true, Theme.Navy);
-            g.Text(110, y, addressLines.Length > 0 ? Clip(addressLines[0], 36) : "", 8, false, Theme.Ink);
+            g.Text(110, y, addressLines.Length > 0 ? PdfItemText.Clip(addressLines[0], 36) : "", 8, false, Theme.Ink);
             g.Text(330, y, "Email:", 8, true, Theme.Navy);
-            g.Text(420, y, Clip(draft.Email, 28), 8, false, Theme.Ink);
+            g.Text(420, y, PdfItemText.Clip(draft.Email, 28), 8, false, Theme.Ink);
 
             // Second address line only when Ship To is multi-line.
             if (addressLines.Length > 1 && addressLines[1].Trim().Length > 0)
             {
                 y += 12;
-                g.Text(110, y, Clip(addressLines[1], 36), 8, false, Theme.Ink);
+                g.Text(110, y, PdfItemText.Clip(addressLines[1], 36), 8, false, Theme.Ink);
             }
 
             y += 22;
@@ -66,11 +66,7 @@ namespace CastRightCatchInvManagement
             g.Text(150, y + 13, draft.CustomerPo, 8, false, Theme.Ink);
             g.Text(280, y + 13, draft.OrderDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink);
             g.Text(390, y + 13, draft.ReleaseDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink);
-            g.Text(490, y + 13, Clip(draft.Warehouse, 16), 8, false, Theme.Ink);
-
-            y += 26;
-            g.Text(36, y, "Freight Terms:", 8, true, Theme.Navy);
-            g.Text(110, y, draft.FreightTerms, 8, false, Theme.Ink);
+            g.Text(490, y + 13, PdfItemText.Clip(draft.Warehouse, 16), 8, false, Theme.Ink);
 
             y += 18;
             g.Fill(36, y, 540, 16, Theme.Navy);
@@ -83,8 +79,8 @@ namespace CastRightCatchInvManagement
 
             y += 16;
             float tableTop = y;
-            float rowH = 18;
-            int max = Math.Max(10, draft.Lines.Count);
+            float rowH = 26;
+            int max = Math.Max(8, draft.Lines.Count);
             g.Rect(36, y, 540, max * rowH);
 
             decimal cases = 0;
@@ -96,10 +92,10 @@ namespace CastRightCatchInvManagement
                 // Zebra-stripe odd rows so the pick ticket is easier to scan.
                 if (i % 2 == 1)
                     g.Fill(36.5f, ly, 539, rowH, Theme.GridAlt);
-                g.Text(42, ly + 12, Clip(line.ItemCode, 12), 7.5f, false, Theme.Ink);
-                g.Text(114, ly + 12, Clip(line.LotNumber, 14), 7.5f, false, Theme.Ink);
-                g.Text(196, ly + 12, Clip(line.Description, 28), 7.5f, false, Theme.Ink);
-                g.Text(372, ly + 12, Clip(line.UnitSize, 8), 7.5f, false, Theme.Ink);
+                g.Text(42, ly + 12, PdfItemText.Clip(line.ItemCode, 12), 7.5f, false, Theme.Ink);
+                g.Text(114, ly + 12, PdfItemText.Clip(line.LotNumber, 14), 7.5f, false, Theme.Ink);
+                PdfItemText.Draw(g, 196, ly, line.Description, line.ItemCode, line.Coo, 28);
+                g.Text(372, ly + 12, PdfItemText.Clip(line.UnitSize, 8), 7.5f, false, Theme.Ink);
                 g.Text(430, ly + 12, FormatQty(line.Cases), 7.5f, false, Theme.Ink);
                 g.TextRight(572, ly + 12, FormatQty(line.Volume), 7.5f, false, Theme.Ink);
                 cases += InvoiceLineRow.ParseNumber(line.Cases);
@@ -131,13 +127,6 @@ namespace CastRightCatchInvManagement
             if (n == 0 && string.IsNullOrWhiteSpace(value))
                 return "";
             return n.ToString("0.###", CultureInfo.InvariantCulture);
-        }
-
-        /// <summary>Trim text that would overflow a PDF column, adding a trailing period.</summary>
-        private static string Clip(string? text, int max)
-        {
-            text ??= "";
-            return text.Length <= max ? text : text[..(max - 1)] + ".";
         }
 
         /// <summary>First non-blank value, used for contact phone fallbacks.</summary>

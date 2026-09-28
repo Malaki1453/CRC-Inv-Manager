@@ -7,7 +7,19 @@ namespace CastRightCatchInvManagement
         public ItemCodes()
         {
             InitializeComponent();
-            UiStyle.ApplyDataPage(this, "Inventory", lblTitle, btnUpload, dataGridView1);
+            UiStyle.ApplyDataPage(
+                this,
+                "Inventory",
+                lblTitle,
+                btnUpload,
+                dataGridView1,
+                "Add Item",
+                (_, _) => AddItemCode.OpenNew());
+            UiStyle.BindRowEdit(
+                dataGridView1,
+                AddItemCode.OpenEdit,
+                "Item",
+                "Edit Item");
             DataFiles.DataChanged += LoadTable;
             LoadTable();
         }

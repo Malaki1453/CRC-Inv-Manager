@@ -17,8 +17,11 @@ namespace CastRightCatchInvManagement
             [AppPage.Sales]         = () => new Sales(),
             [AppPage.SalesOrder]    = () => new SalesOrder(),
             [AppPage.Customers]     = () => new Customers(),
+            [AppPage.AddCustomer]   = () => new AddCustomer(),
             [AppPage.Vendors]       = () => new Vendors(),
+            [AppPage.AddVendor]     = () => new AddVendor(),
             [AppPage.ItemCodes]     = () => new ItemCodes(),
+            [AppPage.AddItemCode]   = () => new AddItemCode(),
             [AppPage.Invoicing]     = () => new Invoicing(),
             [AppPage.InvoicePdf]    = () => new InvoicePdf(),
             [AppPage.Debits]        = () => new Debits(),
@@ -187,6 +190,14 @@ namespace CastRightCatchInvManagement
         public static void GoTo(AppPage page)
         {
             GoTo(page, _active ?? _main);
+        }
+
+        /// <summary>Open a table page and put the identifying value in its search box.</summary>
+        public static void GoToAndSearch(AppPage page, string query)
+        {
+            GoTo(page);
+            if (_instances.TryGetValue(page, out var form) && form != null && !form.IsDisposed)
+                UiStyle.PrefillTableSearch(form, query);
         }
 
         /// <summary>Show a page in a workspace after access checks and renamed-page aliases.</summary>

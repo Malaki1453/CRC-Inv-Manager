@@ -229,6 +229,15 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>True when this page still shows the idle search overlay and the table should not load yet.</summary>
+        /// <summary>Fill the data-page search box and show matching rows.</summary>
+        public static void PrefillTableSearch(Form form, string query)
+        {
+            var stage = FindDataSearch(form);
+            if (stage == null)
+                return;
+            stage.Prefill(query);
+        }
+
         public static bool DataPageHasIdleSearch(Form form)
         {
             var stage = FindDataSearch(form);
@@ -384,14 +393,26 @@ namespace CastRightCatchInvManagement
                 {
                     menu.Items.Add("Delete", null, (_, _) =>
                     {
-                        // Deletes queue or apply immediately; confirm either way.
-                        if (MessageBox.Show(
-                                "Delete this row?",
-                                "Delete",
-                                MessageBoxButtons.YesNo,
-                                MessageBoxIcon.Warning) != DialogResult.Yes)
-                            return;
-                        var result = DataFiles.MutateDelete(table, record);
+                        MutateResult result;
+                        // Sales grid rows are product lines; deleting one must take the whole SO with it.
+                        if (table.Equals(DataFiles.Sales, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!ConfirmDeleteSalesOrder(record))
+                                return;
+                            result = DataFiles.DeleteSalesOrder(record);
+                        }
+                        else
+                        {
+                            // Purchase/sales deletes wait for an administrator; other tables may apply immediately.
+                            if (MessageBox.Show(
+                                    "Delete this row?",
+                                    "Delete",
+                                    MessageBoxButtons.YesNo,
+                                    MessageBoxIcon.Warning) != DialogResult.Yes)
+                                return;
+                            result = DataFiles.MutateDelete(table, record);
+                        }
+
                         var host = grid.FindForm();
                         // Grid can be disposed mid-click if the page was closed; nowhere to toast.
                         if (host == null)
@@ -409,6 +430,20 @@ namespace CastRightCatchInvManagement
                 RowContextMenuShown = true;
                 menu.Show(grid, grid.PointToClient(Control.MousePosition));
             };
+        }
+
+        /// <summary>Warn that every line on this SO # will be removed, not only the clicked product.</summary>
+        private static bool ConfirmDeleteSalesOrder(Dictionary<string, string> record)
+        {
+            string so = DataFiles.GetRecord(record, "SO #").Trim();
+            string text = so.Length > 0
+                ? "Delete sales order " + so + "?\n\nThis removes the whole sales order — every product line with that SO # — not just this item."
+                : "Delete this entire sales order?\n\nThis removes every product line on the order, not just this item.";
+            return MessageBox.Show(
+                text,
+                "Delete Sales Order",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) == DialogResult.Yes;
         }
 
         private static void ShowCopyCellMenu(DataGridView grid, int row, int col)

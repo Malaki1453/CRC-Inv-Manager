@@ -98,7 +98,7 @@ namespace CastRightCatchInvManagement
 
             AddSection(stack, "SalesOrder", "Sales orders",
                 "Create Sales Order is one customer PO with as many product lines as you need, like New Purchase. Type a customer code or name to fill the header. Type an item code on a line to fill description and country of origin. Each product is its own line. Lot # is the purchase PO for that item and suggests POs that already have that item. Customer PO is stored on the sale as Invoice #. Freight Co is a vendor list for tracking and is stored on the sale; it is not printed on the PDF. Double-click a Sales row to see customer info, the order header, and every item on that sales order.",
-                "Ship To uses the customer Address. If none is on file, the field says “Not found, please input manually.”",
+                "Ship To uses the customer shipping address (or billing when they are the same). If none is on file, the field says “Not found, please input manually.”",
                 "Enter a customer PO, or middle-click a sale, to add every matching line.",
                 "Save Sales Order writes the sales rows, a sale PDF, and a sales-order PDF, stores them in the database, writes the SO # onto those sales lines, and opens the sales-order PDF.");
 
@@ -111,12 +111,12 @@ namespace CastRightCatchInvManagement
                 "PDFs live in the database and open in the app from there. Save as downloads a copy. Print, Replace, and Edit invoice / Edit sales order are on the toolbar. That window is not a workspace tab.");
 
             AddSection(stack, "Customers", "Customers",
-                "The customer table shows name, company, phone, and current balance. Double-click View Details for Identity (including contact, terms, and address), a Banking section (routing number and account last 4), and tabs for Description, Sales, and Bank transactions. Right-click Edit Customer to change the record. Hide Routing Number and Account Number on a group if those users should not see bank details.",
-                "Address, email, and phone fill Ship To on invoices and sales orders.");
+                "The customer table shows name, company, phone, and current balance. New Customer is a full page for adding a record. Check Shipping address is different to enter a shipping address; leave it unchecked when shipping is the same as billing. Double-click View Details for Identity (including contact, terms, and billing/shipping), a Banking section (routing number and account last 4), and tabs for Description, Sales, and Bank transactions. Right-click Edit Customer to change the record. Hide Routing Number and Account Number on a group if those users should not see bank details.",
+                "Shipping address fills Ship To on invoices and sales orders. If shipping is the same as billing, Ship To uses the billing address.");
 
             AddSection(stack, "Lookups", "Vendors, inventory, and other lists",
-                "The vendor table shows name, company, phone, and current balance. Double-click View Details for Identity (including contact name), a Banking section, and tabs for Description, Purchases, and Bank transactions. Right-click Edit Vendor to change the record. Type is a required dropdown. Administrators manage types and lookup filters under Admin management: a filter is a set of types (Logistics can include Trucking) and can be used by more than one field. New Purchase Forwarder and Logistics each pick a filter. Hide Routing Number and Account Number on a group if those users should not see bank details.",
-                "Vendors and Inventory are lookup tables used on purchase and sales forms.",
+                "The vendor table shows name, company, phone, and current balance. New Vendor is a full page for adding a record. Type is required. Double-click View Details for Identity, Banking, and tabs for Description, Purchases, and Bank transactions. Right-click Edit Vendor to change the record. Administrators manage types and lookup filters under Admin management: a filter is a set of types (Logistics can include Trucking) and can be used by more than one field. New Purchase Forwarder and Logistics each pick a filter. Hide Routing Number and Account Number on a group if those users should not see bank details.",
+                "Vendors and Inventory are lookup tables used on purchase and sales forms. New Item adds a catalog row including pack size. Picking an item on New Purchase or New Sale fills pack size from that catalog entry.",
                 "Debits and Credits are process tables: unfinished rows stay live, and completed rows move into Old Inventory when you roll the term.",
                 "Banking shows imported and live-feed transactions. Accounts labels the bank accounts. Read file imports OFX, QFX, or CSV and skips duplicates. Sync live feed pulls new Plaid lines without opening the bank login.");
 

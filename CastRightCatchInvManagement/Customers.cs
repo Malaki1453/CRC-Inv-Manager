@@ -18,10 +18,10 @@ namespace CastRightCatchInvManagement
                 btnUpload,
                 dataGridView1,
                 "Add Customer",
-                (_, _) => PartyEditForm.OpenCustomerNew());
+                (_, _) => AddCustomer.OpenNew());
             UiStyle.BindRowEdit(
                 dataGridView1,
-                PartyEditForm.OpenCustomerEdit,
+                AddCustomer.OpenEdit,
                 "Customer",
                 "Edit Customer");
             DataFiles.DataChanged += LoadTable;

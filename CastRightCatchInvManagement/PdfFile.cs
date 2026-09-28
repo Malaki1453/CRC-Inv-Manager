@@ -7,7 +7,7 @@ namespace CastRightCatchInvManagement
         public static string Save(string kind, string key, string title, PdfDraw page)
         {
             string fileName = Sanitize(title + ".pdf");
-            return DataFiles.SaveStoredPdf(kind, (key ?? "").Trim(), fileName, page.ToPdf());
+            return DataFiles.ReplaceStoredPdf(kind, (key ?? "").Trim(), fileName, page.ToPdf());
         }
 
         /// <summary>Replace characters Windows will not allow in a file name.</summary>

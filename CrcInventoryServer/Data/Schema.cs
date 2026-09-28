@@ -36,6 +36,8 @@ internal static class Schema
     public const string RecordStatus = "Record Status";
     /// <summary>Default Record Status value for live rows.</summary>
     public const string RecordLive = "Live";
+    /// <summary>Record Status while a delete waits for administrator review.</summary>
+    public const string RecordWaitingDelete = "Waiting for confirmation to delete";
     /// <summary>Built-in access group for administrators.</summary>
     public const string AdminGroup = "Admin";
     /// <summary>Built-in access group for IT.</summary>
@@ -79,19 +81,19 @@ internal static class Schema
         {
             // Purchase tracker columns through Record Status.
             PurchaseSales =>
-                "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Price Paid / LB,Overhead / LB,Freight / LB,Freight Company,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Terms,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Record Status",
+                "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Price Paid / LB,Overhead / LB,Freight / LB,Freight Company,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Sale By Date,Override Minimum Profit,Record Status",
             // Sales: PO # is the purchase lot; Invoice # is the customer PO (Lot # was migrated away).
             Sales =>
-                "PO #,SO #,Customer Code,Customer,Customer Terms,Item Code,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Record Status",
+                "PO #,SO #,Customer Code,Customer,Item Code,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Record Status",
             // Customer master, including sealed routing/account numbers.
             Customers =>
-                "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Email,Phone,Current Balance,Notes,Description,Routing Number,Account Number,Record Status",
+                "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Shipping Address,Email,Phone,Current Balance,Notes,Description,Routing Number,Account Number,Record Status",
             // Vendor master, including sealed routing/account numbers.
             Vendors =>
                 "Code,Name,Company,Type,Terms,Amount,Phone,Contact Name,Current Balance,Notes,Description,Finalized,Routing Number,Account Number,Record Status",
             // Item catalog columns.
             ItemCodes =>
-                "Code,Description,COO,Farmed / Wild,Fresh / Frozen,Proc Country,Species,Scientific Name,Record Status",
+                "Code,Description,COO,Farmed / Wild,Fresh / Frozen,Proc Country,Species,Scientific Name,Pack Size,Shelf Life Months,Minimum Profit,Record Status",
             // Invoice columns including the JSON line blob.
             Invoices =>
                 "Invoice #,Type,SO #,PO #,Customer Code,Customer,Vendor Code,Vendor,Ship Date,Due Date,Amount,Paid,Outstanding,Status,Payment Date,Payment Method,Invoice Date,Terms,Ship Via,Sales Rep,Sold To,Ship To,Discount,Freight,Freight Company,Tax,Tax Mode,Lines Json,Record Status",

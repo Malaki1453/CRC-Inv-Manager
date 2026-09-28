@@ -195,8 +195,8 @@ namespace CastRightCatchInvManagement
                 PutReadout(grid, 0, 1, "TERMS", DataFiles.GetRecord(record, "Terms"));
                 PutReadout(grid, 1, 1, "TYPE", DataFiles.GetRecord(record, "Type"));
                 PutReadout(grid, 2, 1, "CONTACT NAME", DataFiles.GetRecord(record, "Contact Name"));
-                PutReadout(grid, 3, 1, "AMOUNT", DataFiles.GetRecord(record, "Amount"));
-                PutReadout(grid, 0, 2, "CURRENT BALANCE", DataFiles.GetRecord(record, "Current Balance"));
+                PutReadout(grid, 3, 1, "AMOUNT", MoneyFormat.Display(DataFiles.GetRecord(record, "Amount")));
+                PutReadout(grid, 0, 2, "CURRENT BALANCE", MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance")));
                 grid.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
                 grid.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
                 grid.RowStyles.Add(new RowStyle(SizeType.Percent, 20));
@@ -207,10 +207,11 @@ namespace CastRightCatchInvManagement
                 PutReadout(grid, 0, 1, "CONTACT NAME", DataFiles.GetRecord(record, "Contact Name"));
                 PutReadout(grid, 1, 1, "EMAIL", DataFiles.GetRecord(record, "Email"));
                 PutReadout(grid, 2, 1, "TERMS", DataFiles.GetRecord(record, "Terms"));
-                PutReadout(grid, 3, 1, "CREDIT LIMIT", DataFiles.GetRecord(record, "Credit Limit"));
-                PutReadout(grid, 0, 2, "CURRENT BALANCE", DataFiles.GetRecord(record, "Current Balance"));
+                PutReadout(grid, 3, 1, "CREDIT LIMIT", MoneyFormat.Display(DataFiles.GetRecord(record, "Credit Limit")));
+                PutReadout(grid, 0, 2, "CURRENT BALANCE", MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance")));
                 PutReadout(grid, 1, 2, "ESTABLISHED", DataFiles.GetRecord(record, "Established"));
-                PutReadout(grid, 0, 3, "ADDRESS", DataFiles.GetRecord(record, "Address"), colSpan: 4);
+                PutReadout(grid, 0, 3, "BILLING ADDRESS", DataFiles.CustomerBillingAddress(record), colSpan: 2);
+                PutReadout(grid, 2, 3, "SHIPPING ADDRESS", DataFiles.CustomerShippingAddress(record), colSpan: 2);
                 grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
                 grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
                 grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));

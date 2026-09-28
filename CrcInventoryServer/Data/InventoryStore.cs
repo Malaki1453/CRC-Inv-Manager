@@ -86,13 +86,17 @@ internal sealed partial class InventoryStore
             {
                 DropTextColumn(table, "Vendor Invoice #", archive);
                 DropTextColumn(table, "Volume Received", archive);
+                DropTextColumn(table, "Vendor Terms", archive);
             }
             // PDF Created was removed from invoices; drop it if an older file still has it.
             if (table.Equals(Schema.Invoices, StringComparison.OrdinalIgnoreCase))
                 DropTextColumn(table, "PDF Created", archive);
             // Sales: Lot # was the purchase lot; copy into PO # / Invoice # then drop Lot #.
             if (table.Equals(Schema.Sales, StringComparison.OrdinalIgnoreCase))
+            {
                 MigrateSalesLotToPo(archive);
+                DropTextColumn(table, "Customer Terms", archive);
+            }
         }
 
         // Archive databases only hold process tables; skip live-only app tables.

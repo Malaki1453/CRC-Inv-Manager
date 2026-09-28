@@ -50,6 +50,7 @@ namespace CastRightCatchInvManagement
             _cs = MakeBox();
             _volume = MakeBox();
             _price = MakeBox();
+            MoneyFormat.BindInput(_price);
             _totalPerLb = MakeTotal();
             _total = MakeTotal();
 
@@ -77,6 +78,7 @@ namespace CastRightCatchInvManagement
 
             _packSize.TextChanged += (_, _) => RecalcVolume();
             _cs.TextChanged += (_, _) => RecalcVolume();
+            _item.Leave += (_, _) => FillPackFromCatalog();
             foreach (var box in Fields())
                 box.TextChanged += (_, _) => OnFieldChanged();
 
@@ -127,6 +129,9 @@ namespace CastRightCatchInvManagement
                 // Extra on item hits is country of origin.
                 if (hit.Extra.Length > 0)
                     _coo.Text = hit.Extra;
+                string pack = DataFiles.ItemPackSize(hit.Code);
+                if (pack.Length > 0)
+                    _packSize.Text = pack;
             }
             finally
             {
@@ -136,6 +141,20 @@ namespace CastRightCatchInvManagement
 
             RecalcVolume();
             Changed?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>Fill pack size from the item catalog when the line does not already have one.</summary>
+        private void FillPackFromCatalog()
+        {
+            if (_filling || _packSize.Text.Trim().Length > 0)
+                return;
+            string pack = DataFiles.ItemPackSize(_item.Text);
+            if (pack.Length == 0)
+                return;
+            _filling = true;
+            _packSize.Text = pack;
+            _filling = false;
+            RecalcVolume();
         }
 
         /// <summary>Load this line from a purchases-table row.</summary>
@@ -183,7 +202,7 @@ namespace CastRightCatchInvManagement
                 _packSize.Text = pack;
                 _cs.Text = cases;
                 _volume.Text = volume;
-                _price.Text = price;
+                _price.Text = MoneyFormat.Display(price);
             }
             finally
             {
@@ -207,9 +226,9 @@ namespace CastRightCatchInvManagement
                 PackSize = _packSize.Text.Trim(),
                 Cases = _cs.Text.Trim(),
                 Volume = _volume.Text.Trim(),
-                Price = _price.Text.Trim(),
-                TotalPerLb = _totalPerLb.Text.Trim(),
-                TotalCost = _total.Text.Trim()
+                Price = MoneyFormat.Store(_price.Text),
+                TotalPerLb = MoneyFormat.Store(_totalPerLb.Text),
+                TotalCost = MoneyFormat.Store(_total.Text)
             };
         }
 
@@ -280,8 +299,8 @@ namespace CastRightCatchInvManagement
         {
             decimal perLb = ParseNumber(_price.Text) + _overhead + _freight + _forwarder + _other;
             decimal lbs = ParseNumber(_volume.Text);
-            _totalPerLb.Text = perLb.ToString("0.####", CultureInfo.InvariantCulture);
-            _total.Text = (perLb * lbs).ToString("0.00", CultureInfo.InvariantCulture);
+            _totalPerLb.Text = MoneyFormat.Plain(perLb);
+            _total.Text = MoneyFormat.Display(perLb * lbs);
         }
 
         /// <summary>Place editors in the shared purchase-line column slots.</summary>

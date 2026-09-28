@@ -23,9 +23,7 @@ namespace CastRightCatchInvManagement
         private TextBox _customerPo = null!;
         private TextBox _soNo = null!;
         private DateTimePicker _orderDate = null!;
-        private ComboBox _freightCo = null!;
-        private TextBox _freightTerms = null!;
-        private TextBox _terms = null!;
+        private TextBox _freightCo = null!;
         private DateTimePicker _due = null!;
         private ComboBox _status = null!;
         private Panel _lineHost = null!;
@@ -36,12 +34,15 @@ namespace CastRightCatchInvManagement
         private Button _save = null!;
         private Button _another = null!;
         private List<LookupSuggest.Hit> _itemHits = new();
+        private List<LookupSuggest.Hit> _freightHits = new();
+        private LookupSuggest? _freightSuggest;
         private readonly HashSet<string> _loadedItems = new(StringComparer.OrdinalIgnoreCase);
         private bool _busyAdding;
         private bool _fillingPo;
         private bool _editing;
         private string _editPo = "";
         private string _editCustomer = "";
+        private string _editSo = "";
 
         /// <summary>Sales row queued by OpenEdit until this page is shown.</summary>
         internal static Dictionary<string, string>? PendingEdit { get; set; }
@@ -204,18 +205,16 @@ namespace CastRightCatchInvManagement
             _customer = AddField(card, "CUSTOMER", 338, 36, 250);
             _customerPo = AddField(card, "CUSTOMER PO", 602, 36, 170);
 
-            _terms = AddField(card, "TERMS", 20, 86, 140);
-            _orderDate = AddDate(card, "ORDER DATE", 174, 86, 130);
-            _releaseDate = AddDate(card, "SHIP DATE", 318, 86, 130);
-            _due = AddDate(card, "DUE DATE", 462, 86, 130);
-            _status = AddCombo(card, "STATUS", 606, 86, 130);
+            _orderDate = AddDate(card, "ORDER DATE", 20, 86, 130);
+            _releaseDate = AddDate(card, "SHIP DATE", 164, 86, 130);
+            _due = AddDate(card, "DUE DATE", 308, 86, 130);
+            _status = AddCombo(card, "STATUS", 452, 86, 130);
             _status.DropDownStyle = ComboBoxStyle.DropDownList;
             SelectStatus(_status, "Open");
 
             _warehouse = AddField(card, "WAREHOUSE", 20, 136, 150);
-            _freightCo = AddCombo(card, "FREIGHT CO", 184, 136, 160);
-            _freightTerms = AddField(card, "FREIGHT TERMS", 358, 136, 150);
-            _contact = AddField(card, "CONTACT", 522, 136, 150);
+            _freightCo = AddField(card, "FREIGHT CO", 184, 136, 160);
+            _contact = AddField(card, "CONTACT", 358, 136, 150);
 
             _email = AddField(card, "EMAIL", 20, 186, 200);
             _contactPhone = AddField(card, "PHONE", 234, 186, 140);
@@ -225,6 +224,11 @@ namespace CastRightCatchInvManagement
 
             _customerCodeSuggest = new LookupSuggest(_customerCode, () => _customerHits, codeFirst: true, ApplyCustomerHit);
             _customerNameSuggest = new LookupSuggest(_customer, () => _customerHits, codeFirst: false, ApplyCustomerHit);
+            _freightSuggest = new LookupSuggest(
+                _freightCo,
+                () => _freightHits,
+                codeFirst: false,
+                hit => _freightCo.Text = hit.Name.Length > 0 ? hit.Name : hit.Code);
 
             _customerPo.Leave += (_, _) => RequestPoFill();
             _customerPo.KeyDown += (_, e) =>
@@ -313,6 +317,8 @@ namespace CastRightCatchInvManagement
             var row = new SalesOrderLineRow();
             row.AttachLookups(() => _itemHits);
             row.SetPo(_customerPo.Text.Trim());
+            row.CurrentSoNumber = () => _soNo.Text.Trim();
+            row.SiblingVolume = () => SiblingVolume(row);
             row.Changed += (_, _) => UpdateTotals();
             row.RemoveRequested += (_, _) => RemoveLine(row);
             _lines.Add(row);
@@ -400,8 +406,8 @@ namespace CastRightCatchInvManagement
 
             _another = new Button
             {
-                Text = "Add Another",
-                Size = new Size(130, 34),
+                Text = "Save and Next",
+                Size = new Size(140, 34),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
             Theme.StyleNavyButton(_another);
@@ -447,7 +453,7 @@ namespace CastRightCatchInvManagement
                     DataFiles.GetRecord(record, "Name"),
                     DataFiles.GetRecord(record, "Terms"),
                     DataFiles.GetRecord(record, "Contact Name"),
-                    DataFiles.GetRecord(record, "Address"),
+                    DataFiles.CustomerShippingAddress(record),
                     DataFiles.GetRecord(record, "Email"),
                     DataFiles.GetRecord(record, "Phone"));
                 // Skip customers that have neither a code nor a name to type.
@@ -476,9 +482,18 @@ namespace CastRightCatchInvManagement
                     species));
             }
 
-            // Freight combo is created with the header; skip if BuildUi has not run yet.
-            if (_freightCo != null)
-                VendorChoice.Fill(_freightCo);
+            _freightHits.Clear();
+            foreach (var record in DataFiles.VisibleRecords(DataFiles.Vendors))
+            {
+                if (!VendorTypes.MatchesSlot(record, VendorTypes.SlotSalesFreight))
+                    continue;
+                string code = DataFiles.GetRecord(record, "Code").Trim();
+                string name = DataFiles.GetRecordAny(record, "Name", "Company").Trim();
+                if (code.Length == 0 && name.Length == 0)
+                    continue;
+                _freightHits.Add(new LookupSuggest.Hit(code, name, DataFiles.GetRecord(record, "Terms")));
+            }
+
             foreach (var row in _lines)
                 row.AttachLookups(() => _itemHits);
             RefreshPoSuggestions();
@@ -526,10 +541,10 @@ namespace CastRightCatchInvManagement
 
             // Known customers also fill contact, address, email, and phone.
             if (match != null)
-                FillCustomer(match, match.Terms, overwrite: true);
+                FillCustomer(match, overwrite: true);
             // Unknown picks still fill code/name/terms from the suggestion itself.
             else
-                FillCustomer(hit.Code, hit.Name, hit.Extra, "", "", "", "", overwrite: true);
+                FillCustomer(hit.Code, hit.Name, "", "", "", "", overwrite: true);
         }
 
         /// <summary>True when the incoming sale is the same customer as this draft, or the draft has none.</summary>
@@ -801,13 +816,13 @@ namespace CastRightCatchInvManagement
         {
             string customerName = keepCustomer ? _customer.Text : "";
             string customerCode = keepCustomer ? _customerCode.Text : "";
-            string terms = keepCustomer ? _terms.Text : "";
             string po = keepCustomer ? _customerPo.Text : "";
 
             ClearLines();
             _loadedItems.Clear();
             _editing = false;
             _editPo = "";
+            _editSo = "";
             _editCustomer = "";
             _customer.Text = keepCustomer ? customerName : "";
             _customerCode.Text = keepCustomer ? customerCode : "";
@@ -823,12 +838,10 @@ namespace CastRightCatchInvManagement
                 _email.Text = "";
                 _contactPhone.Text = "";
                 _warehouse.Text = "";
-                VendorChoice.Select(_freightCo, "");
-                _freightTerms.Text = "";
+                _freightCo.Text = "";
             }
 
             _customerPo.Text = po;
-            _terms.Text = terms;
             RefreshLookups();
             _soNo.Text = DataFiles.NextSalesOrderNumber();
             _orderDate.Value = DateTime.Today;
@@ -845,7 +858,6 @@ namespace CastRightCatchInvManagement
         {
             string code = DataFiles.GetRecordAny(record, "Customer Code", "Cust ID");
             string name = DataFiles.GetRecordAny(record, "Customer", "Customer Name");
-            string terms = DataFiles.GetRecordAny(record, "Customer Terms");
             string so = DataFiles.GetRecordAny(record, "SO #", "SO NO", "SO Number");
             string po = DataFiles.SalePo(record);
 
@@ -863,10 +875,10 @@ namespace CastRightCatchInvManagement
 
             // Known customers also fill contact and address; unknown sales still get code/name.
             if (match != null)
-                FillCustomer(match, terms, overwrite: false);
+                FillCustomer(match, overwrite: false);
             // Unknown sales still get code/name from the sale row itself.
             else
-                FillCustomer(code, name, terms, "", "", "", "", overwrite: false);
+                FillCustomer(code, name, "", "", "", "", overwrite: false);
 
             // Do not overwrite a PO the user already typed.
             if (po.Length > 0 && _customerPo.Text.Trim().Length == 0)
@@ -890,28 +902,21 @@ namespace CastRightCatchInvManagement
                 _warehouse.Text = DataFiles.GetRecordAny(record, "Location");
 
             // Keep a freight company already chosen on this ticket.
-            if (VendorChoice.TextOf(_freightCo).Length == 0)
+            if (_freightCo.Text.Trim().Length == 0)
             {
-                string freight = DataFiles.GetRecordAny(
-                    record,
-                    DataFiles.FreightCompanyColumn,
-                    "Forwarder",
-                    "Logistics");
-                VendorChoice.Select(_freightCo, freight);
+                string freight = DataFiles.GetRecordAny(record, DataFiles.FreightCompanyColumn);
+                if (freight.Length > 0)
+                    _freightCo.Text = freight;
             }
 
-            // Freight terms default to customer terms when the ticket has none.
-            if (_freightTerms.Text.Trim().Length == 0 && terms.Length > 0)
-                _freightTerms.Text = terms;
         }
 
         /// <summary>Fill customer fields from a known customer record.</summary>
-        private void FillCustomer(CustomerChoice choice, string terms, bool overwrite)
+        private void FillCustomer(CustomerChoice choice, bool overwrite)
         {
             FillCustomer(
                 choice.Code,
                 choice.Name,
-                terms.Length > 0 ? terms : choice.Terms,
                 choice.Contact,
                 choice.Address,
                 choice.Email,
@@ -923,7 +928,6 @@ namespace CastRightCatchInvManagement
         private void FillCustomer(
             string code,
             string name,
-            string terms,
             string contact,
             string address,
             string email,
@@ -952,15 +956,8 @@ namespace CastRightCatchInvManagement
                 Put(_address, address);
             Put(_email, email);
             Put(_contactPhone, phone);
-            // Same overwrite-or-blank rule for name, terms, and freight terms.
             if (name.Length > 0 && (overwrite || _customer.Text.Trim().Length == 0))
                 _customer.Text = name;
-            // Terms only fill when the lookup asked to replace, or the box is still blank.
-            if (terms.Length > 0 && (overwrite || _terms.Text.Trim().Length == 0))
-                _terms.Text = terms;
-            // Freight terms follow the same overwrite-or-blank rule as customer terms.
-            if (terms.Length > 0 && (overwrite || _freightTerms.Text.Trim().Length == 0))
-                _freightTerms.Text = terms;
             RefreshPoSuggestions();
         }
 
@@ -981,11 +978,9 @@ namespace CastRightCatchInvManagement
                 ContactPhone = _contactPhone.Text.Trim(),
                 Warehouse = _warehouse.Text.Trim(),
                 CustomerPo = _customerPo.Text.Trim(),
-                Terms = _terms.Text.Trim(),
                 Status = _status.Text.Trim(),
                 DueDate = _due.Value.Date,
-                FreightCompany = VendorChoice.TextOf(_freightCo),
-                FreightTerms = _freightTerms.Text.Trim(),
+                FreightCompany = _freightCo.Text.Trim(),
                 Lines = _lines.Select(row =>
                 {
                     var line = row.GetLine();
@@ -1012,8 +1007,32 @@ namespace CastRightCatchInvManagement
             }
 
             _totalCases.Text = cases.ToString("0.###", CultureInfo.InvariantCulture);
-            _totalVolume.Text = volume.ToString("0.###", CultureInfo.InvariantCulture);
-            _totalAmount.Text = amount.ToString("0.00", CultureInfo.InvariantCulture);
+            _totalVolume.Text = MoneyFormat.Plain(volume);
+            _totalAmount.Text = MoneyFormat.Display(amount);
+            foreach (var row in _lines)
+                row.RefreshWarnings();
+        }
+
+        /// <summary>Volume on other lines of this ticket that share the same item and purchase lot.</summary>
+        private decimal SiblingVolume(SalesOrderLineRow row)
+        {
+            decimal n = 0;
+            string item = row.ItemCode;
+            string lot = DataFiles.NormalizePo(row.LotNumber);
+            if (item.Length == 0 || lot.Length == 0)
+                return 0;
+            foreach (var other in _lines)
+            {
+                if (other == row)
+                    continue;
+                if (!other.ItemCode.Equals(item, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!DataFiles.NormalizePo(other.LotNumber).Equals(lot, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                n += other.VolumeValue;
+            }
+
+            return n;
         }
 
         /// <summary>
@@ -1059,6 +1078,26 @@ namespace CastRightCatchInvManagement
             {
                 ToastAlert.Error(this, "Add at least one product line.");
                 return;
+            }
+
+            foreach (var row in _lines)
+            {
+                if (!row.HasContent())
+                    continue;
+                row.RefreshWarnings();
+                string? floor = row.MinimumProfitError();
+                if (floor != null)
+                {
+                    MessageBox.Show(floor, "Minimum profit", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                string? over = row.VolumeError();
+                if (over != null)
+                {
+                    MessageBox.Show(over, "Lot volume", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
             }
 
             string po = draft.CustomerPo.Trim();
@@ -1139,6 +1178,8 @@ namespace CastRightCatchInvManagement
 
             try
             {
+                if (_editing)
+                    DataFiles.RetireStoredPdf(DataFiles.PdfKindSale, _editPo, po);
                 SaleDocument.SaveFromPo(po);
             }
             // Keep the saved rows even if the sale PDF cannot be written.
@@ -1160,6 +1201,8 @@ namespace CastRightCatchInvManagement
                     soNumber = existingSo;
                 draft.SoNumber = soNumber;
                 _soNo.Text = soNumber;
+                if (_editing)
+                    DataFiles.RetireStoredPdf(DataFiles.PdfKindSalesOrder, _editSo, soNumber);
                 string pdfPath = SalesOrderDocument.Save(draft);
                 DataFiles.AssignSalesOrderNumber(
                     pos,
@@ -1180,25 +1223,15 @@ namespace CastRightCatchInvManagement
                 ? last.Value.Message
                 : _editing ? "The sales order was updated." : "The sales order was saved.");
 
-            // Add Another starts a new ticket with the same customer.
+            // Add Another starts a new ticket with the same customer on this page.
             if (keepCustomer)
             {
                 ResetDraft(keepCustomer: true);
                 return;
             }
 
-            // Stay in edit mode so a second save still updates these items.
-            if (_editing)
-            {
-                _editPo = po;
-                _editCustomer = draft.CustomerCode;
-                _loadedItems.Clear();
-                foreach (string item in savedItems)
-                    _loadedItems.Add(item);
-                return;
-            }
-
             ResetDraft(keepCustomer: false);
+            Navigator.GoToAndSearch(AppPage.Sales, draft.SoNumber);
         }
 
         /// <summary>Map header fields plus one product line onto a sales-table row.</summary>
@@ -1211,7 +1244,7 @@ namespace CastRightCatchInvManagement
                 ["SO #"] = draft.SoNumber,
                 ["Customer Code"] = draft.CustomerCode,
                 ["Customer"] = draft.CustomerName,
-                ["Customer Terms"] = draft.Terms,
+
                 ["Item Code"] = line.ItemCode,
                 // Invoice # stores the customer PO. The Sales grid displays Invoice # as "Customer PO".
                 ["Invoice #"] = line.PoNumber.Length > 0 ? line.PoNumber : draft.CustomerPo,
@@ -1243,6 +1276,7 @@ namespace CastRightCatchInvManagement
             _loadedItems.Clear();
             _editPo = po;
             _editCustomer = DataFiles.GetRecord(rows[0], "Customer Code");
+            _editSo = DataFiles.GetRecord(rows[0], "SO #").Trim();
             ApplySaleHeader(rows[0]);
             _customerPo.Text = po;
             string so = DataFiles.GetRecord(rows[0], "SO #");
@@ -1254,7 +1288,8 @@ namespace CastRightCatchInvManagement
             if (DateTime.TryParse(due, out var dueDate))
                 _due.Value = dueDate;
             SelectStatus(_status, DataFiles.GetRecord(rows[0], "Status"));
-            _terms.Text = DataFiles.GetRecord(rows[0], "Customer Terms");
+            _freightCo.Text = DataFiles.GetRecord(rows[0], DataFiles.FreightCompanyColumn);
+
 
             foreach (var row in rows)
             {

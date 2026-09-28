@@ -89,6 +89,7 @@ namespace CastRightCatchInvManagement
                 var menu = new ContextMenuStrip();
                 menu.Items.Add("Edit", null, (_, _) => Edit(id));
                 menu.Items.Add("Delete", null, (_, _) => Delete(id));
+                UiStyle.RowContextMenuShown = true;
                 menu.Show(_grid, _grid.PointToClient(Cursor.Position));
             };
 

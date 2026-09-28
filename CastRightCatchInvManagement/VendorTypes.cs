@@ -30,13 +30,18 @@ namespace CastRightCatchInvManagement
         public const string SettingKey = "vendor_types";
         public const string Forwarder = "Forwarder";
         public const string Logistics = "Logistics";
+        public const string Freight = "Freight Co";
         public const string SlotPurchaseForwarder = "purchase.forwarder";
         public const string SlotPurchaseLogistics = "purchase.logistics";
+        public const string SlotPurchaseFreight = "purchase.freight";
+        public const string SlotSalesFreight = "sales.freight";
 
         public static readonly (string Slot, string Label, string DefaultFilterId)[] Slots =
         {
             (SlotPurchaseForwarder, "New Purchase · Forwarder", "forwarder"),
-            (SlotPurchaseLogistics, "New Purchase · Logistics", "logistics")
+            (SlotPurchaseLogistics, "New Purchase · Logistics", "logistics"),
+            (SlotPurchaseFreight, "New Purchase · Freight Co", "freight"),
+            (SlotSalesFreight, "New Sale · Freight Co", "freight")
         };
 
         private static readonly JsonSerializerOptions JsonOptions = new()
@@ -160,11 +165,12 @@ namespace CastRightCatchInvManagement
         {
             var catalog = new VendorTypeCatalog
             {
-                Types = DistinctNames(new[] { Forwarder, Logistics }.Concat(extra ?? Array.Empty<string>())),
+                Types = DistinctNames(new[] { Forwarder, Logistics, Freight }.Concat(extra ?? Array.Empty<string>())),
                 Filters =
                 {
                     new VendorTypeFilter { Id = "forwarder", Name = Forwarder, Types = { Forwarder } },
-                    new VendorTypeFilter { Id = "logistics", Name = Logistics, Types = { Logistics } }
+                    new VendorTypeFilter { Id = "logistics", Name = Logistics, Types = { Logistics } },
+                    new VendorTypeFilter { Id = "freight", Name = Freight, Types = { Freight } }
                 }
             };
             foreach (var slot in Slots)
@@ -185,6 +191,10 @@ namespace CastRightCatchInvManagement
             // Same for Logistics so purchase lookups always have a group.
             if (!catalog.Filters.Any(filter => filter.Id.Equals("logistics", StringComparison.OrdinalIgnoreCase)))
                 catalog.Filters.Add(new VendorTypeFilter { Id = "logistics", Name = Logistics, Types = { Logistics } });
+            if (!catalog.Filters.Any(filter => filter.Id.Equals("freight", StringComparison.OrdinalIgnoreCase)))
+                catalog.Filters.Add(new VendorTypeFilter { Id = "freight", Name = Freight, Types = { Freight } });
+            if (!ContainsType(catalog.Types, Freight))
+                catalog.Types.Add(Freight);
 
             foreach (var filter in catalog.Filters)
             {

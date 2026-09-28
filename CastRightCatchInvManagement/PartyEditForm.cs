@@ -13,6 +13,9 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _notes;
         private readonly TextBox _contact;
         private readonly TextBox _address;
+        private readonly CheckBox _shipDifferent;
+        private readonly TextBox _shipping;
+        private readonly Panel _shippingHost;
         private readonly TextBox _email;
         private readonly TextBox _terms;
         private readonly TextBox _extra;
@@ -23,17 +26,17 @@ namespace CastRightCatchInvManagement
         private string _storedAccount = "";
         private readonly Label _subtitle;
 
-        /// <summary>Modal: add a customer.</summary>
-        public static void OpenCustomerNew() => ShowEdit(false, null);
+        /// <summary>Open the New Customer page.</summary>
+        public static void OpenCustomerNew() => AddCustomer.OpenNew();
 
         /// <summary>Modal: edit this customer row.</summary>
-        public static void OpenCustomerEdit(Dictionary<string, string> record) => ShowEdit(false, record);
+        public static void OpenCustomerEdit(Dictionary<string, string> record) => AddCustomer.OpenEdit(record);
 
-        /// <summary>Modal: add a vendor.</summary>
-        public static void OpenVendorNew() => ShowEdit(true, null);
+        /// <summary>Open the New Vendor page.</summary>
+        public static void OpenVendorNew() => AddVendor.OpenNew();
 
-        /// <summary>Modal: edit this vendor row.</summary>
-        public static void OpenVendorEdit(Dictionary<string, string> record) => ShowEdit(true, record);
+        /// <summary>Open the New Vendor page with this row loaded for edit.</summary>
+        public static void OpenVendorEdit(Dictionary<string, string> record) => AddVendor.OpenEdit(record);
 
         /// <summary>Show the dialog; save writes to the live customers or vendors table.</summary>
         private static void ShowEdit(bool vendor, Dictionary<string, string>? record)
@@ -145,6 +148,9 @@ namespace CastRightCatchInvManagement
             _contact = new TextBox { Visible = false };
             _email = new TextBox { Visible = false };
             _address = new TextBox { Visible = false };
+            _shipDifferent = new CheckBox { Visible = false };
+            _shipping = new TextBox { Visible = false };
+            _shippingHost = new Panel { Visible = false };
             _established = new TextBox { Visible = false };
 
             CardPanel identity;
@@ -167,10 +173,10 @@ namespace CastRightCatchInvManagement
                 _established.PlaceholderText = "0.00";
                 FillVendorTypes(_type, record == null ? "" : DataFiles.GetRecord(record, "Type"));
             }
-            // Customer identity uses email, address, and credit instead of Type/amount.
+            // Customer identity uses email, billing/shipping address, and credit instead of Type/amount.
             else
             {
-                identity = Section("Identity", 340, 4, out var grid);
+                identity = Section("Identity", 420, 4, out var grid);
                 _code = PutField(grid, 0, 0, "CODE");
                 _name = PutField(grid, 1, 0, "NAME");
                 _company = PutField(grid, 2, 0, "COMPANY");
@@ -182,11 +188,16 @@ namespace CastRightCatchInvManagement
                 _type = new ComboBox { Visible = false };
                 _balance = PutField(grid, 0, 2, "CURRENT BALANCE");
                 _established = PutField(grid, 1, 2, "ESTABLISHED");
-                _address = PutField(grid, 0, 3, "ADDRESS", colSpan: 4, multiline: true);
-                SetRowHeights(grid, 56, 56, 56, 80);
+                _address = PutField(grid, 0, 3, "BILLING ADDRESS", colSpan: 4, multiline: true);
+                _shipDifferent = PutCheck(grid, 0, 4, "Shipping address is different", colSpan: 4);
+                _shipping = PutField(grid, 0, 5, "SHIPPING ADDRESS", colSpan: 4, multiline: true);
+                _shippingHost = _shipping.Parent as Panel ?? _shippingHost;
+                SetRowHeights(grid, 56, 56, 56, 80, 36, 80);
                 _contact.PlaceholderText = "Who we talk to";
                 _email.PlaceholderText = "name@company.com";
                 _extra.PlaceholderText = "0.00";
+                _address.PlaceholderText = "Street, city, state, ZIP";
+                _shipping.PlaceholderText = "Street, city, state, ZIP";
             }
 
             _code.PlaceholderText = vendor ? "V-1001" : "C-1001";
@@ -195,6 +206,11 @@ namespace CastRightCatchInvManagement
             _phone.PlaceholderText = "(253) 000-0000";
             _terms.PlaceholderText = "NET 15";
             _balance.PlaceholderText = "0.00";
+            MoneyFormat.BindInput(_balance);
+            if (_vendor)
+                MoneyFormat.BindInput(_established);
+            else
+                MoneyFormat.BindInput(_extra);
             identity.Dock = DockStyle.Top;
 
             var banking = Section("Banking", 108, 2, out var bankGrid);
@@ -232,22 +248,26 @@ namespace CastRightCatchInvManagement
                 _name.Text = DataFiles.GetRecord(record, "Name");
                 _company.Text = First(record, "Company", "Name");
                 _phone.Text = DataFiles.GetRecord(record, "Phone");
-                _balance.Text = DataFiles.GetRecord(record, "Current Balance");
+                _balance.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance"));
                 _terms.Text = DataFiles.GetRecord(record, "Terms");
                 _notes.Text = First(record, "Description", "Notes");
                 // Vendor layout omits email/address and uses Type/amount.
                 if (vendor)
                 {
                     _contact.Text = DataFiles.GetRecord(record, "Contact Name");
-                    _established.Text = DataFiles.GetRecord(record, "Amount");
+                    _established.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Amount"));
                 }
                 // Prefill customer-only fields from the existing row.
                 else
                 {
-                    _extra.Text = DataFiles.GetRecord(record, "Credit Limit");
+                    _extra.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Credit Limit"));
                     _contact.Text = DataFiles.GetRecord(record, "Contact Name");
                     _email.Text = DataFiles.GetRecord(record, "Email");
-                    _address.Text = DataFiles.GetRecord(record, "Address");
+                    _address.Text = DataFiles.CustomerBillingAddress(record);
+                    string shipping = DataFiles.GetRecord(record, DataFiles.ShippingAddressColumn).Trim();
+                    _shipping.Text = shipping;
+                    _shipDifferent.Checked = shipping.Length > 0 &&
+                        !shipping.Equals(_address.Text.Trim(), StringComparison.OrdinalIgnoreCase);
                     _established.Text = DataFiles.GetRecord(record, "Established");
                 }
 
@@ -270,6 +290,11 @@ namespace CastRightCatchInvManagement
             };
             topHost.Controls.Add(banking);
             topHost.Controls.Add(identity);
+            if (!_vendor)
+            {
+                _shipDifferent.CheckedChanged += (_, _) => SyncShipping(identity, banking, topHost);
+                SyncShipping(identity, banking, topHost);
+            }
 
             var bottomHost = new Panel
             {
@@ -284,6 +309,15 @@ namespace CastRightCatchInvManagement
             Controls.Add(topHost);
             Controls.Add(footer);
             Controls.Add(header);
+        }
+
+        /// <summary>Show shipping fields only when the box is checked.</summary>
+        private void SyncShipping(CardPanel identity, CardPanel banking, Panel topHost)
+        {
+            bool on = _shipDifferent.Checked;
+            _shippingHost.Visible = on;
+            identity.Height = on ? 500 : 420;
+            topHost.Height = identity.Height + banking.Height + 28;
         }
 
         /// <summary>Header subtitle from company, name, and code as they type.</summary>
@@ -342,7 +376,7 @@ namespace CastRightCatchInvManagement
                 ["Name"] = name,
                 ["Company"] = _company.Text.Trim(),
                 ["Phone"] = _phone.Text.Trim(),
-                ["Current Balance"] = _balance.Text.Trim(),
+                ["Current Balance"] = MoneyFormat.Store(_balance.Text),
                 ["Notes"] = _notes.Text.Trim(),
                 ["Description"] = _notes.Text.Trim(),
                 ["Terms"] = _terms.Text.Trim(),
@@ -363,15 +397,20 @@ namespace CastRightCatchInvManagement
 
                 fields["Type"] = type;
                 fields["Contact Name"] = _contact.Text.Trim();
-                fields["Amount"] = _established.Text.Trim();
+                fields["Amount"] = MoneyFormat.Store(_established.Text);
             }
             // Persist customer credit, email, and address instead of Type/amount.
             else
             {
-                fields["Credit Limit"] = _extra.Text.Trim();
+                fields["Credit Limit"] = MoneyFormat.Store(_extra.Text);
                 fields["Contact Name"] = _contact.Text.Trim();
                 fields["Email"] = _email.Text.Trim();
-                fields["Address"] = _address.Text.Trim();
+                string billing = _address.Text.Trim();
+                string shipping = _shipDifferent.Checked ? _shipping.Text.Trim() : "";
+                if (shipping.Equals(billing, StringComparison.OrdinalIgnoreCase))
+                    shipping = "";
+                fields["Address"] = billing;
+                fields[DataFiles.ShippingAddressColumn] = shipping;
                 fields["Established"] = _established.Text.Trim();
             }
 
@@ -691,6 +730,35 @@ namespace CastRightCatchInvManagement
             cell.Controls.Add(label);
             grid.Controls.Add(cell, col, row);
             // Notes/address span the full identity row.
+            if (colSpan > 1)
+                grid.SetColumnSpan(cell, colSpan);
+            return box;
+        }
+
+        /// <summary>Caption-free checkbox spanning columns.</summary>
+        private static CheckBox PutCheck(TableLayoutPanel grid, int col, int row, string caption, int colSpan = 1)
+        {
+            while (grid.RowCount <= row)
+            {
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+                grid.RowCount++;
+            }
+
+            var box = new CheckBox
+            {
+                Text = caption,
+                AutoSize = true,
+                ForeColor = Theme.Ink,
+                Font = Theme.Body
+            };
+            var cell = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(8, 4, 8, 4)
+            };
+            box.Location = new Point(0, 6);
+            cell.Controls.Add(box);
+            grid.Controls.Add(cell, col, row);
             if (colSpan > 1)
                 grid.SetColumnSpan(cell, colSpan);
             return box;

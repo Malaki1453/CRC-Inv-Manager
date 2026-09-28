@@ -14,6 +14,7 @@ namespace CastRightCatchInvManagement
         private CancellationTokenSource? _lotsLoad;
         private string _itemCode = "";
         private string _itemDescription = "";
+        private bool _itemFrozen;
         /// <summary>
         /// Lot totals by normalized PO. Each snap is purchased/sold/vendor plus SO # : lbs.
         /// The dictionary key is the normalized PO # (or "(no lot)" when PO is blank).
@@ -36,7 +37,8 @@ namespace CastRightCatchInvManagement
             IWin32Window? owner,
             string title,
             Dictionary<string, string> record,
-            string? table = null)
+            string? table = null,
+            bool includeHidden = false)
         {
             // Customers have identity plus invoice/sale history, not a field list.
             if (IsCustomer(title, table))
@@ -52,7 +54,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            var form = new RecordDetailsForm(title, record, table);
+            var form = new RecordDetailsForm(title, record, table, includeHidden);
             // Lots scan in the background, so inventory stays modeless.
             if (IsItem(title, table))
             {
@@ -74,16 +76,23 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Build header, body, and footer for an order, inventory item, or generic field list.</summary>
-        private RecordDetailsForm(string title, Dictionary<string, string> record, string? table)
+        private RecordDetailsForm(string title, Dictionary<string, string> record, string? table, bool includeHidden = false)
         {
             string heading = string.IsNullOrWhiteSpace(title) ? "Details" : title;
             bool purchase = IsPurchase(title, table);
             bool sale = IsSale(title, table);
             bool item = IsItem(title, table);
+            if (item)
+            {
+                _itemCode = DataFiles.GetRecord(record, "Code").Trim();
+                _itemDescription = DataFiles.GetRecordAny(record, "Description", "Species");
+                _itemFrozen = DataFiles.GetRecord(record, "Fresh / Frozen")
+                    .Contains("Frozen", StringComparison.OrdinalIgnoreCase);
+            }
             var lines = purchase
-                ? DataFiles.FindPurchasesByPo(DataFiles.GetRecord(record, "PO #"))
+                ? DataFiles.FindPurchasesByPo(DataFiles.GetRecord(record, "PO #"), includeHidden)
                 : sale
-                    ? DataFiles.FindSalesByPo(DataFiles.SalePo(record))
+                    ? SaleLines(record, includeHidden)
                     : new List<Dictionary<string, string>>();
             // The clicked row is enough to show details even if the PO lookup returned nothing.
             if ((purchase || sale) && lines.Count == 0)
@@ -135,11 +144,18 @@ namespace CastRightCatchInvManagement
             // item is true for inventory / item-code rows; only those scan purchases and sales into lots.
             if (item)
             {
-                _itemCode = DataFiles.GetRecord(record, "Code").Trim();
-                _itemDescription = DataFiles.GetRecordAny(record, "Description", "Species");
                 // Start after the empty grid is on screen so the spinner can paint.
                 Shown += (_, _) => StartLotsLoad();
             }
+        }
+
+        /// <summary>Sales-order lines by SO # when present, otherwise by customer PO.</summary>
+        private static List<Dictionary<string, string>> SaleLines(Dictionary<string, string> record, bool includeHidden)
+        {
+            string so = DataFiles.GetRecord(record, "SO #").Trim();
+            if (so.Length > 0)
+                return DataFiles.FindSalesBySo(so, includeHidden);
+            return DataFiles.FindSalesByPo(DataFiles.SalePo(record), includeHidden);
         }
 
         /// <summary>Cancel the lots scan so closing the window does not keep the background work running.</summary>
@@ -219,7 +235,7 @@ namespace CastRightCatchInvManagement
             _lotsGrid = new DataGridView
             {
                 Dock = DockStyle.Fill,
-                ReadOnly = true,
+                ReadOnly = false,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
                 AllowUserToOrderColumns = false,
@@ -236,10 +252,29 @@ namespace CastRightCatchInvManagement
             _lotsGrid.RowTemplate.Height = 32;
             AddCol(_lotsGrid, "Lot (PO #)", 110);
             AddCol(_lotsGrid, "Vendor", 180, 160);
-            AddCol(_lotsGrid, "Purchased", 90);
-            AddCol(_lotsGrid, "Sold", 90);
-            AddCol(_lotsGrid, "Remaining", 90);
-            AddCol(_lotsGrid, "Note", 160, 140);
+            AddCol(_lotsGrid, "Volume (lb)", 100);
+            AddCol(_lotsGrid, "Sold (lb)", 90);
+            AddCol(_lotsGrid, "Balance (lb)", 100);
+            AddCol(_lotsGrid, "Price / lb", 90);
+            var overrideCol = new DataGridViewCheckBoxColumn
+            {
+                Name = "OverrideMinProfit",
+                HeaderText = "Override min. profit",
+                Width = 72,
+                FillWeight = 72,
+                TrueValue = true,
+                FalseValue = false,
+                ReadOnly = false
+            };
+            _lotsGrid.Columns.Add(overrideCol);
+            AddCol(_lotsGrid, _itemFrozen ? "Anniversary date" : "Purchased date", 120);
+            foreach (DataGridViewColumn col in _lotsGrid.Columns)
+            {
+                if (col.Name != "OverrideMinProfit")
+                    col.ReadOnly = true;
+            }
+
+            _lotsGrid.CellContentClick += OnOverrideMinProfitClick;
 
             var host = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Cream };
             _lotsSpinner = new WaitSpinner
@@ -273,6 +308,11 @@ namespace CastRightCatchInvManagement
                     continue;
                 fields.Add(new KeyValuePair<string, string>(key, value));
             }
+
+            decimal minProfit = DataFiles.ItemMinimumProfit(DataFiles.GetRecord(item, "Code"));
+            fields.Add(new KeyValuePair<string, string>(
+                DataFiles.MinimumProfitColumn,
+                MoneyFormat.Display(minProfit)));
 
             wrap.Controls.Add(host);
             wrap.Controls.Add(BuildLotFilterBar());
@@ -426,42 +466,44 @@ namespace CastRightCatchInvManagement
                 // Purchases create lots. Skip this table if the user cannot see Purchases.
                 if (TableAccess.Can(TableAccess.Purchases))
                 {
-                    SqliteInventory.ForEachWhere(
-                        DataFiles.PurchaseSales,
-                        column,
-                        needle,
-                        purchase =>
-                        {
-                            // Unconfirmed adds are not stock yet.
-                            if (DataFiles.IsWaitingAdd(purchase))
-                                return;
-                            string lot = DataFiles.GetRecord(purchase, "PO #").Trim();
-                            decimal volume = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Volume"));
-                            string vendor = DataFiles.GetRecordAny(purchase, "Vendor", "Name");
-                            AddPurchase(lot, vendor, volume);
-                        },
-                        token);
+                    foreach (var purchase in DataFiles.ReadRecords(DataFiles.PurchaseSales))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (DataFiles.IsWaitingAdd(purchase))
+                            continue;
+                        if (!ItemMatches(purchase, column, needle))
+                            continue;
+                        string lot = DataFiles.GetRecord(purchase, "PO #").Trim();
+                        decimal volume = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Volume"));
+                        string vendor = DataFiles.GetRecordAny(purchase, "Vendor", "Name");
+                        AddPurchase(
+                            lot,
+                            vendor,
+                            volume,
+                            PurchaseDate(purchase),
+                            LotSaleBy(purchase),
+                            DataFiles.GetRecord(purchase, "Price Paid / LB"),
+                            DataFiles.IsYes(DataFiles.GetRecord(purchase, DataFiles.OverrideMinimumProfitColumn)));
+                    }
                 }
 
                 // Sales only reduce lots that already exist from purchases.
                 if (TableAccess.Can(TableAccess.Sales))
                 {
-                    SqliteInventory.ForEachWhere(
-                        DataFiles.Sales,
-                        column,
-                        needle,
-                        sale =>
-                        {
-                            // Unconfirmed sale adds are not deducted from lots yet.
-                            if (DataFiles.IsWaitingAdd(sale))
-                                return;
-                            decimal volume = DataFiles.ParseMoney(DataFiles.GetRecord(sale, "Volume"));
-                            string so = DataFiles.GetRecord(sale, "SO #").Trim();
-                            // PO # is the purchase lot. Lot # is only a fallback for old rows.
-                            if (!AddSale(DataFiles.GetRecord(sale, "PO #"), volume, so))
-                                AddSale(DataFiles.GetRecord(sale, "Lot #"), volume, so);
-                        },
-                        token);
+                    foreach (var sale in DataFiles.ReadRecords(DataFiles.Sales))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (DataFiles.IsWaitingAdd(sale))
+                            continue;
+                        if (!ItemMatches(sale, column, needle))
+                            continue;
+                        decimal volume = DataFiles.ParseMoney(DataFiles.GetRecord(sale, "Volume"));
+                        string so = DataFiles.GetRecord(sale, "SO #").Trim();
+                        string sell = DataFiles.GetRecord(sale, "Sell Price / LB");
+                        // PO # is the purchase lot. Lot # is only a fallback for old rows.
+                        if (!AddSale(DataFiles.GetRecord(sale, "PO #"), volume, so, sell))
+                            AddSale(DataFiles.GetRecord(sale, "Lot #"), volume, so, sell);
+                    }
                 }
             }
             // Form closed (or otherwise cancelled) while the scan was running.
@@ -475,8 +517,61 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>True when this purchase/sale row is this item (trimmed, case-insensitive).</summary>
+        private static bool ItemMatches(Dictionary<string, string> row, string column, string needle)
+        {
+            string cell = DataFiles.GetRecord(row, column).Trim();
+            if (cell.Equals(needle, StringComparison.OrdinalIgnoreCase))
+                return true;
+            // Old rows sometimes put the code in Description when Item Code was blank or padded.
+            if (column.Equals("Item Code", StringComparison.OrdinalIgnoreCase))
+            {
+                string code = cell.Replace(" ", "");
+                string want = needle.Replace(" ", "");
+                if (want.Length > 0 && code.Equals(want, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Agreement, ship, or arrival date from a purchase row, formatted for the lots grid.</summary>
+        private static string PurchaseDate(Dictionary<string, string> purchase)
+        {
+            string raw = DataFiles.GetRecordAny(
+                purchase,
+                "Agreement Date",
+                "Ship Date",
+                "Arrival Date");
+            if (raw.Length == 0)
+                return "";
+            return DateTime.TryParse(raw, out var date) ? date.ToString("MM/dd/yyyy") : raw;
+        }
+
+        /// <summary>Stored sale-by, or purchased date plus the frozen item's shelf life.</summary>
+        private string LotSaleBy(Dictionary<string, string> purchase)
+        {
+            string stored = DataFiles.GetRecord(purchase, DataFiles.SaleByDateColumn).Trim();
+            if (stored.Length > 0)
+                return DateTime.TryParse(stored, out var date) ? date.ToString("MM/dd/yyyy") : stored;
+            if (!_itemFrozen)
+                return "";
+            return DataFiles.SaleByDateForItem(
+                DataFiles.GetRecord(purchase, "Item Code"),
+                DataFiles.GetRecord(purchase, "Agreement Date"),
+                DataFiles.GetRecord(purchase, "Ship Date"),
+                DataFiles.GetRecord(purchase, "Arrival Date"));
+        }
+
         /// <summary>Add purchase Volume onto the PO lot. Vendor is kept from the first purchase on that lot.</summary>
-        private void AddPurchase(string lot, string vendor, decimal volume)
+        private void AddPurchase(
+            string lot,
+            string vendor,
+            decimal volume,
+            string purchasedDate,
+            string saleByDate,
+            string pricePerLb,
+            bool overrideMinProfit)
         {
             // Blank PO numbers share one bucket so they still show on the grid.
             // key is the normalized PO # used to look up this lot's snap (totals).
@@ -492,7 +587,7 @@ namespace CastRightCatchInvManagement
                     {
                         Key = key,
                         Lot = lot.Length > 0 ? lot : "(no lot)",
-                        SalesBySo = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
+                        SalesBySo = new Dictionary<string, SaleSnap>(StringComparer.OrdinalIgnoreCase)
                     };
                     _lots[key] = snap;
                 }
@@ -501,6 +596,14 @@ namespace CastRightCatchInvManagement
                 // Keep the vendor from the first purchase on this PO.
                 if (snap.Vendor.Length == 0)
                     snap.Vendor = vendor;
+                if (snap.PurchasedDate.Length == 0 && purchasedDate.Length > 0)
+                    snap.PurchasedDate = purchasedDate;
+                if (snap.SaleByDate.Length == 0 && saleByDate.Length > 0)
+                    snap.SaleByDate = saleByDate;
+                if (snap.PricePerLb.Length == 0 && pricePerLb.Trim().Length > 0)
+                    snap.PricePerLb = pricePerLb.Trim();
+                if (overrideMinProfit)
+                    snap.OverrideMinProfit = true;
             }
 
             QueueLotsPaint(immediate: isNew, done: false);
@@ -510,7 +613,7 @@ namespace CastRightCatchInvManagement
         /// Add sale Volume onto an existing purchase lot and remember SO # : lbs for the expand list.
         /// Returns false if this number is not a purchase PO for the item.
         /// </summary>
-        private bool AddSale(string lot, decimal volume, string soNumber)
+        private bool AddSale(string lot, decimal volume, string soNumber, string sellPricePerLb)
         {
             lot = (lot ?? "").Trim();
             // No lot/PO on the sale, so it cannot match a purchase PO.
@@ -541,9 +644,15 @@ namespace CastRightCatchInvManagement
                     if (so.Length == 0 || LooksLikeFloatDust(so))
                         so = "—";
                     // First lbs for this SO # on the lot: start the expand-list bucket at 0 before adding volume.
-                    if (!snap.SalesBySo.ContainsKey(so))
-                        snap.SalesBySo[so] = 0;
-                    snap.SalesBySo[so] += volume;
+                    if (!snap.SalesBySo.TryGetValue(so, out var saleSnap) || saleSnap == null)
+                    {
+                        saleSnap = new SaleSnap();
+                        snap.SalesBySo[so] = saleSnap;
+                    }
+
+                    saleSnap.Lbs += volume;
+                    if (saleSnap.PricePerLb.Length == 0 && (sellPricePerLb ?? "").Trim().Length > 0)
+                        saleSnap.PricePerLb = sellPricePerLb.Trim();
                 }
             }
 
@@ -600,12 +709,6 @@ namespace CastRightCatchInvManagement
                 return;
             string key = snap.Key.Length > 0 ? snap.Key : "(no lot)";
             decimal remain = snap.Purchased - snap.Sold;
-            // Remaining > 0 still on hand; negative means sold more than purchased; zero is sold out.
-            string note = remain > 0
-                ? Lbs(remain) + " lb remaining"
-                : remain < 0
-                    ? Lbs(-remain) + " lb over sold"
-                    : "Sold out";
             object[] cells =
             {
                 snap.Lot,
@@ -613,7 +716,11 @@ namespace CastRightCatchInvManagement
                 Lbs(snap.Purchased),
                 Lbs(snap.Sold),
                 Lbs(remain),
-                note
+                snap.PricePerLb.Length > 0 ? MoneyFormat.Display(snap.PricePerLb) : "—",
+                snap.OverrideMinProfit,
+                _itemFrozen
+                    ? (snap.SaleByDate.Length > 0 ? snap.SaleByDate : "—")
+                    : (snap.PurchasedDate.Length > 0 ? snap.PurchasedDate : "—")
             };
             // Update the existing grid row when this lot (normalized PO `key`) was already drawn.
             if (_lotRows.TryGetValue(key, out int index) && index < _lotsGrid.Rows.Count)
@@ -644,11 +751,41 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Save Override min. profit onto the purchase lot. Sale expand rows cannot toggle it.</summary>
+        private void OnOverrideMinProfitClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (_lotsGrid == null || e.RowIndex < 0 || e.ColumnIndex < 0)
+                return;
+            if (_lotsGrid.Columns[e.ColumnIndex].Name != "OverrideMinProfit")
+                return;
+            string? tag = _lotsGrid.Rows[e.RowIndex].Tag as string;
+            if (tag == null || !tag.StartsWith("lot:", StringComparison.Ordinal))
+                return;
+            _lotsGrid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+            object formatted = _lotsGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].EditedFormattedValue;
+            bool on = formatted is bool flag ? flag : true.Equals(formatted);
+            string key = tag.Substring(4);
+            lock (_lots)
+            {
+                if (_lots.TryGetValue(key, out var snap))
+                    snap.OverrideMinProfit = on;
+            }
+
+            var result = DataFiles.SetLotMinimumProfitOverride(
+                key == "(no lot)" ? "" : key,
+                _itemCode,
+                on);
+            if (!result.Ok)
+                ToastAlert.Error(this, result.Message);
+        }
+
         /// <summary>Left-click a purchase lot to expand or collapse its sales. Ignore double-click and sale lines.</summary>
         private void OnLotRowClick(object? sender, DataGridViewCellMouseEventArgs e)
         {
             // Only a single left-click on a data row toggles expand; ignore header, right-click, and double-click.
             if (e.Button != MouseButtons.Left || e.Clicks != 1 || e.RowIndex < 0 || _lotsGrid == null)
+                return;
+            if (_lotsGrid.Columns[e.ColumnIndex].Name == "OverrideMinProfit")
                 return;
             // Tag is "lot:<normalized PO>" on purchase rows and "sale:<normalized PO>" on inserted SO lines.
             string? tag = _lotsGrid.Rows[e.RowIndex].Tag as string;
@@ -677,7 +814,7 @@ namespace CastRightCatchInvManagement
             if (_lotsGrid == null || !_lotRows.TryGetValue(key, out int parent) || parent < 0)
                 return;
             CollapseLotSales(key);
-            List<KeyValuePair<string, decimal>> sales;
+            List<KeyValuePair<string, SaleSnap>> sales;
             string vendor;
             lock (_lots)
             {
@@ -686,7 +823,7 @@ namespace CastRightCatchInvManagement
                     return;
                 vendor = snap.Vendor.Trim();
                 sales = snap.SalesBySo
-                    .Where(pair => Qty(pair.Value) != 0)
+                    .Where(pair => Qty(pair.Value.Lbs) != 0)
                     .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
                     .ToList();
             }
@@ -708,8 +845,12 @@ namespace CastRightCatchInvManagement
                     pair.Key,
                     vendor,
                     "",
-                    Lbs(pair.Value),
+                    Lbs(pair.Value.Lbs),
                     "",
+                    pair.Value.PricePerLb.Length > 0
+                        ? MoneyFormat.Display(pair.Value.PricePerLb)
+                        : "—",
+                    false,
                     "");
                 var row = _lotsGrid.Rows[index];
                 // Tag "sale:<normalized PO>" marks this as an expand line so clicks do not toggle another lot.
@@ -717,6 +858,7 @@ namespace CastRightCatchInvManagement
                 row.DefaultCellStyle.ForeColor = Theme.Muted;
                 row.DefaultCellStyle.SelectionForeColor = Theme.Muted;
                 row.Cells[0].Style.Padding = new Padding(28, 0, 8, 0);
+                row.Cells["OverrideMinProfit"].ReadOnly = true;
                 insertAt++;
             }
 
@@ -858,13 +1000,28 @@ namespace CastRightCatchInvManagement
             public string Lot { get; set; } = "";
             /// <summary>Vendor kept from the first purchase on this PO.</summary>
             public string Vendor { get; set; } = "";
-            /// <summary>Pounds purchased onto this lot.</summary>
+            /// <summary>Agreement, ship, or arrival date from the first purchase on this PO.</summary>
+            public string PurchasedDate { get; set; } = "";
+            /// <summary>Frozen sale-by / anniversary date for this lot.</summary>
+            public string SaleByDate { get; set; } = "";
+            /// <summary>Price Paid / LB from the first purchase on this PO.</summary>
+            public string PricePerLb { get; set; } = "";
+            /// <summary>True when this PO may sell below the item minimum profit.</summary>
+            public bool OverrideMinProfit { get; set; }
+            /// <summary>Pounds purchased onto this lot (shown as Volume).</summary>
             public decimal Purchased { get; set; }
             /// <summary>Pounds sold off this lot (only sales whose PO/Lot # matches this purchase PO).</summary>
             public decimal Sold { get; set; }
-            /// <summary>SO # → lbs, used to insert expand rows under the purchase lot.</summary>
-            public Dictionary<string, decimal> SalesBySo { get; set; } =
+            /// <summary>SO # → lbs and sell price, used to insert expand rows under the purchase lot.</summary>
+            public Dictionary<string, SaleSnap> SalesBySo { get; set; } =
                 new(StringComparer.OrdinalIgnoreCase);
+        }
+
+        /// <summary>One sales-order line under a purchase lot.</summary>
+        private sealed class SaleSnap
+        {
+            public decimal Lbs { get; set; }
+            public string PricePerLb { get; set; } = "";
         }
 
         /// <summary>Navy section bar plus a compact labeled field table, docked to the top.</summary>
@@ -1123,11 +1280,8 @@ namespace CastRightCatchInvManagement
                     // Name comes from Vendor / Customer on the order when the party row is missing.
                     else if (key.Equals("Name", StringComparison.OrdinalIgnoreCase))
                         value = name;
-                    // Terms live on the order as Vendor Terms / Customer Terms when the party has none.
                     else if (key.Equals("Terms", StringComparison.OrdinalIgnoreCase))
-                        value = DataFiles.GetRecord(
-                            order,
-                            purchase ? "Vendor Terms" : "Customer Terms");
+                        value = "";
                 }
 
                 list.Add(new KeyValuePair<string, string>(key, value));

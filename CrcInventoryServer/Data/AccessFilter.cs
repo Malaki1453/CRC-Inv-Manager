@@ -32,6 +32,9 @@ internal static class AccessFilter
             // Skip parties/items the user is blocked from seeing.
             if (policy.IsBlocked(row))
                 continue;
+            // Deletes waiting for admin review must not appear in the live table.
+            if (IsWaitingDelete(row))
+                continue;
             result.Add(policy.Strip(table, row));
         }
 
@@ -61,6 +64,8 @@ internal static class AccessFilter
             // Skip parties/items the user is blocked from seeing.
             if (policy.IsBlocked(fields))
                 continue;
+            if (IsWaitingDelete(fields))
+                continue;
             result.Add((id, policy.Strip(table, fields)));
         }
 
@@ -82,10 +87,32 @@ internal static class AccessFilter
         // Cannot write a table that is not readable.
         if (!policy.CanRead(table))
             return false;
-        // View mode is read-only even when the table is allowed.
-        if (policy.WriteMode(table) == "view")
+        // Purchases and sales: table access is enough to add/edit (deletes still queue on the client).
+        if (!IsTradeTable(table) && policy.WriteMode(table) == "view")
             return false;
         return !policy.IsBlocked(values);
+    }
+
+    /// <summary>Purchases and sales allow add/edit whenever the table itself is allowed.</summary>
+    public static bool IsTradeTable(string table)
+    {
+        table = (table ?? "").Trim();
+        return table.Equals(Schema.PurchaseSales, StringComparison.OrdinalIgnoreCase) ||
+               table.Equals(Schema.Sales, StringComparison.OrdinalIgnoreCase) ||
+               table.Equals("purchases", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsWaitingDelete(Dictionary<string, string> row)
+    {
+        foreach (var pair in row)
+        {
+            if (!pair.Key.Equals(Schema.RecordStatus, StringComparison.OrdinalIgnoreCase))
+                continue;
+            return (pair.Value ?? "").Trim()
+                .Equals(Schema.RecordWaitingDelete, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     /// <summary>True when the user may read this table (empty policy allows every table).</summary>

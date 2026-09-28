@@ -18,6 +18,7 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _price;
         private readonly Label _amount;
         private readonly Button _remove;
+        private string _coo = "";
         private bool _locked;
         private bool _filling;
 
@@ -48,6 +49,7 @@ namespace CastRightCatchInvManagement
             _description = MakeBox();
             _weight = MakeBox();
             _price = MakeBox();
+            MoneyFormat.BindInput(_price);
             _amount = new Label
             {
                 AutoSize = false,
@@ -171,8 +173,9 @@ namespace CastRightCatchInvManagement
                 Ordered = _ordered.Text.Trim(),
                 Shipped = _shipped.Text.Trim(),
                 Description = _description.Text.Trim(),
+                Coo = _coo,
                 Weight = _weight.Text.Trim(),
-                Price = _price.Text.Trim(),
+                Price = MoneyFormat.Store(_price.Text),
                 Amount = ParseNumber(_amount.Text)
             };
         }
@@ -189,8 +192,9 @@ namespace CastRightCatchInvManagement
                 _ordered.Text = line.Ordered ?? "";
                 _shipped.Text = line.Shipped ?? "";
                 _description.Text = line.Description ?? "";
+                _coo = line.Coo ?? "";
                 _weight.Text = line.Weight ?? "";
-                _price.Text = line.Price ?? "";
+                _price.Text = MoneyFormat.Display(line.Price);
             }
             finally
             {
@@ -243,8 +247,8 @@ namespace CastRightCatchInvManagement
             DrawLocked(e.Graphics, _shipped.Text, slots.Shipped);
             DrawLocked(e.Graphics, _description.Text, slots.Description);
             DrawLocked(e.Graphics, _weight.Text, slots.Weight);
-            DrawLocked(e.Graphics, _price.Text, slots.Price);
-            DrawLocked(e.Graphics, _amount.Text, slots.Amount);
+            DrawLocked(e.Graphics, MoneyFormat.Display(_price.Text), slots.Price);
+            DrawLocked(e.Graphics, MoneyFormat.Display(_amount.Text), slots.Amount);
         }
 
         /// <summary>Paint one frozen cell so locked lines still show their values.</summary>
@@ -306,18 +310,15 @@ namespace CastRightCatchInvManagement
             }
 
             var parts = new List<string>();
-            // Description, pack, and COO are joined so the PDF has one description cell.
+            // Description and pack stay in the description cell; COO prints on the PDF origin line.
             if (description.Length > 0)
                 parts.Add(description);
-            // Pack size is appended after the product name when present.
             if (pack.Length > 0)
                 parts.Add(pack);
-            // Country of origin is appended last when present.
-            if (coo.Length > 0)
-                parts.Add(coo);
-            // Join only when at least one description piece was found.
             if (parts.Count > 0)
                 _description.Text = string.Join("  ·  ", parts);
+            if (coo.Length > 0)
+                _coo = coo;
 
             // Volume on the sale/purchase becomes invoice weight.
             if (volume.Length > 0)
@@ -332,7 +333,7 @@ namespace CastRightCatchInvManagement
                 "Total Cost / LB");
             // Prefer sell price; fall back to purchase cost when invoicing a PO.
             if (sell.Length > 0)
-                _price.Text = sell;
+                _price.Text = MoneyFormat.Display(sell);
         }
 
         /// <summary>Recalc amount when the user edits a field, but not during programmatic fills.</summary>
@@ -350,7 +351,7 @@ namespace CastRightCatchInvManagement
         {
             decimal weight = ParseNumber(_weight.Text);
             decimal price = ParseNumber(_price.Text);
-            string text = (weight * price).ToString("0.00", CultureInfo.InvariantCulture);
+            string text = MoneyFormat.Display(weight * price);
             // Avoid a TextChanged loop when the formatted amount is already showing.
             if (_amount.Text == text)
                 return;
@@ -496,6 +497,7 @@ namespace CastRightCatchInvManagement
         public string Ordered { get; set; } = "";
         public string Shipped { get; set; } = "";
         public string Description { get; set; } = "";
+        public string Coo { get; set; } = "";
         public string Weight { get; set; } = "";
         public string Price { get; set; } = "";
         public decimal Amount { get; set; }

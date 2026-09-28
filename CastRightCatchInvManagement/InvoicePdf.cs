@@ -45,6 +45,7 @@ namespace CastRightCatchInvManagement
         private bool _editing;
         private string _editInvoice = "";
         private Button _save = null!;
+        private Button _another = null!;
         private byte[]? _importPdf;
         private string _importName = "";
 
@@ -435,7 +436,16 @@ namespace CastRightCatchInvManagement
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
             Theme.StyleGoldButton(_save);
-            _save.Click += (_, _) => CreateInvoice();
+            _save.Click += (_, _) => CreateInvoice(stayOnForm: false);
+
+            _another = new Button
+            {
+                Text = "Save and Next",
+                Size = new Size(140, 34),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            Theme.StyleNavyButton(_another);
+            _another.Click += (_, _) => CreateInvoice(stayOnForm: true);
 
             var clear = new Button
             {
@@ -456,18 +466,21 @@ namespace CastRightCatchInvManagement
             _invoiceTotal.Font = Theme.SectionTitle;
             _invoiceTotal.ForeColor = Theme.Navy;
 
+            MoneyFormat.BindInput(_discount);
+            MoneyFormat.BindInput(_freight);
+            MoneyFormat.BindInput(_tax, formatOnLeave: false);
             _discount.TextChanged += (_, _) => UpdateTotals();
             _freight.TextChanged += (_, _) => UpdateTotals();
             _tax.TextChanged += (_, _) => UpdateTotals();
 
             card.Controls.Add(_save);
+            card.Controls.Add(_another);
             card.Controls.Add(clear);
-            _save.Location = new Point(620, 64);
-            clear.Location = new Point(522, 64);
             card.Resize += (_, _) =>
             {
-                _save.Location = new Point(Math.Max(360, card.Width - 174), 64);
-                clear.Location = new Point(Math.Max(260, card.Width - 272), 64);
+                _save.Location = new Point(Math.Max(400, card.Width - 174), 64);
+                _another.Location = new Point(Math.Max(260, card.Width - 314), 64);
+                clear.Location = new Point(Math.Max(160, card.Width - 414), 64);
             };
 
             return card;
@@ -605,7 +618,7 @@ namespace CastRightCatchInvManagement
                     DataFiles.GetRecordAny(record, "Name", "Company"),
                     DataFiles.GetRecord(record, "Terms"),
                     DataFiles.GetRecordAny(record, "Contact Name", "Phone"),
-                    DataFiles.GetRecordAny(record, "Address", "Company")));
+                    DataFiles.CustomerShippingAddress(record)));
             }
 
             // Restore the previously selected party after the combo is rebuilt.
@@ -810,7 +823,9 @@ namespace CastRightCatchInvManagement
             _discount.Text = MoneyField(draft.Discount);
             _freight.Text = MoneyField(draft.Freight);
             VendorChoice.Select(_freightCo, draft.FreightCompany);
-            _tax.Text = MoneyField(draft.TaxRate);
+            _tax.Text = draft.TaxIsPercent
+                ? (draft.TaxRate == 0 ? "" : draft.TaxRate.ToString("0.##", CultureInfo.InvariantCulture))
+                : MoneyField(draft.TaxRate);
             _taxPercent = draft.TaxIsPercent;
             // Toggle exists after BuildUi; skip if this ran too early.
             if (_taxMode != null)
@@ -865,11 +880,11 @@ namespace CastRightCatchInvManagement
             string discount = DataFiles.GetRecord(invoice, "Discount");
             // Empty discount should not overwrite a typed amount with blank.
             if (discount.Length > 0)
-                _discount.Text = discount;
+                _discount.Text = MoneyFormat.Display(discount);
             string freight = DataFiles.GetRecord(invoice, "Freight");
             // Empty freight should not overwrite a typed amount with blank.
             if (freight.Length > 0)
-                _freight.Text = freight;
+                _freight.Text = MoneyFormat.Display(freight);
             string freightCo = DataFiles.GetRecordAny(invoice, DataFiles.FreightCompanyColumn, "Forwarder", "Logistics");
             // Empty freight company should not clear a combo pick.
             if (freightCo.Length > 0)
@@ -887,7 +902,7 @@ namespace CastRightCatchInvManagement
 
         /// <summary>Format a money field, leaving zero as blank so the box stays empty.</summary>
         private static string MoneyField(decimal value) =>
-            value == 0 ? "" : value.ToString("0.##", CultureInfo.InvariantCulture);
+            MoneyFormat.DisplayOrBlank(value);
 
         /// <summary>Validate the rebuilt draft, store the PDF, then report success or the missing field.</summary>
         private void FinishCreatedPdf(Action<string?> done)
@@ -1347,8 +1362,18 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Clear header, lines, tax, and totals, then assign the next invoice #.</summary>
-        private void ResetDraft(bool received = false)
+        private void ResetDraft(bool received = false, bool keepParty = false)
         {
+            string partyCode = keepParty ? _customerCode.Text.Trim() : "";
+            string partyName = keepParty
+                ? (_customer.SelectedItem is CustomerChoice choice ? choice.Name : _customer.Text.Trim())
+                : "";
+            string terms = keepParty ? _terms.Text.Trim() : "";
+            string sold = keepParty ? _soldTo.Text : "";
+            string ship = keepParty ? _shipTo.Text : "";
+            if (keepParty)
+                received = _received;
+
             foreach (var row in _lines.ToList())
             {
                 _lineHost.Controls.Remove(row);
@@ -1393,6 +1418,32 @@ namespace CastRightCatchInvManagement
             if (_taxMode != null)
                 _taxMode.Text = "#";
             AddLine(lockPrevious: false);
+            if (keepParty)
+            {
+                _customerCode.Text = partyCode;
+                if (terms.Length > 0)
+                    _terms.Text = terms;
+                _soldTo.Text = sold;
+                _shipTo.Text = ship;
+                if (partyName.Length > 0)
+                    _customer.Text = partyName;
+                for (int i = 0; i < _customer.Items.Count; i++)
+                {
+                    if (_customer.Items[i] is not CustomerChoice item)
+                        continue;
+                    bool byCode = partyCode.Length > 0 &&
+                                  item.Code.Equals(partyCode, StringComparison.OrdinalIgnoreCase);
+                    bool byName = partyName.Length > 0 &&
+                                  item.Name.Equals(partyName, StringComparison.OrdinalIgnoreCase);
+                    if (!byCode && !byName)
+                        continue;
+                    _loadingCustomer = true;
+                    _customer.SelectedIndex = i;
+                    _loadingCustomer = false;
+                    break;
+                }
+            }
+
             UpdateTotals();
         }
 
@@ -1414,6 +1465,8 @@ namespace CastRightCatchInvManagement
             // Save caption switches to Save Invoice while editing an existing number.
             if (_save != null)
                 _save.Text = editing ? "Save Invoice" : "Create Invoice";
+            if (_another != null)
+                _another.Visible = !editing;
             RefreshHeading();
         }
 
@@ -1477,7 +1530,7 @@ namespace CastRightCatchInvManagement
         {
             string code = DataFiles.GetRecordAny(record, "Vendor Code", "Code");
             string name = DataFiles.GetRecordAny(record, "Vendor", "Name", "Company");
-            string terms = DataFiles.GetRecordAny(record, "Vendor Terms", "Terms");
+            string terms = DataFiles.GetRecordAny(record, "Terms");
             string ship = DataFiles.GetRecordAny(record, "Arrival Date", "Ship Date");
             DateTime? shipDate = DateTime.TryParse(ship, out var parsed) ? parsed : null;
             FillVendor(code, name, terms, shipDate);
@@ -1554,7 +1607,7 @@ namespace CastRightCatchInvManagement
         {
             string code = DataFiles.GetRecordAny(record, "Customer Code", "Cust ID");
             string name = DataFiles.GetRecordAny(record, "Customer", "Customer Name");
-            string terms = DataFiles.GetRecordAny(record, "Customer Terms");
+            string terms = DataFiles.GetRecordAny(record, "Terms");
             string so = DataFiles.GetRecordAny(record, "SO #", "SO NO", "SO Number");
             string contact = "";
 
@@ -1680,14 +1733,14 @@ namespace CastRightCatchInvManagement
         {
             var draft = CollectDraft();
             _totalWeight.Text = draft.TotalWeight.ToString("0.###", CultureInfo.InvariantCulture);
-            _subTotal.Text = draft.SubTotal.ToString("0.00", CultureInfo.InvariantCulture);
-            _invoiceTotal.Text = draft.InvoiceTotal.ToString("0.00", CultureInfo.InvariantCulture);
+            _subTotal.Text = MoneyFormat.Display(draft.SubTotal);
+            _invoiceTotal.Text = MoneyFormat.Display(draft.InvoiceTotal);
         }
 
         /// <summary>
         /// Draw the invoice PDF into the database, write an invoices row if needed, and open the viewer.
         /// </summary>
-        private void CreateInvoice()
+        private void CreateInvoice(bool stayOnForm = false)
         {
             // Invoices are stored in the chosen data folder.
             if (!AppLock.HasFolder())
@@ -1745,7 +1798,14 @@ namespace CastRightCatchInvManagement
                 ToastAlert.Success(this, _editing
                     ? $"Invoice {draft.InvoiceNumber} was updated."
                     : $"Invoice {draft.InvoiceNumber} was saved.");
+                if (stayOnForm)
+                {
+                    ResetDraft(received: _received, keepParty: true);
+                    return;
+                }
+
                 ResetDraft();
+                Navigator.GoTo(AppPage.Invoicing);
             }
             // Disk/DB failures should leave the form so the user can retry.
             catch (Exception ex)
@@ -1764,11 +1824,8 @@ namespace CastRightCatchInvManagement
                 SaveIncomingPurchase(draft);
 
             // Renaming an invoice must drop the PDF stored under the old number.
-            if (_editing &&
-                _editInvoice.Length > 0 &&
-                !_editInvoice.Equals(draft.InvoiceNumber, StringComparison.OrdinalIgnoreCase))
-                DataFiles.DeleteStoredPdf(DataFiles.PdfKindInvoice, _editInvoice);
-            DataFiles.DeleteStoredPdf(DataFiles.PdfKindInvoice, draft.InvoiceNumber);
+            if (_editing)
+                DataFiles.RetireStoredPdf(DataFiles.PdfKindInvoice, _editInvoice, draft.InvoiceNumber);
             string pdfPath = InvoiceDocument.Save(draft);
             DataFiles.UpsertInvoiceFromDraft(draft, due);
             // Keep the original imported PDF beside the generated invoice PDF.
@@ -1826,9 +1883,13 @@ namespace CastRightCatchInvManagement
                         ["Price Paid / LB"] = line.Price,
                         ["Total Cost"] = total == 0 ? "" : total.ToString("0.00", CultureInfo.InvariantCulture),
                         ["Agreement Date"] = CsvIO.Date(draft.InvoiceDate),
-                        ["Vendor Terms"] = draft.Terms,
+
                         ["Ship Date"] = CsvIO.Date(draft.ShipDate),
-                        ["Status"] = "Pending"
+                        ["Status"] = "Pending",
+                        [DataFiles.SaleByDateColumn] = DataFiles.SaleByDateForItem(
+                            item,
+                            CsvIO.Date(draft.InvoiceDate),
+                            CsvIO.Date(draft.ShipDate))
                     };
                     var inserted = DataFiles.MutateInsert(DataFiles.PurchaseSales, values);
                     // Stop the rest of the PO if one line cannot be stored.

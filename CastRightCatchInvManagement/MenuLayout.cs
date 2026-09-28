@@ -77,8 +77,11 @@ namespace CastRightCatchInvManagement
             ("Sales", "Sales", AppPage.Sales),
             ("SalesOrder", "New Sale", AppPage.SalesOrder),
             ("Customers", "Customers", AppPage.Customers),
+            ("AddCustomer", "New Customer", AppPage.AddCustomer),
             ("Vendors", "Vendors", AppPage.Vendors),
+            ("AddVendor", "New Vendor", AppPage.AddVendor),
             ("ItemCodes", "Inventory", AppPage.ItemCodes),
+            ("AddItemCode", "New Item", AppPage.AddItemCode),
             ("Invoicing", "Invoices", AppPage.Invoicing),
             ("InvoicePdf", "Create Invoice", AppPage.InvoicePdf),
             ("Debits", "Debits", AppPage.Debits),
@@ -172,7 +175,10 @@ namespace CastRightCatchInvManagement
                 {
                     FolderWith("Purchases", "PurchaseSales", "AddPurchase"),
                     FolderWith("Sales", "Sales", "SalesOrder"),
-                    FolderWith("Invoices", "Invoicing", "InvoicePdf")
+                    FolderWith("Invoices", "Invoicing", "InvoicePdf"),
+                    FolderWith("Customers", "Customers", "AddCustomer"),
+                    FolderWith("Inventory", "ItemCodes", "AddItemCode"),
+                    FolderWith("Vendors", "Vendors", "AddVendor")
                 }
             };
             layout.Normalize();
@@ -375,6 +381,9 @@ namespace CastRightCatchInvManagement
             EnsureCompanions("Purchases", "PurchaseSales", "AddPurchase");
             EnsureCompanions("Sales", "Sales", "SalesOrder");
             EnsureCompanions("Invoices", "Invoicing", "InvoicePdf");
+            EnsureCompanions("Customers", "Customers", "AddCustomer");
+            EnsureCompanions("Inventory", "ItemCodes", "AddItemCode");
+            EnsureCompanions("Vendors", "Vendors", "AddVendor");
 
             var used = AssignedKeys();
             foreach (var item in Catalog)

@@ -53,6 +53,17 @@ namespace CastRightCatchInvManagement
         /// <summary>True when compact search is showing (user has typed or set dates).</summary>
         public bool IsSearching => _active;
 
+        /// <summary>Put text in the page search box, expand the table, and filter to matching rows.</summary>
+        public void Prefill(string query)
+        {
+            query = (query ?? "").Trim();
+            _box.Text = query;
+            _columnSearch.SetGlobalQuery(query);
+            SetActive(query.Length > 0);
+            if (query.Length > 0)
+                _box.Select(_box.Text.Length, 0);
+        }
+
         /// <summary>Build the idle search overlay; the grid stays hidden until the user types or picks dates.</summary>
         public TableSearchStage(string title, Panel toolbar, ColumnSearch columnSearch)
         {

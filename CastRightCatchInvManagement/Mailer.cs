@@ -74,7 +74,16 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Send one message through Admin SMTP. Returns a user-facing error on failure.</summary>
-        public static bool TrySend(string toEmail, string subject, string body, out string error)
+        public static bool TrySend(string toEmail, string subject, string body, out string error) =>
+            TrySend(toEmail, subject, body, attachmentPath: null, out error);
+
+        /// <summary>Send one message, optionally with a file attached.</summary>
+        public static bool TrySend(
+            string toEmail,
+            string subject,
+            string body,
+            string? attachmentPath,
+            out string error)
         {
             error = "";
             // Refresh SMTP from the database so every PC uses the same mailbox.
@@ -91,7 +100,7 @@ namespace CastRightCatchInvManagement
             // Do not hit SMTP with a blank or non-email destination.
             if (toEmail.Length == 0 || !toEmail.Contains('@'))
             {
-                error = "That user needs an email address.";
+                error = "That address is not a valid email.";
                 return false;
             }
 
@@ -137,6 +146,12 @@ namespace CastRightCatchInvManagement
                     SubjectEncoding = Encoding.UTF8
                 };
                 message.To.Add(new MailAddress(toEmail));
+                Attachment? file = null;
+                if (!string.IsNullOrWhiteSpace(attachmentPath) && File.Exists(attachmentPath))
+                {
+                    file = new Attachment(attachmentPath);
+                    message.Attachments.Add(file);
+                }
 
                 using var client = new SmtpClient(host, port)
                 {
@@ -146,8 +161,15 @@ namespace CastRightCatchInvManagement
                     Timeout = 30000,
                     Credentials = new NetworkCredential(user, password)
                 };
-                client.Send(message);
-                return true;
+                try
+                {
+                    client.Send(message);
+                    return true;
+                }
+                finally
+                {
+                    file?.Dispose();
+                }
             }
             // Map SMTP codes to Admin-facing steps instead of a raw exception.
             catch (Exception ex)

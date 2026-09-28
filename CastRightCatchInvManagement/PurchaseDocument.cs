@@ -40,10 +40,8 @@ namespace CastRightCatchInvManagement
             g.Text(420, y, DataFiles.GetRecord(first, "Vendor Code"), 9, false, Theme.Ink);
 
             y += 14;
-            g.Text(36, y, "Terms:", 8, true, Theme.Navy);
-            g.Text(110, y, DataFiles.GetRecord(first, "Vendor Terms"), 8, false, Theme.Ink);
-            g.Text(330, y, "Location:", 8, true, Theme.Navy);
-            g.Text(420, y, DataFiles.GetRecord(first, "Location"), 8, false, Theme.Ink);
+            g.Text(36, y, "Location:", 8, true, Theme.Navy);
+            g.Text(110, y, DataFiles.GetRecord(first, "Location"), 8, false, Theme.Ink);
 
             y += 22;
             g.Fill(36, y, 540, 16, Theme.Navy);
@@ -79,8 +77,8 @@ namespace CastRightCatchInvManagement
 
             y += 16;
             float tableTop = y;
-            float rowH = 18;
-            int max = Math.Max(10, rows.Count);
+            float rowH = 26;
+            int max = Math.Max(8, rows.Count);
             g.Rect(36, y, 540, max * rowH);
 
             decimal volume = 0;
@@ -92,9 +90,15 @@ namespace CastRightCatchInvManagement
                 // Zebra-stripe odd rows so the item table is easier to scan.
                 if (i % 2 == 1)
                     g.Fill(36.5f, ly, 539, rowH, Theme.GridAlt);
-                g.Text(42, ly + 12, Clip(DataFiles.GetRecord(row, "Item Code"), 12), 7.5f, false, Theme.Ink);
-                g.Text(114, ly + 12, Clip(DataFiles.GetRecord(row, "Description"), 34), 7.5f, false, Theme.Ink);
-                g.Text(320, ly + 12, Clip(DataFiles.GetRecord(row, "Pack Size"), 8), 7.5f, false, Theme.Ink);
+                string item = DataFiles.GetRecord(row, "Item Code");
+                g.Text(42, ly + 12, PdfItemText.Clip(item, 12), 7.5f, false, Theme.Ink);
+                PdfItemText.Draw(
+                    g, 114, ly,
+                    DataFiles.GetRecord(row, "Description"),
+                    item,
+                    DataFiles.GetRecord(row, "COO"),
+                    34);
+                g.Text(320, ly + 12, PdfItemText.Clip(DataFiles.GetRecord(row, "Pack Size"), 8), 7.5f, false, Theme.Ink);
                 g.Text(372, ly + 12, Qty(DataFiles.GetRecord(row, "CS")), 7.5f, false, Theme.Ink);
                 string vol = DataFiles.GetRecord(row, "Volume");
                 g.Text(420, ly + 12, Qty(vol), 7.5f, false, Theme.Ink);
@@ -116,7 +120,7 @@ namespace CastRightCatchInvManagement
             g.TextRight(414, ty + 12, "Total Volume", 8, true, Theme.Navy);
             g.Text(420, ty + 12, volume.ToString("0.###", CultureInfo.InvariantCulture), 8, false, Theme.Ink);
             g.TextRight(532, ty + 12, "Total Cost", 8, true, Theme.Navy);
-            g.TextRight(572, ty + 12, total.ToString("0.00", CultureInfo.InvariantCulture), 8, false, Theme.Ink);
+            g.TextRight(572, ty + 12, MoneyFormat.Display(total), 8, false, Theme.Ink);
 
             g.Text(36, 776, "This document is a purchase order. Confirm item, cases, and weight on receipt.", 7, false, Theme.Muted);
             return g;
@@ -133,14 +137,8 @@ namespace CastRightCatchInvManagement
         private static string Money(string? value)
         {
             decimal n = InvoiceLineRow.ParseNumber(value);
-            return n == 0 && string.IsNullOrWhiteSpace(value) ? "" : n.ToString("0.00", CultureInfo.InvariantCulture);
+            return n == 0 && string.IsNullOrWhiteSpace(value) ? "" : MoneyFormat.Display(n);
         }
 
-        /// <summary>Trim text that would overflow a PDF column, adding a trailing period.</summary>
-        private static string Clip(string? text, int max)
-        {
-            text ??= "";
-            return text.Length <= max ? text : text[..(max - 1)] + ".";
-        }
     }
 }

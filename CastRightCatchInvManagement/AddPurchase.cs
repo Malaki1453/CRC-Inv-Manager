@@ -15,7 +15,7 @@ namespace CastRightCatchInvManagement
         private TextBox _vendor = null!;
         private TextBox _vendorName = null!;
         private TextBox _location = null!;
-        private TextBox _vendorTerms = null!;
+
         private DateTimePicker _agreement = null!;
         private DateTimePicker _expectedShip = null!;
         private DateTimePicker _vendorDue = null!;
@@ -24,11 +24,15 @@ namespace CastRightCatchInvManagement
         private TextBox _forwarder = null!;
         private TextBox _logistics = null!;
         private ComboBox _status = null!;
-        private ComboBox _freightCo = null!;
+        private TextBox _freightCo = null!;
         private TextBox _overhead = null!;
         private TextBox _freight = null!;
         private TextBox _forwarderLb = null!;
         private TextBox _other = null!;
+        private Panel _overheadHost = null!;
+        private Panel _freightLbHost = null!;
+        private Panel _forwarderLbHost = null!;
+        private Panel _otherHost = null!;
         private Panel _lineHost = null!;
         private Label _modeLabel = null!;
         private Label _totalVolume = null!;
@@ -38,11 +42,13 @@ namespace CastRightCatchInvManagement
         private List<LookupSuggest.Hit> _vendorHits = new();
         private List<LookupSuggest.Hit> _forwarderHits = new();
         private List<LookupSuggest.Hit> _logisticsHits = new();
+        private List<LookupSuggest.Hit> _freightHits = new();
         private List<LookupSuggest.Hit> _itemHits = new();
         private LookupSuggest? _vendorCodeSuggest;
         private LookupSuggest? _vendorNameSuggest;
         private LookupSuggest? _forwarderSuggest;
         private LookupSuggest? _logisticsSuggest;
+        private LookupSuggest? _freightSuggest;
         private bool _editing;
         private string _editPo = "";
 
@@ -164,11 +170,10 @@ namespace CastRightCatchInvManagement
             _vendorName = AddField(card, "VENDOR", 338, 36, 250);
             _location = AddField(card, "LOCATION", 602, 36, 170);
 
-            _vendorTerms = AddField(card, "VENDOR TERMS", 20, 86, 160);
-            _agreement = AddDate(card, "AGREEMENT DATE", 194, 86, 140);
-            _expectedShip = AddDate(card, "EXPECTED SHIP DATE", 348, 86, 150);
-            _vendorDue = AddDate(card, "VENDOR DUE DATE", 512, 86, 140);
-            _status = AddCombo(card, "STATUS", 666, 86, 130);
+            _agreement = AddDate(card, "AGREEMENT DATE", 20, 86, 140);
+            _expectedShip = AddDate(card, "EXPECTED SHIP DATE", 174, 86, 150);
+            _vendorDue = AddDate(card, "VENDOR DUE DATE", 338, 86, 140);
+            _status = AddCombo(card, "STATUS", 492, 86, 130);
             _status.DropDownStyle = ComboBoxStyle.DropDownList;
             SelectStatus(_status, "Pending");
 
@@ -176,20 +181,27 @@ namespace CastRightCatchInvManagement
             _arrival = AddDate(card, "ARRIVAL DATE", 174, 136, 140);
             _forwarder = AddField(card, "FORWARDER", 328, 136, 150);
             _logistics = AddField(card, "LOGISTICS", 492, 136, 150);
-            _freightCo = AddCombo(card, "FREIGHT CO", 656, 136, 180);
+            _freightCo = AddField(card, "FREIGHT CO", 656, 136, 180);
 
-            _overhead = AddField(card, "OVERHEAD / LB", 20, 186, 120);
-            _freight = AddField(card, "FREIGHT / LB", 154, 186, 120);
-            _forwarderLb = AddField(card, "FORWARDER / LB", 288, 186, 130);
-            _other = AddField(card, "OTHER / LB", 432, 186, 110);
+            _other = AddCostField(card, "OTHER / LB", 20, 186, 110, out _otherHost);
+            _freight = AddCostField(card, "FREIGHT / LB", 154, 186, 120, out _freightLbHost);
+            _forwarderLb = AddCostField(card, "FORWARDER / LB", 288, 186, 130, out _forwarderLbHost);
+            _overhead = AddCostField(card, "OVERHEAD / LB", 432, 186, 120, out _overheadHost);
 
             _vendorCodeSuggest = new LookupSuggest(_vendor, () => _vendorHits, codeFirst: true, ApplyVendorHit);
             _vendorNameSuggest = new LookupSuggest(_vendorName, () => _vendorHits, codeFirst: false, ApplyVendorHit);
             _forwarderSuggest = new LookupSuggest(_forwarder, () => _forwarderHits, codeFirst: false, hit => ApplyNameHit(_forwarder, hit));
             _logisticsSuggest = new LookupSuggest(_logistics, () => _logisticsHits, codeFirst: false, hit => ApplyNameHit(_logistics, hit));
+            _freightSuggest = new LookupSuggest(_freightCo, () => _freightHits, codeFirst: false, hit => ApplyNameHit(_freightCo, hit));
             foreach (var box in new[] { _overhead, _freight, _forwarderLb, _other })
+            {
+                MoneyFormat.BindInput(box);
                 box.TextChanged += (_, _) => RecalcLines();
+            }
 
+            _forwarder.TextChanged += (_, _) => SyncCostFields();
+            _freightCo.TextChanged += (_, _) => SyncCostFields();
+            SyncCostFields();
             return card;
         }
 
@@ -319,8 +331,8 @@ namespace CastRightCatchInvManagement
 
             _another = new Button
             {
-                Text = "Add Another",
-                Size = new Size(130, 34),
+                Text = "Save and Next",
+                Size = new Size(140, 34),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
             Theme.StyleNavyButton(_another);
@@ -359,6 +371,7 @@ namespace CastRightCatchInvManagement
             _vendorHits.Clear();
             _forwarderHits.Clear();
             _logisticsHits.Clear();
+            _freightHits.Clear();
             foreach (var record in DataFiles.VisibleRecords(DataFiles.Vendors))
             {
                 string code = DataFiles.GetRecord(record, "Code").Trim();
@@ -374,6 +387,8 @@ namespace CastRightCatchInvManagement
                 // Logistics slot is also a vendor subset, not a separate table.
                 if (VendorTypes.MatchesSlot(record, VendorTypes.SlotPurchaseLogistics))
                     _logisticsHits.Add(hit);
+                if (VendorTypes.MatchesSlot(record, VendorTypes.SlotPurchaseFreight))
+                    _freightHits.Add(hit);
             }
 
             _itemHits.Clear();
@@ -395,10 +410,6 @@ namespace CastRightCatchInvManagement
                     species));
             }
 
-            // Freight combo is created with the header; skip if BuildUi has not run yet.
-            if (_freightCo != null)
-                VendorChoice.Fill(_freightCo);
-
             foreach (var row in _lines)
                 row.AttachLookups(() => _itemHits);
         }
@@ -408,9 +419,6 @@ namespace CastRightCatchInvManagement
         {
             _vendor.Text = hit.Code;
             _vendorName.Text = hit.Name;
-            // Extra on vendor hits is payment terms.
-            if (hit.Extra.Length > 0)
-                _vendorTerms.Text = hit.Extra;
         }
 
         /// <summary>Write a lookup name (or code if the name is blank) into a free-text field.</summary>
@@ -444,7 +452,7 @@ namespace CastRightCatchInvManagement
             }
 
             _totalVolume.Text = volume.ToString("0.###", CultureInfo.InvariantCulture);
-            _totalCost.Text = cost.ToString("0.00", CultureInfo.InvariantCulture);
+            _totalCost.Text = MoneyFormat.Display(cost);
         }
 
         /// <summary>Insert or update one purchases row per product line, then refresh the PO PDF.</summary>
@@ -457,6 +465,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            DataFiles.EnsurePurchaseColumns();
             string po = _po.Text.Trim();
             // PO # is the document key for every line on this order.
             if (po.Length == 0)
@@ -551,35 +560,30 @@ namespace CastRightCatchInvManagement
 
             try
             {
-                PurchaseDocument.SaveFromPo(po);
+                if (_editing)
+                    DataFiles.RetireStoredPdf(DataFiles.PdfKindPurchase, _editPo, po);
+                string? pdfPath = PurchaseDocument.SaveFromPo(po);
+                if (!string.IsNullOrWhiteSpace(pdfPath))
+                    DataFiles.OpenPdf(pdfPath, DataFiles.PdfKindPurchase, po);
             }
-            // Keep the saved rows even if the PDF cannot be written.
-            catch
+            catch (Exception ex)
             {
+                ToastAlert.Error(this, ex.Message);
             }
 
             ToastAlert.Success(this, last is { Queued: true }
                 ? last.Value.Message
                 : _editing ? "The purchase was updated." : "The purchase was saved.");
 
-            // Add Another starts a new PO with the same vendor.
+            // Add Another starts a new PO with the same vendor on this page.
             if (keepVendor)
             {
                 ResetForm(keepVendor: true);
                 return;
             }
 
-            // Stay in edit mode so a second save still updates these items.
-            if (_editing)
-            {
-                _editPo = po;
-                _loadedItems.Clear();
-                foreach (string item in savedItems)
-                    _loadedItems.Add(item);
-                return;
-            }
-
             ResetForm(keepVendor: false);
+            Navigator.GoToAndSearch(AppPage.PurchaseSales, po);
         }
 
         /// <summary>Map header fields plus one product line onto a purchases-table row.</summary>
@@ -597,23 +601,28 @@ namespace CastRightCatchInvManagement
                 ["Pack Size"] = line.PackSize,
                 ["CS"] = line.Cases,
                 ["Volume"] = line.Volume,
-                ["Price Paid / LB"] = line.Price,
-                ["Overhead / LB"] = _overhead.Text.Trim(),
-                ["Freight / LB"] = _freight.Text.Trim(),
-                [DataFiles.FreightCompanyColumn] = VendorChoice.TextOf(_freightCo),
-                ["Forwarder / LB"] = _forwarderLb.Text.Trim(),
-                ["Other / LB"] = _other.Text.Trim(),
-                ["Total Cost / LB"] = line.TotalPerLb,
-                ["Total Cost"] = line.TotalCost,
+                ["Price Paid / LB"] = MoneyFormat.Store(line.Price),
+                ["Overhead / LB"] = MoneyFormat.Store(_overhead.Text),
+                ["Freight / LB"] = MoneyFormat.Store(_freight.Text),
+                [DataFiles.FreightCompanyColumn] = _freightCo.Text.Trim(),
+                ["Forwarder / LB"] = MoneyFormat.Store(_forwarderLb.Text),
+                ["Other / LB"] = MoneyFormat.Store(_other.Text),
+                ["Total Cost / LB"] = MoneyFormat.Store(line.TotalPerLb),
+                ["Total Cost"] = MoneyFormat.Store(line.TotalCost),
                 ["Agreement Date"] = DateText(_agreement),
                 ["Expected Ship Date"] = DateText(_expectedShip),
-                ["Vendor Terms"] = _vendorTerms.Text.Trim(),
+
                 ["Vendor Due Date"] = DateText(_vendorDue),
                 ["Ship Date"] = DateText(_ship),
                 ["Arrival Date"] = DateText(_arrival),
                 ["Forwarder"] = _forwarder.Text.Trim(),
                 ["Logistics"] = _logistics.Text.Trim(),
-                ["Status"] = _status.Text.Trim()
+                ["Status"] = _status.Text.Trim(),
+                [DataFiles.SaleByDateColumn] = DataFiles.SaleByDateForItem(
+                    line.ItemCode,
+                    DateText(_agreement),
+                    DateText(_ship),
+                    DateText(_arrival))
             };
         }
 
@@ -633,7 +642,7 @@ namespace CastRightCatchInvManagement
             _vendor.Text = DataFiles.GetRecord(rows[0], "Vendor Code");
             _vendorName.Text = DataFiles.GetRecord(rows[0], "Vendor");
             _location.Text = DataFiles.GetRecord(rows[0], "Location");
-            _vendorTerms.Text = DataFiles.GetRecord(rows[0], "Vendor Terms");
+
             SetDate(_agreement, DataFiles.GetRecord(rows[0], "Agreement Date"));
             SetDate(_expectedShip, DataFiles.GetRecord(rows[0], "Expected Ship Date"));
             SetDate(_vendorDue, DataFiles.GetRecord(rows[0], "Vendor Due Date"));
@@ -641,14 +650,13 @@ namespace CastRightCatchInvManagement
             SetDate(_arrival, DataFiles.GetRecord(rows[0], "Arrival Date"));
             _forwarder.Text = DataFiles.GetRecord(rows[0], "Forwarder");
             _logistics.Text = DataFiles.GetRecord(rows[0], "Logistics");
-            VendorChoice.Select(
-                _freightCo,
-                DataFiles.GetRecordAny(rows[0], DataFiles.FreightCompanyColumn, "Forwarder", "Logistics"));
+            _freightCo.Text = DataFiles.GetRecordAny(rows[0], DataFiles.FreightCompanyColumn);
             SelectStatus(_status, DataFiles.GetRecord(rows[0], "Status"));
-            _overhead.Text = DataFiles.GetRecord(rows[0], "Overhead / LB");
-            _freight.Text = DataFiles.GetRecord(rows[0], "Freight / LB");
-            _forwarderLb.Text = DataFiles.GetRecord(rows[0], "Forwarder / LB");
-            _other.Text = DataFiles.GetRecord(rows[0], "Other / LB");
+            _overhead.Text = MoneyFormat.Display(DataFiles.GetRecord(rows[0], "Overhead / LB"));
+            _freight.Text = MoneyFormat.Display(DataFiles.GetRecord(rows[0], "Freight / LB"));
+            _forwarderLb.Text = MoneyFormat.Display(DataFiles.GetRecord(rows[0], "Forwarder / LB"));
+            _other.Text = MoneyFormat.Display(DataFiles.GetRecord(rows[0], "Other / LB"));
+            SyncCostFields();
 
             foreach (var row in rows)
             {
@@ -670,9 +678,8 @@ namespace CastRightCatchInvManagement
         {
             string vendorCode = keepVendor ? _vendor.Text.Trim() : "";
             string vendorName = keepVendor ? _vendorName.Text.Trim() : "";
-            string terms = keepVendor ? _vendorTerms.Text : "";
             string location = keepVendor ? _location.Text : "";
-            string freightCo = keepVendor ? VendorChoice.TextOf(_freightCo) : "";
+            string freightCo = keepVendor ? _freightCo.Text.Trim() : "";
 
             ClearLines();
             _loadedItems.Clear();
@@ -690,14 +697,13 @@ namespace CastRightCatchInvManagement
             _forwarder.Text = "";
             _logistics.Text = "";
             SelectStatus(_status, "Pending");
-            VendorChoice.Select(_freightCo, freightCo);
+            _freightCo.Text = freightCo;
 
             // Add Another reuses vendor/location; a full clear does not.
             if (keepVendor)
             {
                 _vendor.Text = vendorCode;
                 _vendorName.Text = vendorName;
-                _vendorTerms.Text = terms;
                 _location.Text = location;
             }
             // Full Clear wipes vendor/location so the next PO starts blank.
@@ -705,12 +711,12 @@ namespace CastRightCatchInvManagement
             {
                 _vendor.Text = "";
                 _vendorName.Text = "";
-                _vendorTerms.Text = "";
                 _location.Text = "";
             }
 
             SetMode(false);
             AddLine();
+            SyncCostFields();
             _po.Focus();
             UpdateTotals();
         }
@@ -736,12 +742,59 @@ namespace CastRightCatchInvManagement
             _another.Visible = !editing;
         }
 
+        /// <summary>Show Freight / LB and Forwarder / LB only when those names are filled. Other / LB always stays.</summary>
+        private void SyncCostFields()
+        {
+            bool showFreight = _freightCo.Text.Trim().Length > 0;
+            bool showForwarder = _forwarder.Text.Trim().Length > 0;
+            bool showOverhead = HasCost(_overhead.Text);
+
+            if (!showFreight)
+                _freight.Text = "";
+            if (!showForwarder)
+                _forwarderLb.Text = "";
+
+            _freightLbHost.Visible = showFreight;
+            _forwarderLbHost.Visible = showForwarder;
+            _overheadHost.Visible = showOverhead;
+
+            int x = 20;
+            _otherHost.Location = new Point(x, 186);
+            x += _otherHost.Width + 14;
+            if (showFreight)
+            {
+                _freightLbHost.Location = new Point(x, 186);
+                x += _freightLbHost.Width + 14;
+            }
+
+            if (showForwarder)
+            {
+                _forwarderLbHost.Location = new Point(x, 186);
+                x += _forwarderLbHost.Width + 14;
+            }
+
+            if (showOverhead)
+                _overheadHost.Location = new Point(x, 186);
+
+            RecalcLines();
+        }
+
+        private static bool HasCost(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+            return MoneyFormat.TryParse(text, out decimal amount) ? amount != 0 : text.Trim().Length > 0;
+        }
+
         /// <summary>Header overhead / lb applied to every product line.</summary>
-        private decimal SharedOverhead() => PurchaseLineRow.ParseNumber(_overhead.Text);
+        private decimal SharedOverhead() =>
+            _overheadHost.Visible ? PurchaseLineRow.ParseNumber(_overhead.Text) : 0;
         /// <summary>Header freight / lb applied to every product line.</summary>
-        private decimal SharedFreight() => PurchaseLineRow.ParseNumber(_freight.Text);
+        private decimal SharedFreight() =>
+            _freightLbHost.Visible ? PurchaseLineRow.ParseNumber(_freight.Text) : 0;
         /// <summary>Header forwarder / lb applied to every product line.</summary>
-        private decimal SharedForwarder() => PurchaseLineRow.ParseNumber(_forwarderLb.Text);
+        private decimal SharedForwarder() =>
+            _forwarderLbHost.Visible ? PurchaseLineRow.ParseNumber(_forwarderLb.Text) : 0;
         /// <summary>Header other / lb applied to every product line.</summary>
         private decimal SharedOther() => PurchaseLineRow.ParseNumber(_other.Text);
 
@@ -777,19 +830,34 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Labeled text box placed at a fixed header coordinate.</summary>
-        private static TextBox AddField(Control parent, string caption, int x, int y, int width)
+        private static TextBox AddField(Control parent, string caption, int x, int y, int width) =>
+            AddCostField(parent, caption, x, y, width, out _);
+
+        /// <summary>Labeled cost box in a host panel so / lb fields can show or hide together.</summary>
+        private static TextBox AddCostField(
+            Control parent,
+            string caption,
+            int x,
+            int y,
+            int width,
+            out Panel host)
         {
-            var label = new Label { Text = caption };
+            host = new Panel
+            {
+                Location = new Point(x, y),
+                Size = new Size(width, 42)
+            };
+            var label = new Label { Text = caption, Location = new Point(0, 0) };
             Theme.StyleFieldLabel(label);
-            label.Location = new Point(x, y);
             var box = new TextBox
             {
-                Location = new Point(x, y + 16),
+                Location = new Point(0, 16),
                 Size = new Size(width, 26)
             };
             Theme.StyleField(box);
-            parent.Controls.Add(label);
-            parent.Controls.Add(box);
+            host.Controls.Add(label);
+            host.Controls.Add(box);
+            parent.Controls.Add(host);
             return box;
         }
 

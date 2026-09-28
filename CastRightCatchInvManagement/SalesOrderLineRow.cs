@@ -15,7 +15,7 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _coo;
         private readonly TextBox _unitSize;
         private readonly TextBox _cases;
-        private readonly TextBox _volume;
+        private readonly Label _volume;
         private readonly TextBox _price;
         private readonly Label _amount;
         private readonly Button _remove;
@@ -28,6 +28,10 @@ namespace CastRightCatchInvManagement
 
         public event EventHandler? Changed;
         public event EventHandler? RemoveRequested;
+        /// <summary>Current sales-order number so lot remaining can ignore this SO's saved rows.</summary>
+        public Func<string>? CurrentSoNumber { get; set; }
+        /// <summary>Volume on other lines of this ticket that use the same item and lot.</summary>
+        public Func<decimal>? SiblingVolume { get; set; }
 
         /// <summary>Build the sales-order line editors and wire volume/amount recalculation.</summary>
         public SalesOrderLineRow()
@@ -49,8 +53,9 @@ namespace CastRightCatchInvManagement
             _coo = MakeBox();
             _unitSize = MakeBox();
             _cases = MakeBox();
-            _volume = MakeBox();
+            _volume = MakeTotal();
             _price = MakeBox();
+            MoneyFormat.BindInput(_price);
             _amount = MakeTotal();
 
             _remove = new Button
@@ -77,6 +82,9 @@ namespace CastRightCatchInvManagement
 
             _unitSize.TextChanged += (_, _) => RecalcVolume();
             _cases.TextChanged += (_, _) => RecalcVolume();
+            _item.Leave += (_, _) => FillPackFromCatalog();
+            _price.Leave += (_, _) => RefreshWarnings();
+            _lot.Leave += (_, _) => RefreshWarnings();
             foreach (var box in Fields())
                 box.TextChanged += (_, _) => OnFieldChanged();
 
@@ -85,6 +93,8 @@ namespace CastRightCatchInvManagement
         }
 
         public string ItemCode => _item.Text.Trim();
+        public string LotNumber => _lot.Text.Trim();
+        public decimal VolumeValue => ParseNumber(_volume.Text);
 
         /// <summary>Put the caret on Item Code so the user can type the next product.</summary>
         public void FocusItem() => _item.Focus();
@@ -133,6 +143,20 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Fill pack size from the item catalog when the line does not already have one.</summary>
+        private void FillPackFromCatalog()
+        {
+            if (_filling || _unitSize.Text.Trim().Length > 0)
+                return;
+            string pack = DataFiles.ItemPackSize(_item.Text);
+            if (pack.Length == 0)
+                return;
+            _filling = true;
+            _unitSize.Text = pack;
+            _filling = false;
+            RecalcVolume();
+        }
+
         /// <summary>Remember the customer PO this line came from.</summary>
         public void SetPo(string po) => _po = (po ?? "").Trim();
 
@@ -151,6 +175,9 @@ namespace CastRightCatchInvManagement
                 // Extra on item hits is country of origin.
                 if (hit.Extra.Length > 0)
                     _coo.Text = hit.Extra;
+                string pack = DataFiles.ItemPackSize(hit.Code);
+                if (pack.Length > 0)
+                    _unitSize.Text = pack;
             }
             finally
             {
@@ -218,8 +245,10 @@ namespace CastRightCatchInvManagement
                 _coo.Text = coo;
                 _unitSize.Text = pack;
                 _cases.Text = cases;
-                _volume.Text = volume;
-                _price.Text = price;
+                _volume.Text = MoneyFormat.TryParse(volume, out decimal lbs)
+                    ? MoneyFormat.Plain(lbs)
+                    : (volume ?? "");
+                _price.Text = MoneyFormat.Display(price);
             }
             finally
             {
@@ -227,7 +256,7 @@ namespace CastRightCatchInvManagement
                 _filling = false;
             }
 
-            RecalcAmount();
+            RecalcVolume();
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
@@ -245,9 +274,55 @@ namespace CastRightCatchInvManagement
                 UnitSize = _unitSize.Text.Trim(),
                 Cases = _cases.Text.Trim(),
                 Volume = _volume.Text.Trim(),
-                Price = _price.Text.Trim(),
-                Amount = _amount.Text.Trim()
+                Price = MoneyFormat.Store(_price.Text),
+                Amount = MoneyFormat.Store(_amount.Text)
             };
+        }
+
+        /// <summary>Null when this line meets minimum profit; otherwise a message for the sales form.</summary>
+        public string? MinimumProfitError() =>
+            DataFiles.SellPriceError(ItemCode, _lot.Text.Trim(), _price.Text);
+
+        /// <summary>Null when this line's volume fits the lot; otherwise a message for the sales form.</summary>
+        public string? VolumeError()
+        {
+            decimal want = ParseNumber(_volume.Text);
+            if (want <= 0 || _lot.Text.Trim().Length == 0 || ItemCode.Length == 0)
+                return null;
+            string so = CurrentSoNumber?.Invoke() ?? "";
+            decimal left = DataFiles.LotRemaining(_lot.Text.Trim(), ItemCode, so) - (SiblingVolume?.Invoke() ?? 0);
+            if (want <= left + 0.0005m)
+                return null;
+            return "Volume " + MoneyFormat.Plain(want) +
+                   " lb exceeds the " + MoneyFormat.Plain(Math.Max(0, left)) +
+                   " lb remaining on lot " + _lot.Text.Trim() + ".";
+        }
+
+        /// <summary>Red highlight on price when too low, and on volume/cases when the lot cannot cover it.</summary>
+        public void RefreshWarnings()
+        {
+            if (_filling)
+                return;
+            MarkError(_price, MinimumProfitError() != null);
+            bool over = VolumeError() != null;
+            MarkError(_cases, over);
+            MarkError(_volume, over);
+        }
+
+        private static void MarkError(Control box, bool bad)
+        {
+            if (box is TextBox field)
+            {
+                field.BackColor = bad ? Theme.DangerFill : Theme.Paper;
+                field.ForeColor = bad ? Theme.Danger : Theme.Ink;
+                return;
+            }
+
+            if (box is Label label)
+            {
+                label.BackColor = bad ? Theme.DangerFill : Theme.GridAlt;
+                label.ForeColor = bad ? Theme.Danger : Theme.Ink;
+            }
         }
 
         /// <summary>True when any editor on this line has text.</summary>
@@ -287,31 +362,22 @@ namespace CastRightCatchInvManagement
             if (_filling)
                 return;
             RecalcAmount();
+            RefreshWarnings();
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
-        /// <summary>Derive volume from pack size × cases when volume is still blank.</summary>
+        /// <summary>Volume is pack size × cases and is not typed by the user.</summary>
         private void RecalcVolume()
         {
-            // Skip while Fill is writing pack/cases/volume together.
             if (_filling)
                 return;
 
             decimal pack = ParseNumber(_unitSize.Text);
             decimal cs = ParseNumber(_cases.Text);
-            // Incomplete qty should not overwrite a volume the user already typed.
-            if (pack <= 0 || cs <= 0)
-            {
-                RecalcAmount();
-                return;
-            }
-
-            _filling = true;
-            // Keep a volume the user entered by hand; only fill when the box is still blank.
-            if (string.IsNullOrWhiteSpace(_volume.Text))
-                _volume.Text = (pack * cs).ToString("0.##", CultureInfo.InvariantCulture);
-            _filling = false;
+            if (pack > 0 && cs > 0)
+                _volume.Text = MoneyFormat.Plain(pack * cs);
             RecalcAmount();
+            RefreshWarnings();
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
@@ -319,7 +385,7 @@ namespace CastRightCatchInvManagement
         private void RecalcAmount()
         {
             decimal amount = ParseNumber(_volume.Text) * ParseNumber(_price.Text);
-            _amount.Text = amount.ToString("0.00", CultureInfo.InvariantCulture);
+            _amount.Text = MoneyFormat.Display(amount);
         }
 
         /// <summary>Place editors in the shared sales-order line column slots.</summary>
@@ -347,7 +413,6 @@ namespace CastRightCatchInvManagement
             yield return _coo;
             yield return _unitSize;
             yield return _cases;
-            yield return _volume;
             yield return _price;
         }
 
@@ -460,10 +525,8 @@ namespace CastRightCatchInvManagement
         public string ContactPhone { get; set; } = "";
         public string Warehouse { get; set; } = "";
         public string CustomerPo { get; set; } = "";
-        public string Terms { get; set; } = "";
         public string Status { get; set; } = "";
         public string FreightCompany { get; set; } = "";
-        public string FreightTerms { get; set; } = "";
         public List<SalesOrderLine> Lines { get; set; } = new();
 
         public decimal TotalCases => Lines.Sum(line => InvoiceLineRow.ParseNumber(line.Cases));

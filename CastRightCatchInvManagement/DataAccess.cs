@@ -176,8 +176,34 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>True when the user may insert, update, or delete (including queued Confirm).</summary>
-        public static bool CanMutate(string table) =>
-            WriteMode(table) != DataWriteMode.View;
+        public static bool CanMutate(string table)
+        {
+            table = TableKey(table);
+            // Purchases and sales: table access is enough to add/edit; deletes still queue for admin.
+            if (IsTradeTable(table) && TableAccess.Can(table))
+                return true;
+            return WriteMode(table) != DataWriteMode.View;
+        }
+
+        /// <summary>Purchases and sales always allow add/edit when the table is visible.</summary>
+        public static bool IsTradeTable(string table)
+        {
+            table = TableKey(table);
+            return table.Equals(TableAccess.Purchases, StringComparison.OrdinalIgnoreCase) ||
+                   table.Equals(TableAccess.Sales, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>Customers, vendors, and items always queue add/edit/delete for Review.</summary>
+        public static bool IsCatalogTable(string table)
+        {
+            table = TableKey(table);
+            return table.Equals(TableAccess.Customers, StringComparison.OrdinalIgnoreCase) ||
+                   table.Equals(DataFiles.Customers, StringComparison.OrdinalIgnoreCase) ||
+                   table.Equals(TableAccess.Vendors, StringComparison.OrdinalIgnoreCase) ||
+                   table.Equals(DataFiles.Vendors, StringComparison.OrdinalIgnoreCase) ||
+                   table.Equals(TableAccess.Items, StringComparison.OrdinalIgnoreCase) ||
+                   table.Equals(DataFiles.ItemCodes, StringComparison.OrdinalIgnoreCase);
+        }
 
         /// <summary>True when the user may read this table, including pending_changes for reviewers.</summary>
         public static bool CanReadTable(string table)
@@ -186,8 +212,9 @@ namespace CastRightCatchInvManagement
             if (ApplyingReview)
                 return true;
             table = TableKey(table);
-            // Pending queue is not a regular table; only auto-write users may review it.
-            if (table.Equals(DataFiles.PendingChanges, StringComparison.OrdinalIgnoreCase))
+            // Pending queue is not a regular table; administrators and auto-write users may review it.
+            if (table.Equals(DataFiles.PendingChanges, StringComparison.OrdinalIgnoreCase) ||
+                table.Equals("pending", StringComparison.OrdinalIgnoreCase))
                 return CanReview();
             foreach (var item in TableAccess.All)
             {
@@ -218,6 +245,9 @@ namespace CastRightCatchInvManagement
                 // Blocked parties and products must not appear in grids or lookups.
                 if (IsRecordBlocked(row))
                     continue;
+                // Purchase/sales deletes wait for admin review and must not appear in the live table.
+                if (DataFiles.IsWaitingDelete(row))
+                    continue;
                 result.Add(StripHidden(table, row));
             }
 
@@ -241,6 +271,8 @@ namespace CastRightCatchInvManagement
             {
                 // Blocked parties and products must not appear in grids or lookups.
                 if (IsRecordBlocked(fields))
+                    continue;
+                if (DataFiles.IsWaitingDelete(fields))
                     continue;
                 result.Add((id, StripHidden(table, fields)));
             }
@@ -275,6 +307,9 @@ namespace CastRightCatchInvManagement
         /// <summary>True when this user has auto-write on at least one allowed table and may review pending changes.</summary>
         public static bool CanReview()
         {
+            // Administrators review purchase/sales deletes even when they have no table write.
+            if (AppState.IsAdmin)
+                return true;
             foreach (var item in TableAccess.All)
             {
                 // Reviewers need auto-write on at least one table they can open.

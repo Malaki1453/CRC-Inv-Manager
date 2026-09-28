@@ -96,6 +96,7 @@ namespace CastRightCatchInvManagement
                 else
                     menu.Items.Add("Reset password", null, (_, _) => ResetPassword(user));
                 menu.Items.Add("Delete user", null, (_, _) => DeleteUser(user));
+                UiStyle.RowContextMenuShown = true;
                 menu.Show(_grid, _grid.PointToClient(Control.MousePosition));
             };
 

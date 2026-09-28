@@ -265,7 +265,10 @@ internal sealed partial class InventoryStore
             .Where(c => c != "id" && c != "term_start" &&
                         !c.Equals("PDF Created", StringComparison.OrdinalIgnoreCase) &&
                         !c.Equals("Volume Received", StringComparison.OrdinalIgnoreCase) &&
-                        !c.Equals("Lot #", StringComparison.OrdinalIgnoreCase))
+                        !c.Equals("Lot #", StringComparison.OrdinalIgnoreCase) &&
+                        !c.Equals("Vendor Terms", StringComparison.OrdinalIgnoreCase) &&
+                        !c.Equals("Customer Terms", StringComparison.OrdinalIgnoreCase) &&
+                        !c.Equals("Override Minimum Profit", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var list = new List<string>();

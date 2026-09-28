@@ -53,6 +53,9 @@ namespace CastRightCatchInvManagement
         private CheckedListBox _vendorFilterTypes = null!;
         private ComboBox _slotForwarder = null!;
         private ComboBox _slotLogistics = null!;
+        private ComboBox _slotPurchaseFreight = null!;
+        private ComboBox _slotSalesFreight = null!;
+        private TextBox _defaultMinProfit = null!;
         private bool _loadingVendorLookup;
 
         /// <summary>Register this page and build User, Groups, Pages, and Admin tabs.</summary>
@@ -220,7 +223,7 @@ namespace CastRightCatchInvManagement
                 // Context menu is only for an existing row.
                 if (e.Button != MouseButtons.Right || e.RowIndex < 0)
                     return;
-                ShowUserMenu(e.RowIndex);
+                ShowUserMenu(e.RowIndex, e.ColumnIndex);
             };
             var usersCard = new CardPanel { Dock = DockStyle.Fill, Padding = new Padding(1), Margin = new Padding(0, 0, 0, 8) };
             var tableBar = new Panel
@@ -321,6 +324,7 @@ namespace CastRightCatchInvManagement
                     locked.Enabled = false;
                 }
 
+                UiStyle.RowContextMenuShown = true;
                 menu.Show(_groupsGrid, _groupsGrid.PointToClient(Control.MousePosition));
             };
 
@@ -959,7 +963,9 @@ namespace CastRightCatchInvManagement
             };
             var session = new CardPanel { Dock = DockStyle.Top, Height = 168 };
             LayoutSessionCard(session);
-            var types = new CardPanel { Dock = DockStyle.Top, Height = 368 };
+            var minProfit = new CardPanel { Dock = DockStyle.Top, Height = 140 };
+            LayoutMinProfitCard(minProfit);
+            var types = new CardPanel { Dock = DockStyle.Top, Height = 430 };
             LayoutVendorTypesCard(types);
             var mail = new CardPanel { Dock = DockStyle.Top, Height = 280 };
             LayoutMailCard(mail);
@@ -974,6 +980,9 @@ namespace CastRightCatchInvManagement
             host.Controls.Add(spacerMail);
             host.Controls.Add(types);
             host.Controls.Add(spacerTypes);
+            var spacerMin = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
+            host.Controls.Add(minProfit);
+            host.Controls.Add(spacerMin);
             host.Controls.Add(session);
             host.Controls.Add(intro);
             return host;
@@ -1073,6 +1082,14 @@ namespace CastRightCatchInvManagement
             _slotLogistics = SlotCombo(472, 294);
             _slotForwarder.SelectedIndexChanged += (_, _) => SaveSlots();
             _slotLogistics.SelectedIndexChanged += (_, _) => SaveSlots();
+            var lblPurchaseFreight = new Label { Text = "NEW PURCHASE FREIGHT CO", Location = new Point(248, 330) };
+            var lblSalesFreight = new Label { Text = "NEW SALE FREIGHT CO", Location = new Point(472, 330) };
+            Theme.StyleFieldLabel(lblPurchaseFreight);
+            Theme.StyleFieldLabel(lblSalesFreight);
+            _slotPurchaseFreight = SlotCombo(248, 348);
+            _slotSalesFreight = SlotCombo(472, 348);
+            _slotPurchaseFreight.SelectedIndexChanged += (_, _) => SaveSlots();
+            _slotSalesFreight.SelectedIndexChanged += (_, _) => SaveSlots();
 
             card.Controls.Add(heading);
             card.Controls.Add(hint);
@@ -1088,6 +1105,10 @@ namespace CastRightCatchInvManagement
             card.Controls.Add(lblLogistics);
             card.Controls.Add(_slotForwarder);
             card.Controls.Add(_slotLogistics);
+            card.Controls.Add(lblPurchaseFreight);
+            card.Controls.Add(lblSalesFreight);
+            card.Controls.Add(_slotPurchaseFreight);
+            card.Controls.Add(_slotSalesFreight);
             LoadVendorTypes();
         }
 
@@ -1184,6 +1205,8 @@ namespace CastRightCatchInvManagement
             FillFilterTypes();
             FillSlotCombo(_slotForwarder, VendorTypes.SlotPurchaseForwarder);
             FillSlotCombo(_slotLogistics, VendorTypes.SlotPurchaseLogistics);
+            FillSlotCombo(_slotPurchaseFreight, VendorTypes.SlotPurchaseFreight);
+            FillSlotCombo(_slotSalesFreight, VendorTypes.SlotSalesFreight);
             _loadingVendorLookup = false;
         }
 
@@ -1272,6 +1295,10 @@ namespace CastRightCatchInvManagement
             // Store the Logistics slot only when a filter is picked.
             if (_slotLogistics.SelectedItem is VendorTypeFilter logistics)
                 catalog.Slots[VendorTypes.SlotPurchaseLogistics] = logistics.Id;
+            if (_slotPurchaseFreight.SelectedItem is VendorTypeFilter purchaseFreight)
+                catalog.Slots[VendorTypes.SlotPurchaseFreight] = purchaseFreight.Id;
+            if (_slotSalesFreight.SelectedItem is VendorTypeFilter salesFreight)
+                catalog.Slots[VendorTypes.SlotSalesFreight] = salesFreight.Id;
             VendorTypes.SaveCatalog(catalog);
         }
 
@@ -1498,6 +1525,58 @@ namespace CastRightCatchInvManagement
             SelectChoice(_sessionDays, AppState.StaySignedInDays, 30);
             SelectChoice(_idleHours, AppState.IdleCloseHours, 5);
             ApplySessionEnabled();
+            LoadDefaultMinProfit();
+        }
+
+        /// <summary>Default minimum profit / lb for new items and blank item fields.</summary>
+        private void LayoutMinProfitCard(CardPanel card)
+        {
+            var heading = new Label
+            {
+                Text = "Default minimum profit",
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 14),
+                AutoSize = true
+            };
+            var hint = new Label
+            {
+                Text = "Used on new items and whenever an item’s minimum profit is blank. Sell price must be at least lot cost plus this amount, unless a lot overrides it.",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 42),
+                Size = new Size(640, 32)
+            };
+            var lbl = new Label { Text = "MINIMUM PROFIT / LB" };
+            Theme.StyleFieldLabel(lbl);
+            _defaultMinProfit = new TextBox { PlaceholderText = "0.05" };
+            Theme.StyleField(_defaultMinProfit);
+            MoneyFormat.BindInput(_defaultMinProfit);
+            PlaceField(card, lbl, _defaultMinProfit, 24, 82, 160);
+            _defaultMinProfit.Leave += (_, _) => SaveDefaultMinProfit();
+            card.Controls.Add(heading);
+            card.Controls.Add(hint);
+        }
+
+        private void LoadDefaultMinProfit()
+        {
+            if (_defaultMinProfit == null)
+                return;
+            _defaultMinProfit.Text = DataFiles.DefaultMinimumProfitText();
+        }
+
+        private void SaveDefaultMinProfit()
+        {
+            if (_defaultMinProfit == null)
+                return;
+            string stored = MoneyFormat.Store(_defaultMinProfit.Text);
+            if (stored.Length == 0)
+                stored = DataFiles.FallbackMinimumProfit.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+            SqliteInventory.WriteSettings(new Dictionary<string, string>
+            {
+                [DataFiles.DefaultMinimumProfitKey] = stored
+            });
+            _defaultMinProfit.Text = MoneyFormat.Display(stored);
         }
 
         /// <summary>Write stay-signed-in policy and start or stop idle watch.</summary>
@@ -2233,13 +2312,14 @@ namespace CastRightCatchInvManagement
         private string RowUser(int row) =>
             _grid.Rows[row].Cells[0].Value?.ToString()?.Trim() ?? "";
 
-        /// <summary>Right-click menu: edit, access, password, lock, delete.</summary>
-        private void ShowUserMenu(int row)
+        /// <summary>Right-click menu: copy, edit, access, password, lock, delete.</summary>
+        private void ShowUserMenu(int row, int column)
         {
             _grid.ClearSelection();
             _grid.Rows[row].Selected = true;
             string user = RowUser(row);
             var menu = new ContextMenuStrip();
+            menu.Items.Add("Copy", null, (_, _) => CopyUserCell(row, column));
             menu.Items.Add("Edit user", null, (_, _) => EditUser(user));
             // Administrator-only settings and menu items.
             if (AppState.IsAdmin)
@@ -2268,7 +2348,29 @@ namespace CastRightCatchInvManagement
             }
 
             menu.Items.Add("Delete user", null, (_, _) => DeleteUser(user));
+            UiStyle.RowContextMenuShown = true;
             menu.Show(_grid, _grid.PointToClient(Control.MousePosition));
+        }
+
+        /// <summary>Copy the clicked user-grid cell so paste still works after the row menu took the right-click.</summary>
+        private void CopyUserCell(int row, int column)
+        {
+            if (row < 0 || row >= _grid.Rows.Count)
+                return;
+            int col = column;
+            if (col < 0 || col >= _grid.Columns.Count)
+                col = 0;
+            string text = _grid.Rows[row].Cells[col].FormattedValue?.ToString() ?? "";
+            if (text.Length == 0)
+                return;
+            try
+            {
+                Clipboard.SetText(text);
+            }
+            catch
+            {
+                // Clipboard can be locked by another app; skip rather than crash the menu.
+            }
         }
 
         /// <summary>Add or edit a user, then reload lists.</summary>

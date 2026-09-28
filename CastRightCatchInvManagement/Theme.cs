@@ -191,6 +191,7 @@ namespace CastRightCatchInvManagement
             ApplyTableScrollMode(grid);
             grid.CellPainting -= PaintGridDataCell;
             grid.CellPainting += PaintGridDataCell;
+            MoneyFormat.WireGrid(grid);
             // Default grid copy dumps the whole row; we copy the clicked cell instead.
             if (grid.ClipboardCopyMode != DataGridViewClipboardCopyMode.Disable)
             {
@@ -221,8 +222,20 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            StyleGrid(grid);
-            grid.EnableHeadersVisualStyles = false;
+            grid.BackgroundColor = Paper;
+            grid.GridColor = GridLine;
+            grid.ColumnHeadersDefaultCellStyle.BackColor = HeaderBack;
+            grid.ColumnHeadersDefaultCellStyle.ForeColor = HeaderText;
+            grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = HeaderBack;
+            grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = HeaderText;
+            grid.DefaultCellStyle.BackColor = Paper;
+            grid.DefaultCellStyle.ForeColor = Ink;
+            grid.DefaultCellStyle.SelectionBackColor = GridSelection;
+            grid.DefaultCellStyle.SelectionForeColor = NavyDark;
+            grid.AlternatingRowsDefaultCellStyle.BackColor = GridAlt;
+            grid.AlternatingRowsDefaultCellStyle.ForeColor = Ink;
+            grid.AlternatingRowsDefaultCellStyle.SelectionBackColor = GridSelection;
+            grid.AlternatingRowsDefaultCellStyle.SelectionForeColor = NavyDark;
         }
 
         /// <summary>Paint default cell contents plus a single hairline under each data cell.</summary>

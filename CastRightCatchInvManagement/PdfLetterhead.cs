@@ -39,18 +39,19 @@ namespace CastRightCatchInvManagement
             g.Image(seal, (PdfDraw.PageW - size) / 2f, 214, size, size, opacity: 0.11f);
         }
 
-        /// <summary>Boat lockup (or text fallback) plus contact lines and the gold divider.</summary>
+        /// <summary>Boat lockup on the left, CRC seal on the top right, contact under the lockup.</summary>
         private static float DrawBrand(PdfDraw g)
         {
             const float top = 20;
             const float logoH = 44;
+            const float sealSize = 58;
             float used = logoH;
             var lockup = PdfImages.Lockup();
             // Prefer the boat lockup when the brand PNG is available.
             if (lockup != null)
             {
                 float w = logoH * lockup.Width / (float)lockup.Height;
-                // Cap width so the contact block on the right still has room.
+                // Cap width so the seal on the right still has room.
                 if (w > 310)
                 {
                     w = 310;
@@ -68,21 +69,26 @@ namespace CastRightCatchInvManagement
                 g.Fill(Left + 128, top + 30, 18, 1.2f, Theme.Gold);
             }
 
-            float contactBottom = DrawContact(g, top + 6);
-            float lineY = Math.Max(top + used, contactBottom) + 8;
+            var seal = PdfImages.Seal();
+            // Circular CRC mark sits in the top-right, matching the purchase-order header.
+            if (seal != null)
+                g.Image(seal, Right - sealSize, top, sealSize, sealSize);
+
+            float contactBottom = DrawContact(g, top + used + 6);
+            float lineY = Math.Max(top + Math.Max(used, sealSize), contactBottom) + 8;
             g.Line(Left, lineY, 292, lineY, Theme.Navy, 1.1f);
             g.Diamond(306, lineY, 3.4f, Theme.Gold);
             g.Line(320, lineY, Right, lineY, Theme.Navy, 1.1f);
             return lineY + 10;
         }
 
-        /// <summary>Right-side phone, email, and address from company settings.</summary>
+        /// <summary>Phone, email, and address under the boat lockup so the seal keeps the top right.</summary>
         private static float DrawContact(PdfDraw g, float y)
         {
             string phone = First(AppState.Phone, "(253) 540-2631");
             string email = First(AppState.CompanyEmail, "jwatts@castrightcatch.com");
             string address = First(AppState.Address, "PO Box 1064, Orting, WA 98360");
-            const float x = 392;
+            const float x = 44;
             var lines = new List<string>();
             // Skip empty contact rows so the diamond list stays tight.
             if (phone.Length > 0) lines.Add(phone);

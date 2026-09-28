@@ -90,7 +90,7 @@ namespace CastRightCatchInvManagement
                 ItemCode = DataFiles.GetRecord(record, "Item Code"),
                 VendorCode = DataFiles.GetRecord(record, "Vendor Code"),
                 VendorName = DataFiles.GetRecord(record, "Vendor"),
-                VendorTerms = DataFiles.GetRecord(record, "Vendor Terms"),
+                VendorTerms = "",
                 ShipDate = DateTime.TryParse(ship, out var dated) ? dated : null
             };
 

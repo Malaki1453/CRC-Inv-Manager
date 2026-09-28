@@ -12,7 +12,7 @@ namespace CastRightCatchInvManagement
                 ? FirstNonEmpty(draft.VendorName, draft.VendorCode, draft.CustomerName)
                 : FirstNonEmpty(draft.CustomerCode, draft.CustomerName);
             string fileName = SanitizeFile($"Invoice {draft.InvoiceNumber} - {party}.pdf");
-            return DataFiles.SaveStoredPdf(
+            return DataFiles.ReplaceStoredPdf(
                 DataFiles.PdfKindInvoice,
                 draft.InvoiceNumber.Trim(),
                 fileName,
@@ -105,8 +105,8 @@ namespace CastRightCatchInvManagement
 
             y += 16;
             float tableTop = y;
-            float rowH = 18;
-            int rows = Math.Max(8, draft.Lines.Count);
+            float rowH = 26;
+            int rows = Math.Max(6, draft.Lines.Count);
             g.Rect(36, y, 540, rows * rowH);
 
             for (int i = 0; i < draft.Lines.Count && i < rows; i++)
@@ -116,12 +116,12 @@ namespace CastRightCatchInvManagement
                 // Zebra-stripe odd rows so the item table is easier to scan.
                 if (i % 2 == 1)
                     g.Fill(36.5f, ly, 539, rowH, Theme.GridAlt);
-                g.Text(42, ly + 12, Clip(line.PoNumber, 12), 7.5f, false, Theme.Ink);
-                g.Text(108, ly + 12, Clip(line.ProductId, 9), 7.5f, false, Theme.Ink);
-                g.Text(168, ly + 12, Clip(line.LotNumber, 14), 7.5f, false, Theme.Ink);
+                g.Text(42, ly + 12, PdfItemText.Clip(line.PoNumber, 12), 7.5f, false, Theme.Ink);
+                g.Text(108, ly + 12, PdfItemText.Clip(line.ProductId, 9), 7.5f, false, Theme.Ink);
+                g.Text(168, ly + 12, PdfItemText.Clip(line.LotNumber, 14), 7.5f, false, Theme.Ink);
                 g.Text(250, ly + 12, line.Ordered, 7.5f, false, Theme.Ink);
                 g.Text(286, ly + 12, line.Shipped, 7.5f, false, Theme.Ink);
-                g.Text(322, ly + 12, Clip(line.Description, 20), 7.5f, false, Theme.Ink);
+                PdfItemText.Draw(g, 322, ly, line.Description, line.ProductId, line.Coo, 20);
                 g.Text(430, ly + 12, FormatQty(line.Weight), 7.5f, false, Theme.Ink);
                 g.Text(486, ly + 12, FormatMoney(InvoiceLineRow.ParseNumber(line.Price)), 7.5f, false, Theme.Ink);
                 g.TextRight(572, ly + 12, FormatMoney(line.Amount), 7.5f, false, Theme.Ink);
@@ -188,11 +188,11 @@ namespace CastRightCatchInvManagement
         {
             var lines = (text ?? "").Replace("\r", "").Split('\n');
             for (int i = 0; i < Math.Min(3, lines.Length); i++)
-                g.Text(x, y + i * 11, Clip(lines[i], 46), 8, false, Theme.Ink);
+                g.Text(x, y + i * 11, PdfItemText.Clip(lines[i], 46), 8, false, Theme.Ink);
         }
 
         /// <summary>Format a money amount with two decimal places.</summary>
-        private static string FormatMoney(decimal value) => value.ToString("0.00", CultureInfo.InvariantCulture);
+        private static string FormatMoney(decimal value) => MoneyFormat.Display(value);
 
         /// <summary>Format a quantity, leaving blank cells empty instead of printing 0.</summary>
         private static string FormatQty(string? value)
@@ -202,13 +202,6 @@ namespace CastRightCatchInvManagement
             if (n == 0 && string.IsNullOrWhiteSpace(value))
                 return "";
             return n.ToString("0.###", CultureInfo.InvariantCulture);
-        }
-
-        /// <summary>Trim text that would overflow a PDF column, adding a trailing period.</summary>
-        private static string Clip(string? text, int max)
-        {
-            text ??= "";
-            return text.Length <= max ? text : text[..(max - 1)] + ".";
         }
 
         /// <summary>First non-blank value, used for company and party fallbacks.</summary>

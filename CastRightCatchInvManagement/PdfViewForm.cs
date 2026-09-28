@@ -3,7 +3,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 namespace CastRightCatchInvManagement
 {
-    /// <summary>Dedicated PDF window (WebView2). Save, print, replace, or edit.</summary>
+    /// <summary>Dedicated PDF window (WebView2). Send, save, or edit the source document.</summary>
     internal sealed class PdfViewForm : Form
     {
         private static readonly Dictionary<string, PdfViewForm> OpenDocs =
@@ -20,9 +20,7 @@ namespace CastRightCatchInvManagement
         private readonly Label _title;
         private readonly Label _subtitle;
         private readonly Button _save;
-        private readonly Button _saveAs;
-        private readonly Button _print;
-        private readonly Button _replace;
+        private readonly Button _send;
         private readonly Button _edit;
         private string _path;
         private string _id;
@@ -141,46 +139,31 @@ namespace CastRightCatchInvManagement
             header.Controls.Add(_title);
             header.Controls.Add(gold);
 
-            var toolbar = new Panel
+            var toolbar = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 52,
+                Height = 56,
                 BackColor = Theme.Paper,
-                Padding = new Padding(16, 8, 16, 8)
+                Padding = new Padding(12, 8, 12, 6),
+                WrapContents = true,
+                FlowDirection = FlowDirection.LeftToRight
             };
-            Theme.EnableDoubleBuffer(toolbar);
-            toolbar.Paint += (_, e) =>
-            {
-                using var line = new SolidBrush(Theme.Gold);
-                e.Graphics.FillRectangle(line, 0, toolbar.Height - 2, toolbar.Width, 2);
-            };
+
+            _send = ToolButton("Send", 88);
+            Theme.StyleGoldButton(_send);
+            _send.Click += (_, _) => SendPdf();
 
             _save = ToolButton("Save to database", 158);
             Theme.StyleNavyButton(_save);
             _save.Click += (_, _) => SaveToDatabase();
 
-            _saveAs = ToolButton("Save as", 96);
-            Theme.StyleOutlineButton(_saveAs);
-            _saveAs.Click += (_, _) => SaveAs();
-
-            _print = ToolButton("Print", 80);
-            Theme.StyleOutlineButton(_print);
-            _print.Click += async (_, _) => await PrintPdf();
-
-            _replace = ToolButton("Replace", 96);
-            Theme.StyleOutlineButton(_replace);
-            _replace.Click += (_, _) => ReplacePdf();
-
             _edit = ToolButton("Edit", 150);
-            Theme.StyleGoldButton(_edit);
+            Theme.StyleNavyButton(_edit);
             _edit.Click += (_, _) => EditSource();
 
+            toolbar.Controls.Add(_send);
             toolbar.Controls.Add(_save);
-            toolbar.Controls.Add(_saveAs);
-            toolbar.Controls.Add(_print);
-            toolbar.Controls.Add(_replace);
             toolbar.Controls.Add(_edit);
-            toolbar.Resize += (_, _) => LayoutToolbar();
 
             _web = new WebView2
             {
@@ -251,30 +234,24 @@ namespace CastRightCatchInvManagement
             TopMost = false;
         }
 
-        /// <summary>Toolbar button with a fixed width so LayoutToolbar can pack them.</summary>
+        /// <summary>Toolbar button that keeps a usable width in the flow strip.</summary>
         private static Button ToolButton(string text, int width)
         {
             return new Button
             {
                 Text = text,
                 Size = new Size(width, 34),
+                Margin = new Padding(0, 0, 8, 0),
+                Anchor = AnchorStyles.None,
                 TabStop = true
             };
         }
 
-        /// <summary>Pack visible toolbar buttons left to right after chrome changes.</summary>
+        /// <summary>Hide unused actions without leaving a gap in the flow strip.</summary>
         private void LayoutToolbar()
         {
-            int x = 16;
-            int y = 8;
-            foreach (var button in new[] { _save, _saveAs, _print, _replace, _edit })
-            {
-                // Hidden actions (Save/Edit on ad-hoc files) should not leave a gap.
-                if (!button.Visible)
-                    continue;
-                button.Location = new Point(x, y);
-                x += button.Width + 8;
-            }
+            foreach (var button in new[] { _send, _save, _edit })
+                button.Margin = button.Visible ? new Padding(0, 0, 8, 0) : Padding.Empty;
         }
 
         /// <summary>Title, subtitle, and Edit/Save labels based on stored PDF kind.</summary>
@@ -298,7 +275,7 @@ namespace CastRightCatchInvManagement
                 _save.Text = "Save to database";
                 _subtitle.Text = stored
                     ? "Mark up in this window, then Save to database. Edit invoice opens Create Invoice."
-                    : "Mark up, print, or replace this PDF.";
+                    : "Send this PDF, or edit the source document.";
             }
             // Sales-order PDFs edit on Create Sales Order, not New Sale.
             else if (_kind == DataFiles.PdfKindSalesOrder)
@@ -308,7 +285,7 @@ namespace CastRightCatchInvManagement
                 _save.Text = "Save to database";
                 _subtitle.Text = stored
                     ? "Mark up in this window, then Save to database. Edit sales order opens Create Sales Order."
-                    : "Mark up, print, or replace this PDF.";
+                    : "Send this PDF, or edit the source document.";
             }
             // Both CRC purchase PDFs and stored vendor invoices edit on New Purchase.
             else if (_kind == DataFiles.PdfKindPurchase ||
@@ -321,7 +298,7 @@ namespace CastRightCatchInvManagement
                     ? _kind == DataFiles.PdfKindPurchaseInvoice
                         ? "Vendor invoice stored with this PO. Mark up, then Save to database. Edit purchase opens New Purchase."
                         : "Mark up in this window, then Save to database. Edit purchase opens New Purchase."
-                    : "Mark up, print, or replace this PDF.";
+                    : "Send this PDF, or edit the source document.";
             }
             // Sale PDFs are per-PO product lines, edited as a sales order.
             else if (_kind == DataFiles.PdfKindSale)
@@ -331,14 +308,14 @@ namespace CastRightCatchInvManagement
                 _save.Text = "Save to database";
                 _subtitle.Text = stored
                     ? "Mark up in this window, then Save to database. Edit sale opens New Sale."
-                    : "Mark up, print, or replace this PDF.";
+                    : "Send this PDF, or edit the source document.";
             }
             // Ad-hoc files have no source form to jump to.
             else
             {
                 _edit.Visible = false;
                 _save.Text = "Save to database";
-                _subtitle.Text = "Mark up, print, or replace this PDF.";
+                _subtitle.Text = "Send this PDF, or save it to the database.";
             }
 
             LayoutToolbar();
@@ -385,7 +362,6 @@ namespace CastRightCatchInvManagement
             // The fallback label is looked up by name so markup can stay in the constructor.
             if (_fallback.Controls["fallbackText"] is Label label)
                 label.Text = message;
-            _print.Enabled = false;
         }
 
         /// <summary>Write the current file bytes back into the stored PDF for this kind/key.</summary>
@@ -415,90 +391,16 @@ namespace CastRightCatchInvManagement
             }
         }
 
-        /// <summary>Copy the PDF to a user-chosen path without changing the stored original.</summary>
-        private void SaveAs()
+        /// <summary>Open the send form so this PDF can be emailed to a list of addresses.</summary>
+        private void SendPdf()
         {
-            using var dialog = new SaveFileDialog
+            if (!File.Exists(_path))
             {
-                Title = "Save PDF as",
-                Filter = "PDF files (*.pdf)|*.pdf|All files (*.*)|*.*",
-                FileName = Path.GetFileName(_path),
-                OverwritePrompt = true
-            };
-            // Cancel leaves the viewer unchanged.
-            if (dialog.ShowDialog(this) != DialogResult.OK)
-                return;
-
-            try
-            {
-                File.Copy(_path, dialog.FileName, overwrite: true);
-                ToastAlert.Success(this, "PDF saved.");
-            }
-            // Destination locked in Excel/Adobe is the usual failure.
-            catch (Exception ex)
-            {
-                ToastAlert.Error(this, ex.Message);
-            }
-        }
-
-        /// <summary>Print via WebView2, or the default app when the runtime is missing.</summary>
-        private async Task PrintPdf()
-        {
-            // Fallback path when InitViewer showed the Edge-runtime message.
-            if (_web.CoreWebView2 == null)
-            {
-                OpenInDefaultApp();
+                ToastAlert.Error(this, "The PDF could not be found.");
                 return;
             }
 
-            try
-            {
-                await _web.ExecuteScriptAsync("window.print();");
-            }
-            catch
-            {
-                // Script print can fail on some runtimes; the OS viewer still prints.
-                OpenInDefaultApp();
-            }
-        }
-
-        /// <summary>Swap in another PDF file, storing it when this document is database-backed.</summary>
-        private void ReplacePdf()
-        {
-            using var dialog = new OpenFileDialog
-            {
-                Title = "Replace this PDF",
-                Filter = "PDF files (*.pdf)|*.pdf|All files (*.*)|*.*",
-                CheckFileExists = true
-            };
-            // Cancel keeps the currently shown PDF.
-            if (dialog.ShowDialog(this) != DialogResult.OK)
-                return;
-
-            try
-            {
-                byte[] bytes = File.ReadAllBytes(dialog.FileName);
-                string name = Path.GetFileName(dialog.FileName);
-                // Stored documents must update the database so other PCs see the replacement.
-                if (!string.IsNullOrWhiteSpace(_kind) && !string.IsNullOrWhiteSpace(_key))
-                {
-                    _path = Path.GetFullPath(DataFiles.SaveStoredPdf(_kind, _key, name, bytes));
-                }
-                // Loose files are overwritten in place.
-                else
-                {
-                    File.WriteAllBytes(_path, bytes);
-                }
-
-                ApplyChrome(Path.GetFileNameWithoutExtension(_path));
-                NavigatePdf();
-                ToastAlert.Success(this, "PDF replaced.");
-            }
-            // Leave the previous PDF on screen if the new file cannot be written.
-            catch (Exception ex)
-            {
-                ToastAlert.Error(this, ex.Message);
-            }
+            PdfSendForm.ShowFor(this, _path, _title.Text);
         }
 
         /// <summary>Jump to the form that created this stored PDF so they can change the data.</summary>

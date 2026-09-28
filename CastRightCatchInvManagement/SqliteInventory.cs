@@ -118,11 +118,15 @@ namespace CastRightCatchInvManagement
                 {
                     DropTextColumn(table, "Vendor Invoice #", archive);
                     DropTextColumn(table, "Volume Received", archive);
+                    DropTextColumn(table, "Vendor Terms", archive);
                 }
 
                 // Sales used Lot # as the purchase PO; remap PO # / Invoice # then drop Lot #.
                 if (table == DataFiles.Sales)
+                {
                     MigrateSalesLotToPo(archive);
+                    DropTextColumn(table, "Customer Terms", archive);
+                }
                 // Invoices no longer store a PDF Created flag; PDFs live in stored_pdfs.
                 if (table == DataFiles.Invoices)
                     DropTextColumn(table, "PDF Created", archive);
@@ -358,7 +362,10 @@ namespace CastRightCatchInvManagement
                 .Where(c => c != "id" && c != "term_start" &&
                             !c.Equals("PDF Created", StringComparison.OrdinalIgnoreCase) &&
                             !c.Equals("Volume Received", StringComparison.OrdinalIgnoreCase) &&
-                            !c.Equals("Lot #", StringComparison.OrdinalIgnoreCase))
+                            !c.Equals("Lot #", StringComparison.OrdinalIgnoreCase) &&
+                            !c.Equals("Vendor Terms", StringComparison.OrdinalIgnoreCase) &&
+                            !c.Equals("Customer Terms", StringComparison.OrdinalIgnoreCase) &&
+                            !c.Equals("Override Minimum Profit", StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
