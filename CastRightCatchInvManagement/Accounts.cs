@@ -638,6 +638,7 @@ namespace CastRightCatchInvManagement
             // Zero means the server omitted idle hours; keep the local default.
             if (auth.IdleCloseHours > 0)
                 AppState.IdleCloseHours = auth.IdleCloseHours;
+            AppState.EffectiveTableAccess = auth.TableAccess ?? "";
 
             return new AppAccount
             {

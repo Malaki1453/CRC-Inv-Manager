@@ -759,6 +759,9 @@ namespace CastRightCatchInvManagement
             if (DataLink.Try(ServerOps.SettingsReadPublic, new { }, out Dictionary<string, string>? pub) &&
                 pub != null)
                 return pub;
+            // Remote clients have no local app_settings file.
+            if (DataLink.IsRemote)
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             EnsureCreated();
             var map = ReadSettingsRaw();
             return AppState.IsAdmin
@@ -773,6 +776,9 @@ namespace CastRightCatchInvManagement
             if (DataLink.Try(ServerOps.SettingsReadPublic, new { }, out Dictionary<string, string>? remote) &&
                 remote != null)
                 return remote;
+            // Remote clients have no local app_settings file.
+            if (DataLink.IsRemote)
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             EnsureCreated();
             return SecretProtect.WithoutSecrets(ReadSettingsRaw());
         }
@@ -1055,6 +1061,9 @@ namespace CastRightCatchInvManagement
             // Remote session: email is stored on the server for this Windows login.
             if (DataLink.Try(ServerOps.UserEmailRead, new UserEmailRequest { WindowsUser = windowsUser }, out string? email))
                 return email;
+            // Remote clients have no local app_users file.
+            if (DataLink.IsRemote)
+                return null;
             EnsureCreated();
             using var db = Open();
             // cmd: SELECT email from app_users for this Windows login.
@@ -1967,6 +1976,9 @@ namespace CastRightCatchInvManagement
         /// <summary>Merged table_access JSON from every group this user belongs to (allowed wins).</summary>
         public static string GetGroupAccessMerged(string username)
         {
+            // Remote clients use the policy from AuthResponse, not a local access_groups table.
+            if (DataLink.IsRemote)
+                return AppState.EffectiveTableAccess ?? "";
             var groups = GetAccessGroups(username);
             // User belongs to no groups; merged access is empty (overlay may still apply later).
             if (groups.Count == 0)
@@ -1978,8 +1990,13 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Group access with this user's overlay applied.</summary>
-        public static string GetEffectiveTableAccess(string username) =>
-            DataAccess.Overlay(GetGroupAccessMerged(username), GetTableAccess(username));
+        public static string GetEffectiveTableAccess(string username)
+        {
+            // Remote clients already received group+overlay JSON at sign-in.
+            if (DataLink.IsRemote)
+                return AppState.EffectiveTableAccess ?? "";
+            return DataAccess.Overlay(GetGroupAccessMerged(username), GetTableAccess(username));
+        }
 
         /// <summary>True when the account stores its own table_access JSON on top of groups.</summary>
         public static bool HasAccessOverride(string username) =>
@@ -1995,6 +2012,9 @@ namespace CastRightCatchInvManagement
             username = (username ?? "").Trim();
             // Blank username; return an empty membership list.
             if (username.Length == 0)
+                return new List<string>();
+            // Remote clients have no local app_accounts file.
+            if (DataLink.IsRemote)
                 return new List<string>();
             EnsureCreated();
             using var db = Open();
@@ -2015,6 +2035,9 @@ namespace CastRightCatchInvManagement
             username = (username ?? "").Trim();
             // Blank username; skip so we do not update every account.
             if (username.Length == 0)
+                return;
+            // Remote clients have no local app_accounts file to update.
+            if (DataLink.IsRemote)
                 return;
             EnsureCreated();
             using var db = Open();
@@ -2055,6 +2078,9 @@ namespace CastRightCatchInvManagement
         /// <summary>All access groups, with Admin then IT first, then the rest A–Z.</summary>
         public static List<(string Name, string Access)> ListAccessGroups()
         {
+            // Remote clients have no local access_groups table.
+            if (DataLink.IsRemote)
+                return new List<(string Name, string Access)>();
             EnsureCreated();
             var list = new List<(string Name, string Access)>();
             using var db = Open();
@@ -2084,6 +2110,9 @@ namespace CastRightCatchInvManagement
             name = (name ?? "").Trim();
             // Blank group name; no JSON to return.
             if (name.Length == 0)
+                return "";
+            // Remote clients have no local access_groups table.
+            if (DataLink.IsRemote)
                 return "";
             EnsureCreated();
             using var db = Open();
@@ -2124,6 +2153,13 @@ namespace CastRightCatchInvManagement
             if (AccessGroups.IsIt(name) && !AppState.IsAdmin)
             {
                 error = "Only an administrator can change the IT group.";
+                return false;
+            }
+
+            // Remote clients have no local access_groups table.
+            if (DataLink.IsRemote)
+            {
+                error = "Access groups are stored on the inventory server.";
                 return false;
             }
 

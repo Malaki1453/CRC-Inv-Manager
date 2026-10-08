@@ -717,7 +717,7 @@ internal sealed partial class InventoryStore
         IsIt = Roles.IsIt(record.Username) || record.IsIt,
         MustChangePassword = record.MustChangePassword,
         StaySignedIn = record.StaySignedIn,
-        TableAccess = record.TableAccess,
+        TableAccess = GetTableAccess(record.Username),
         StaySignedInEnabled = StaySignedInEnabled(),
         StaySignedInDays = StaySignedInDays(),
         IdleCloseHours = IdleCloseHours(),

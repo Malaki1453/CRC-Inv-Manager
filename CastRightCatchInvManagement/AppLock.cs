@@ -444,6 +444,8 @@ namespace CastRightCatchInvManagement
         public static int PlaidSyncHours { get; set; } = 1;
         public static DateTime? PlaidLastSync { get; set; }
         public static HashSet<string> DeniedTables { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Group-plus-overlay table_access JSON from the last server sign-in.</summary>
+        public static string EffectiveTableAccess { get; set; } = "";
 
         public static bool SignedIn => !string.IsNullOrWhiteSpace(CurrentUsername);
 
@@ -457,6 +459,7 @@ namespace CastRightCatchInvManagement
             StaySignedIn = false;
             ViewingOldInventory = false;
             DeniedTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            EffectiveTableAccess = "";
             DataAccess.Clear();
         }
     }
