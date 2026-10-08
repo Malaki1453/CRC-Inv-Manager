@@ -40,20 +40,23 @@ public sealed class ServerClient : IDataChannel
         tcp.ConnectAsync(host, port, timeout.Token).AsTask().GetAwaiter().GetResult();
         tcp.NoDelay = true;
 
-        var ssl = new SslStream(tcp.GetStream(), leaveInnerStreamOpen: false, (_, cert, _, _) =>
+        // AuthenticateAsClient(options) uses this callback, not the SslStream constructor one.
+        // Empty pin: trust this cert (TOFU). Stored pin: only this host cert.
+        RemoteCertificateValidationCallback pinCheck = (_, cert, _, _) =>
         {
-            // No server cert means the pin cannot be checked; refuse the handshake.
             if (cert == null)
                 return false;
             string actual = CertFingerprint.From(cert);
             return expected.Length == 0 || CertFingerprint.Matches(expected, actual);
-        });
+        };
+        var ssl = new SslStream(tcp.GetStream(), leaveInnerStreamOpen: false, pinCheck);
 
         var options = new SslClientAuthenticationOptions
         {
             TargetHost = host,
             EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-            CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+            CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+            RemoteCertificateValidationCallback = pinCheck
         };
         ssl.AuthenticateAsClient(options);
 

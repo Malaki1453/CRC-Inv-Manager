@@ -1,3 +1,5 @@
+using CrcInventory.Protocol;
+
 namespace CastRightCatchInvManagement
 {
     /// <summary>
@@ -160,8 +162,8 @@ namespace CastRightCatchInvManagement
 
             var note = new Label
             {
-                Text = DataLink.IsRemote
-                    ? "This PC is connected to the inventory server. Database files stay on the host. This PC only remembers the server IP and certificate pin."
+                Text = DataLink.UseInventoryServer
+                    ? "This PC connects to " + InventoryHost.DnsName + ". Database files stay on the host."
                     : "Use one shared folder on every computer (a network drive, or a folder this PC shares). Live work is crc_inventory.db. Finished previous-term rows go into old_inventory.db. This PC only remembers the folder path.",
                 Font = Theme.Small,
                 ForeColor = Theme.Muted,
@@ -186,7 +188,8 @@ namespace CastRightCatchInvManagement
             btnRollToNextTerm.Location = new Point(500, 140);
             btnRollToNextTerm.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 
-            card.Controls.Add(btnChangeFolder);
+            if (!DataLink.UseInventoryServer)
+                card.Controls.Add(btnChangeFolder);
             card.Controls.Add(btnRollToNextTerm);
 
             card.Resize += (_, _) =>
@@ -639,8 +642,8 @@ namespace CastRightCatchInvManagement
             txtEmail.Text = AppState.CompanyEmail;
             txtPaymentTerms.Text = AppState.PaymentTerms;
 
-            txtFolderPath.Text = DataLink.IsRemote
-                ? AppState.ServerHost + ":" + AppState.ServerPort
+            txtFolderPath.Text = DataLink.UseInventoryServer
+                ? InventoryHost.DnsName + ":" + InventoryHost.Port
                 : AppLock.HasFolder()
                     ? AppState.InventoryFolder
                     : "No folder selected — click Change Folder";
@@ -761,7 +764,8 @@ namespace CastRightCatchInvManagement
             if (!ready)
                 txtFolderPath.Text = "No folder selected — click Change Folder";
 
-            btnChangeFolder.Enabled = true;
+            btnChangeFolder.Enabled = !DataLink.UseInventoryServer;
+            btnChangeFolder.Visible = !DataLink.UseInventoryServer;
             btnRollToNextTerm.Enabled = admin;
 
             // Signed-in caption is looked up by name from the card.
@@ -779,16 +783,9 @@ namespace CastRightCatchInvManagement
         /// <summary>Point this PC at a different shared data folder and reload settings from that database.</summary>
         private void btnChangeFolder_Click(object sender, EventArgs e)
         {
-            // Server clients change host on the sign-in screen, not here.
-            if (DataLink.IsRemote)
-            {
-                MessageBox.Show(
-                    "The server IP is set on the sign-in screen. Sign out and connect to a different address if you need to.",
-                    "Inventory server",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+            // Hosted builds have no folder; the hostname is fixed.
+            if (DataLink.UseInventoryServer)
                 return;
-            }
 
             using var dialog = new FolderBrowserDialog
             {

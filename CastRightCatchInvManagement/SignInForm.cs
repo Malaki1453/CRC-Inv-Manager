@@ -1,3 +1,5 @@
+using CrcInventory.Protocol;
+
 namespace CastRightCatchInvManagement
 {
     /// <summary>
@@ -7,12 +9,10 @@ namespace CastRightCatchInvManagement
     {
         private readonly TextBox _folder;
         private readonly Button _changeFolder;
-        private readonly TextBox _host;
-        private readonly TextBox _port;
         private readonly Button _connect;
         private readonly CardPanel _serverCard;
         private readonly CardPanel _folderCard;
-        private readonly LinkLabel _switchMode;
+
         private readonly Label _status;
         private readonly Panel _setupPanel;
         private readonly Panel _signInPanel;
@@ -105,28 +105,27 @@ namespace CastRightCatchInvManagement
             };
 
             _serverCard = new CardPanel { Dock = DockStyle.Top, Height = 118, Visible = false };
-            var serverLabel = new Label { Text = "SERVER IP" };
+            var serverLabel = new Label { Text = "INVENTORY SERVER" };
             Theme.StyleFieldLabel(serverLabel);
             serverLabel.Location = new Point(20, 14);
-            _host = new TextBox { Location = new Point(20, 34), Size = new Size(250, 26) };
-            Theme.StyleField(_host);
-            var portLabel = new Label { Text = "PORT" };
-            Theme.StyleFieldLabel(portLabel);
-            portLabel.Location = new Point(280, 14);
-            _port = new TextBox { Location = new Point(280, 34), Size = new Size(70, 26), Text = DataLink.DefaultPort.ToString() };
-            Theme.StyleField(_port);
+            var hostHint = new Label
+            {
+                Text = InventoryHost.DnsName + ":" + InventoryHost.Port,
+                Font = Theme.Body,
+                ForeColor = Theme.Navy,
+                AutoSize = true,
+                Location = new Point(20, 36)
+            };
             _connect = new Button
             {
-                Text = "Connect",
+                Text = "Retry",
                 Size = new Size(90, 28),
                 Location = new Point(308, 72)
             };
             Theme.StyleNavyButton(_connect);
-            _connect.Click += (_, _) => ConnectServer();
+            _connect.Click += (_, _) => ConnectToCompanyServer();
             _serverCard.Controls.Add(serverLabel);
-            _serverCard.Controls.Add(_host);
-            _serverCard.Controls.Add(portLabel);
-            _serverCard.Controls.Add(_port);
+            _serverCard.Controls.Add(hostHint);
             _serverCard.Controls.Add(_connect);
 
             _folderCard = new CardPanel { Dock = DockStyle.Top, Height = 92 };
@@ -146,19 +145,6 @@ namespace CastRightCatchInvManagement
             _folderCard.Controls.Add(folderLabel);
             _folderCard.Controls.Add(_folder);
             _folderCard.Controls.Add(_changeFolder);
-
-            _switchMode = new LinkLabel
-            {
-                Text = "Use a local folder instead",
-                Font = Theme.Small,
-                LinkColor = Theme.Navy,
-                ActiveLinkColor = Theme.Gold,
-                Location = new Point(20, 78),
-                AutoSize = true
-            };
-            _switchMode.Click += (_, _) => ToggleLocalFolder();
-            _switchMode.Visible = DataLink.UseInventoryServer;
-            _serverCard.Controls.Add(_switchMode);
 
             _setupPanel = new CardPanel { Dock = DockStyle.Top, Height = 280, Visible = false };
             var setupTitle = new Label
@@ -269,19 +255,17 @@ namespace CastRightCatchInvManagement
 
             Shown += (_, _) =>
             {
-                _host.Text = AppState.ServerHost;
-                _port.Text = AppState.ServerPort > 0 ? AppState.ServerPort.ToString() : DataLink.DefaultPort.ToString();
-                // UseInventoryServer=false is local SQLite; also restore folder UI when this PC last used a folder.
-                if (!DataLink.UseInventoryServer ||
-                    (!AppState.UseServer &&
-                     !string.IsNullOrWhiteSpace(AppState.InventoryFolder) &&
-                     Directory.Exists(AppState.InventoryFolder) &&
-                     !DataLink.IsRemote))
+                // Local SQLite build: folder picker. Hosted build: always inventory.castrightcatch.com.
+                if (!DataLink.UseInventoryServer)
                 {
                     ShowLocalFolderUi();
+                    RefreshMode();
+                    return;
                 }
 
+                ShowServerUi();
                 RefreshMode();
+                ConnectToCompanyServer();
             };
         }
 
@@ -308,70 +292,53 @@ namespace CastRightCatchInvManagement
             RefreshMode();
         }
 
-        /// <summary>Toggle between server IP connect and a shared local folder.</summary>
-        private void ToggleLocalFolder()
-        {
-            // Folder card is showing: switch back to the server IP fields.
-            if (_folderCard.Visible)
-            {
-                ShowServerUi();
-                RefreshMode();
-                return;
-            }
-
-            DataLink.Disconnect();
-            AppState.UseServer = false;
-            ShowLocalFolderUi();
-            RefreshMode();
-        }
-
-        /// <summary>Show host/port and hide the folder picker when the server build is enabled.</summary>
+        /// <summary>Show the company hostname card; hide the folder picker.</summary>
         private void ShowServerUi()
         {
-            // UseInventoryServer=false is local SQLite; never show the server IP card.
+            // UseInventoryServer=false is local SQLite; never show the server card.
             if (!DataLink.UseInventoryServer)
                 return;
             _folderCard.Visible = false;
             _serverCard.Visible = true;
-            _switchMode.Text = "Use a local folder instead";
-            _switchMode.Location = new Point(20, 78);
-            _switchMode.Parent = _serverCard;
         }
 
-        /// <summary>Show the shared-folder picker and offer a link back to the server.</summary>
+        /// <summary>Show the shared-folder picker (local SQLite builds only).</summary>
         private void ShowLocalFolderUi()
         {
             _serverCard.Visible = false;
             _folderCard.Visible = true;
-            _switchMode.Text = "Connect to the inventory server";
-            _switchMode.Location = new Point(20, 66);
-            _switchMode.Parent = _folderCard;
-            _switchMode.Visible = DataLink.UseInventoryServer;
+        }
+
+        /// <summary>Resolve the company DNS name and connect. No IP is typed.</summary>
+        private void ConnectToCompanyServer()
+        {
+            ConnectServer(InventoryHost.DnsName, InventoryHost.Port);
         }
 
         /// <summary>Connect to the inventory server, prompting if the certificate fingerprint changed.</summary>
-        private void ConnectServer()
+        private void ConnectServer(string host, int port)
         {
-            DataLink.ParseEndpoint(_host.Text, out string host, out int parsedFromHost);
-            // A blank host cannot resolve; keep them on the connect card.
-            if (host.Length == 0)
+            // A blank host cannot resolve.
+            if (string.IsNullOrWhiteSpace(host))
             {
-                ShowError("Enter the server IP address.");
+                ShowError("The inventory server name is not set.");
                 return;
             }
 
-            int port = parsedFromHost;
-            // Typed port overrides a port that was pasted into the host box.
-            if (int.TryParse(_port.Text.Trim(), out int typed) && typed > 0 && typed <= 65535)
-                port = typed;
+            _status.ForeColor = Theme.Muted;
+            _status.Text = "Connecting to " + host + "…";
+            Application.DoEvents();
 
             string? pin = AppState.ServerFingerprint;
             try
             {
                 DataLink.Connect(host, port, string.IsNullOrWhiteSpace(pin) ? null : pin);
             }
-            // Certificate changed: ask before trusting a new fingerprint (possible MITM).
-            catch (Exception ex) when (ex.Message.Contains("fingerprint", StringComparison.OrdinalIgnoreCase))
+            // Certificate changed or self-signed rejected: ask before trusting a new fingerprint (possible MITM).
+            catch (Exception ex) when (
+                ex.Message.Contains("fingerprint", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("rejected", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("invalid according to the validation procedure", StringComparison.OrdinalIgnoreCase))
             {
                 var retry = MessageBox.Show(
                     this,
@@ -433,9 +400,9 @@ namespace CastRightCatchInvManagement
                     _setupPanel.Visible = false;
                     _signInPanel.Visible = false;
                     _status.ForeColor = Theme.Muted;
-                    _status.Text = "Enter the inventory server IP and connect. Later this can be filled in for you.";
+                    if (string.IsNullOrWhiteSpace(_status.Text) || _status.Text.StartsWith("Enter the", StringComparison.Ordinal))
+                        _status.Text = "Connecting to " + InventoryHost.DnsName + "…";
                     AcceptButton = _connect;
-                    _host.Focus();
                     return;
                 }
 

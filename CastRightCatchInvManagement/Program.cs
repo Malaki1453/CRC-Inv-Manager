@@ -1,3 +1,5 @@
+using CrcInventory.Protocol;
+
 namespace CastRightCatchInvManagement
 {
     /// <summary>
@@ -58,15 +60,15 @@ namespace CastRightCatchInvManagement
             AppLock.LoadSavedFolder();
 
             // This PC last used the inventory server; reconnect before any local files.
-            if (DataLink.UseInventoryServer &&
-                AppState.UseServer &&
-                !string.IsNullOrWhiteSpace(AppState.ServerHost))
+            if (DataLink.UseInventoryServer)
             {
+                string host = InventoryHost.DnsName;
+                int port = InventoryHost.Port;
                 try
                 {
                     DataLink.Connect(
-                        AppState.ServerHost,
-                        AppState.ServerPort,
+                        host,
+                        port,
                         AppState.ServerFingerprint);
                 }
                 // Keep going with a local folder if the host is unreachable.

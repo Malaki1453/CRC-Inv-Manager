@@ -10,11 +10,12 @@ namespace CastRightCatchInvManagement
     /// </summary>
     internal static class DataLink
     {
-        public const int DefaultPort = 7443;
+        public const int DefaultPort = InventoryHost.Port;
+        public const string DefaultHost = InventoryHost.DnsName;
 
-        // Local folder database. To use CrcInventoryServer instead, comment the false line and uncomment true.
-        public static readonly bool UseInventoryServer = false;
-        // public static readonly bool UseInventoryServer = true;
+        // Inventory TLS host. To go back to a local folder database, swap these two lines.
+        public static readonly bool UseInventoryServer = true;
+        // public static readonly bool UseInventoryServer = false;
 
         private static readonly object Gate = new();
         private static IDataChannel? _channel;
