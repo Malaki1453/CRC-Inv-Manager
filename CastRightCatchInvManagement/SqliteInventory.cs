@@ -868,9 +868,31 @@ namespace CastRightCatchInvManagement
             tx.Commit();
         }
 
+        /// <summary>SMTP fields from app_settings (hosted client / shared settings keys).</summary>
+        private static (string Email, string Password, string Host, int Port) SmtpFromSettings(
+            Dictionary<string, string> map)
+        {
+            map.TryGetValue("smtp_user", out string? email);
+            map.TryGetValue("smtp_password", out string? password);
+            map.TryGetValue("smtp_host", out string? host);
+            int port = Mailer.DefaultPort;
+            if (map.TryGetValue("smtp_port", out string? portText) &&
+                int.TryParse(portText, out int parsed) && parsed > 0)
+                port = parsed;
+            return (
+                email ?? "",
+                password ?? "",
+                string.IsNullOrWhiteSpace(host) ? Mailer.DefaultHost : host.Trim(),
+                port);
+        }
+
         /// <summary>Load the single admin SMTP row, revealing the sealed password.</summary>
         public static (string Email, string Password, string Host, int Port) LoadAdminSmtp()
         {
+            // Hosted clients keep SMTP in app_settings on the server, not a local admin_smtp table.
+            if (DataLink.IsRemote)
+                return SmtpFromSettings(ReadSettings());
+
             EnsureCreated();
             using var db = Open();
             // cmd: SELECT the single admin_smtp row (id = 1).
@@ -917,6 +939,24 @@ namespace CastRightCatchInvManagement
             error = "";
             try
             {
+                // Hosted clients write SMTP through settings.write (admin-only on the server).
+                if (DataLink.IsRemote)
+                {
+                    var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["smtp_host"] = string.IsNullOrWhiteSpace(host) ? Mailer.DefaultHost : host.Trim(),
+                        ["smtp_port"] = (port > 0 ? port : Mailer.DefaultPort).ToString(),
+                        ["smtp_user"] = email ?? "",
+                        ["smtp_ssl"] = "1"
+                    };
+                    // Empty password keeps the value already stored on the host.
+                    if ((password ?? "").Length > 0)
+                        values["smtp_password"] = password;
+                    WriteSettings(values);
+                    ApplyAdminSmtp();
+                    return true;
+                }
+
                 EnsureCreated();
                 using var db = Open();
                 // cmd: upsert the single admin_smtp row; empty password keeps the existing sealed value.
@@ -2203,6 +2243,13 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
+            // Remote clients have no local access_groups table.
+            if (DataLink.IsRemote)
+            {
+                error = "Access groups are stored on the inventory server.";
+                return false;
+            }
+
             try
             {
                 EnsureCreated();
@@ -2255,6 +2302,9 @@ namespace CastRightCatchInvManagement
             name = (name ?? "").Trim();
             // Blank group name; there are no members to count.
             if (name.Length == 0)
+                return 0;
+            // Remote clients have no local app_accounts file.
+            if (DataLink.IsRemote)
                 return 0;
             EnsureCreated();
             using var db = Open();
