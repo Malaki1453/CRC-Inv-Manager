@@ -518,7 +518,10 @@ namespace CastRightCatchInvManagement
             // IT-issued temp passwords must be replaced before any workspace page opens.
             if (account.MustChangePassword)
             {
-                using var change = new ChangePasswordForm(account.Username, requireCurrent: false);
+                using var change = new ChangePasswordForm(
+                    account.Username,
+                    requireCurrent: false,
+                    knownCurrent: _password.Text);
                 // Skipping the change leaves them signed out; reset is IT-only, no security questions.
                 if (change.ShowDialog(this) != DialogResult.OK)
                 {

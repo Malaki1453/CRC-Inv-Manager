@@ -235,10 +235,17 @@ internal sealed class ServerDispatch
         // Non-IT users may only change their own password.
         if (!SelfOrIt(session, username))
             throw new InvalidOperationException("Not allowed.");
-        // Current password must match so a stolen session still needs the old secret to rotate it.
-        if (!_store.TryGetAccountRecord(username, out var record) ||
-            !Passwords.Verify(request.CurrentPassword, record.PasswordHash, record.PasswordSalt))
+        if (!_store.TryGetAccountRecord(username, out var record))
             throw new InvalidOperationException("That username or password is not right.");
+        // First sign-in already proved the temp password; skip a second current-password prompt.
+        bool firstLogin = record.MustChangePassword &&
+            username.Equals(session.Username, StringComparison.OrdinalIgnoreCase);
+        if (!firstLogin || !string.IsNullOrEmpty(request.CurrentPassword))
+        {
+            // Current password must match so a stolen session still needs the old secret to rotate it.
+            if (!Passwords.Verify(request.CurrentPassword, record.PasswordHash, record.PasswordSalt))
+                throw new InvalidOperationException("That username or password is not right.");
+        }
         // Policy failure is reported with the same wording as the desktop app.
         if (!_store.UpdateAccountPassword(username, request.NewPassword))
             throw new InvalidOperationException(
@@ -751,6 +758,10 @@ internal sealed class ClientSession
     public bool IsAdmin { get; private set; }
     /// <summary>IT flag from the last successful sign-in.</summary>
     public bool IsIt { get; private set; }
+    /// <summary>Remote TCP endpoint, set when the socket is accepted.</summary>
+    public string Remote { get; set; } = "";
+    /// <summary>When this TLS connection was accepted.</summary>
+    public DateTime ConnectedAt { get; set; }
     /// <summary>True when <see cref="Username"/> is non-empty.</summary>
     public bool SignedIn => Username.Length > 0;
 

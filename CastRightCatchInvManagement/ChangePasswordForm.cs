@@ -5,17 +5,20 @@ namespace CastRightCatchInvManagement
     {
         private readonly string _username;
         private readonly bool _requireCurrent;
+        private readonly string _knownCurrent;
         private readonly TextBox _current;
         private readonly TextBox _next;
         private readonly TextBox _confirm;
 
         /// <summary>
         /// requireCurrent is true for a signed-in change; false for first-login (no close box so it cannot be skipped).
+        /// knownCurrent is the password just used at sign-in so first-login can rotate without an IT reset.
         /// </summary>
-        public ChangePasswordForm(string username, bool requireCurrent)
+        public ChangePasswordForm(string username, bool requireCurrent, string? knownCurrent = null)
         {
             _username = username;
             _requireCurrent = requireCurrent;
+            _knownCurrent = knownCurrent ?? "";
             Text = "Choose a new password";
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -99,9 +102,9 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
-            bool ok = _requireCurrent
-                ? Accounts.ChangeOwnPassword(_username, _current.Text, _next.Text, out string error)
-                : Accounts.SetPassword(_username, _next.Text, out error, mustChange: false);
+            // First login uses the temp password already verified at sign-in; do not call the IT reset op.
+            string current = _requireCurrent ? _current.Text : _knownCurrent;
+            bool ok = Accounts.ChangeOwnPassword(_username, current, _next.Text, out string error);
             // Keep the dialog open so the user can fix a weak or wrong password.
             if (!ok)
             {
