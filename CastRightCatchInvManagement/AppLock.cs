@@ -8,7 +8,12 @@ namespace CastRightCatchInvManagement
     /// </summary>
     public static class AppLock
     {
-        private static readonly string SettingsPath =
+        /// <summary>Per-user JSON. Program Files is not writable after an MSI install.</summary>
+        private static string SettingsPath =>
+            Path.Combine(LocalSettingsFolder(), $"settings_{SanitizeUserName(Environment.UserName)}.json");
+
+        /// <summary>Old JSON next to the exe (dev builds and pre-0.8.4 installs).</summary>
+        private static string LegacySettingsPath =>
             Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory,
                 $"settings_{SanitizeUserName(Environment.UserName)}.json");
@@ -29,13 +34,16 @@ namespace CastRightCatchInvManagement
         /// <summary>Read this PC's last folder or server host from the local JSON file.</summary>
         public static void LoadSavedFolder()
         {
+            string path = File.Exists(SettingsPath) ? SettingsPath
+                : File.Exists(LegacySettingsPath) ? LegacySettingsPath
+                : "";
             // First run on this PC has nothing to restore.
-            if (!File.Exists(SettingsPath))
+            if (path.Length == 0)
                 return;
 
             try
             {
-                var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath));
+                var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path));
                 // Empty or invalid JSON deserializes to null.
                 if (settings == null)
                     return;
@@ -212,7 +220,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
-        /// <summary>Persist this PC's folder or server endpoint next to the exe.</summary>
+        /// <summary>Persist this PC's folder or server endpoint under LocalAppData.</summary>
         private static void WriteLocalJson()
         {
             var settings = new AppSettings
@@ -229,7 +237,16 @@ namespace CastRightCatchInvManagement
                 WriteIndented = true
             });
 
+            Directory.CreateDirectory(LocalSettingsFolder());
             File.WriteAllText(SettingsPath, json);
+        }
+
+        /// <summary>Same folder as session.dat so an MSI install can write without admin.</summary>
+        private static string LocalSettingsFolder()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "CastRightCatch");
         }
 
         /// <summary>Company, numbering, SMTP, Plaid, and stay-signed-in policy for the shared database.</summary>

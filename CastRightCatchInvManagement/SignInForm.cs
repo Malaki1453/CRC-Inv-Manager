@@ -371,7 +371,16 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            AppLock.SaveServer(host, port, DataLink.Fingerprint);
+            try
+            {
+                AppLock.SaveServer(host, port, DataLink.Fingerprint);
+            }
+            catch (Exception ex)
+            {
+                ShowError(ex.Message);
+                return;
+            }
+
             RefreshMode();
         }
 
