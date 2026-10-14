@@ -15,6 +15,12 @@ public static class PlaidHttp
         Timeout = TimeSpan.FromSeconds(45)
     };
 
+    /// <summary>
+    /// Plaid client_user_id for this company. Link tokens always use this so every
+    /// administrator talks to the same Plaid Item, not a per-login user.
+    /// </summary>
+    public const string CompanyUserId = "crc-inventory";
+
     /// <summary>Plaid API base URL for sandbox or production. Old "development" values use production.</summary>
     public static string Host(string? env)
     {

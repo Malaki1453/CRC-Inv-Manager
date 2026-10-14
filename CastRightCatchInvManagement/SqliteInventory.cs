@@ -1864,19 +1864,23 @@ namespace CastRightCatchInvManagement
             cmd.ExecuteNonQuery();
         }
 
-        /// <summary>Company bank accounts for Banking, without Plaid tokens.</summary>
-        public static List<(long Id, string Name, string Bank, string Last4, string Notes)> ListBankAccounts()
+        /// <summary>Company bank accounts for Banking, without Plaid tokens. Live is true when this row is the company Plaid feed.</summary>
+        public static List<(long Id, string Name, string Bank, string Last4, string Notes, bool Live)> ListBankAccounts()
         {
             // Remote session: bank list comes from the server without Plaid tokens.
             if (DataLink.Try(ServerOps.BankList, new { }, out List<BankRowDto>? banks) && banks != null)
-                return banks.Select(a => (a.Id, a.Name, a.Bank, a.Last4, a.Notes)).ToList();
+                return banks.Select(a => (a.Id, a.Name, a.Bank, a.Last4, a.Notes, a.Live)).ToList();
             EnsureCreated();
-            var list = new List<(long, string, string, string, string)>();
+            var list = new List<(long, string, string, string, string, bool)>();
             using var db = Open();
-            // cmd: SELECT display fields from bank_accounts (no Plaid columns).
+            // cmd: SELECT display fields plus whether a Plaid token is stored (token itself is not read).
             using var cmd = db.CreateCommand();
             cmd.CommandText =
-                "SELECT id, name, bank, last4, notes FROM bank_accounts ORDER BY name COLLATE NOCASE;";
+                """
+                SELECT id, name, bank, last4, notes,
+                       CASE WHEN length(trim(coalesce(plaid_access_token, ''))) > 0 THEN 1 ELSE 0 END
+                FROM bank_accounts ORDER BY name COLLATE NOCASE;
+                """;
             // reader: one company bank-account row.
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -1886,10 +1890,79 @@ namespace CastRightCatchInvManagement
                     reader.IsDBNull(1) ? "" : reader.GetString(1),
                     reader.IsDBNull(2) ? "" : reader.GetString(2),
                     reader.IsDBNull(3) ? "" : reader.GetString(3),
-                    reader.IsDBNull(4) ? "" : reader.GetString(4)));
+                    reader.IsDBNull(4) ? "" : reader.GetString(4),
+                    !reader.IsDBNull(5) && reader.GetInt32(5) != 0));
             }
 
             return list;
+        }
+
+        /// <summary>
+        /// Attach the company Plaid Item to one local bank_accounts row. Same rules as the host:
+        /// reconnect updates, extra accounts on the same Item insert, a different bank replaces.
+        /// </summary>
+        public static long AttachCompanyBankLink(
+            string name,
+            string institution,
+            string mask,
+            string accessToken,
+            string itemId,
+            string plaidAccountId)
+        {
+            name = (name ?? "").Trim();
+            institution = (institution ?? "").Trim();
+            mask = (mask ?? "").Trim();
+            itemId = (itemId ?? "").Trim();
+            plaidAccountId = (plaidAccountId ?? "").Trim();
+
+            var accounts = ListBankAccounts();
+            var linked = new List<(long Id, string ItemId, string AccountId)>();
+            foreach (var account in accounts)
+            {
+                var link = GetBankLiveLink(account.Id);
+                if (link.AccessToken.Length == 0)
+                    continue;
+                linked.Add((account.Id, link.ItemId, link.AccountId));
+            }
+
+            long id = 0;
+            foreach (var account in linked)
+            {
+                if (plaidAccountId.Length > 0 &&
+                    account.AccountId.Equals(plaidAccountId, StringComparison.Ordinal))
+                {
+                    id = account.Id;
+                    break;
+                }
+            }
+
+            if (id == 0)
+            {
+                bool sameItem = itemId.Length > 0 &&
+                                linked.Any(a => a.ItemId.Equals(itemId, StringComparison.Ordinal));
+                if (!sameItem && linked.Count > 0)
+                    id = linked[0].Id;
+                else
+                    id = InsertBankAccount(name, institution, mask, "Plaid live feed");
+            }
+
+            var row = ListBankAccounts().FirstOrDefault(a => a.Id == id);
+            string notes = row.Id != 0 && row.Notes.Length > 0 ? row.Notes : "Plaid live feed";
+            UpdateBankAccount(id, name, institution, mask, notes);
+            SetBankLiveLink(id, accessToken, itemId, plaidAccountId, "");
+
+            foreach (var account in ListBankAccounts())
+            {
+                if (account.Id == id)
+                    continue;
+                var link = GetBankLiveLink(account.Id);
+                if (link.AccessToken.Length == 0)
+                    continue;
+                if (itemId.Length == 0 || !link.ItemId.Equals(itemId, StringComparison.Ordinal))
+                    SetBankLiveLink(account.Id, "", "", "", "");
+            }
+
+            return id;
         }
 
         /// <summary>Insert a bank account row and return its id.</summary>
@@ -1960,6 +2033,10 @@ namespace CastRightCatchInvManagement
                 DataLink.Send(ServerOps.BankDelete, new BankWriteRequest { Id = id });
                 return;
             }
+            var row = ListBankAccounts().FirstOrDefault(a => a.Id == id);
+            // Live Plaid disconnect is administrator-only, even in local SQLite mode.
+            if (row.Live && !AppState.IsAdmin)
+                throw new InvalidOperationException("Only an administrator can disconnect the live bank.");
             EnsureCreated();
             using var db = Open();
             // cmd: DELETE this bank_accounts row.

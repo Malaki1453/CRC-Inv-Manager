@@ -617,11 +617,13 @@ internal sealed class ServerDispatch
         return true;
     }
 
-    /// <summary>Deletes a bank_accounts row.</summary>
+    /// <summary>Deletes a bank_accounts row. A live Plaid link can only be removed by an administrator.</summary>
     private bool BankDelete(JsonElement payload, ClientSession session)
     {
-        RequireRowAccess(Schema.BankTransactions, new Dictionary<string, string>(), session);
         var request = Read<BankWriteRequest>(payload);
+        if (_store.GetBankLiveLink(request.Id).Linked)
+            RequireAdmin(session);
+        RequireRowAccess(Schema.BankTransactions, new Dictionary<string, string>(), session);
         _store.DeleteBankAccount(request.Id);
         return true;
     }
@@ -640,7 +642,7 @@ internal sealed class ServerDispatch
     private BankLinkTokenDto BankLinkToken(ClientSession session)
     {
         RequireAdmin(session);
-        return PlaidLive.CreateLinkToken(_store, session.Username);
+        return PlaidLive.CreateLinkToken(_store);
     }
 
     /// <summary>Admin-only public_token exchange, account insert, and first import.</summary>

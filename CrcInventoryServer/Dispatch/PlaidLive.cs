@@ -7,8 +7,8 @@ internal static class PlaidLive
 {
     private static int _busy;
 
-    /// <summary>Mint a Link token using stored keys.</summary>
-    public static BankLinkTokenDto CreateLinkToken(InventoryStore store, string username)
+    /// <summary>Mint a Link token using stored keys and the company Plaid user id.</summary>
+    public static BankLinkTokenDto CreateLinkToken(InventoryStore store)
     {
         var creds = RequireKeys(store);
         var result = PlaidHttp.CreateLinkTokenAsync(
@@ -16,7 +16,7 @@ internal static class PlaidLive
                 creds.Secret,
                 creds.Env,
                 creds.ClientName,
-                username)
+                PlaidHttp.CompanyUserId)
             .GetAwaiter()
             .GetResult();
         if (!result.Ok)
@@ -58,8 +58,9 @@ internal static class PlaidLive
         if (name.Length == 0)
             name = string.IsNullOrWhiteSpace(request.Institution) ? "Plaid account" : request.Institution!.Trim();
         string mask = chosen.Mask.Length > 0 ? chosen.Mask : (request.AccountMask ?? "").Trim();
-        long id = store.InsertBankAccount(name, request.Institution ?? "", mask, "Plaid live feed");
-        store.SetBankLiveLink(id, exchange.AccessToken, exchange.ItemId, chosen.Id, "");
+        // One company Item: reconnect updates, a different bank replaces the previous live link.
+        long id = store.AttachCompanyBankLink(
+            name, request.Institution ?? "", mask, exchange.AccessToken, exchange.ItemId, chosen.Id);
 
         var sync = PlaidHttp.SyncTransactionsAsync(
                 creds.ClientId, creds.Secret, creds.Env, exchange.AccessToken, chosen.Id, "")

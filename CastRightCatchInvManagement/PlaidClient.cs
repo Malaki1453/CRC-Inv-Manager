@@ -37,7 +37,7 @@ namespace CastRightCatchInvManagement
                     AppState.PlaidSecret,
                     AppState.PlaidEnv,
                     string.IsNullOrWhiteSpace(AppState.BusinessName) ? "Cast Right Catch" : AppState.BusinessName,
-                    string.IsNullOrWhiteSpace(AppState.CurrentUsername) ? "crc" : AppState.CurrentUsername)
+                    PlaidHttp.CompanyUserId)
                 .ConfigureAwait(true);
         }
 
@@ -121,8 +121,8 @@ namespace CastRightCatchInvManagement
             if (name.Length == 0)
                 name = string.IsNullOrWhiteSpace(request.Institution) ? "Plaid account" : request.Institution!.Trim();
             string mask = chosen.Mask.Length > 0 ? chosen.Mask : (request.AccountMask ?? "").Trim();
-            long id = SqliteInventory.InsertBankAccount(name, request.Institution ?? "", mask, "Plaid live feed");
-            SqliteInventory.SetBankLiveLink(id, exchange.AccessToken, exchange.ItemId, chosen.Id, "");
+            long id = SqliteInventory.AttachCompanyBankLink(
+                name, request.Institution ?? "", mask, exchange.AccessToken, exchange.ItemId, chosen.Id);
 
             var sync = await PlaidHttp.SyncTransactionsAsync(
                     AppState.PlaidClientId,

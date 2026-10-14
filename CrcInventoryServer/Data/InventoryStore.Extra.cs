@@ -14,7 +14,11 @@ internal sealed partial class InventoryStore
             using var db = Open(); // live database connection
             using var cmd = db.CreateCommand(); // SQL command for the bank list
             cmd.CommandText =
-                "SELECT id, name, bank, last4, notes FROM bank_accounts ORDER BY name COLLATE NOCASE;";
+                """
+                SELECT id, name, bank, last4, notes,
+                       CASE WHEN length(trim(coalesce(plaid_access_token, ''))) > 0 THEN 1 ELSE 0 END
+                FROM bank_accounts ORDER BY name COLLATE NOCASE;
+                """;
             using var reader = cmd.Query(_engine);
             while (reader.Read())
             {
@@ -24,7 +28,8 @@ internal sealed partial class InventoryStore
                     Name = reader.IsDBNull(1) ? "" : reader.GetString(1),
                     Bank = reader.IsDBNull(2) ? "" : reader.GetString(2),
                     Last4 = reader.IsDBNull(3) ? "" : reader.GetString(3),
-                    Notes = reader.IsDBNull(4) ? "" : reader.GetString(4)
+                    Notes = reader.IsDBNull(4) ? "" : reader.GetString(4),
+                    Live = !reader.IsDBNull(5) && reader.GetInt32(5) != 0
                 });
             }
 
@@ -144,6 +149,66 @@ internal sealed partial class InventoryStore
             cmd.AddParam("$id", id);
             cmd.Exec(_engine);
         }
+    }
+
+    /// <summary>Drop the Plaid token on this row so it is no longer the live company feed.</summary>
+    public void ClearBankLiveLink(long id) => SetBankLiveLink(id, "", "", "", "");
+
+    /// <summary>
+    /// Attach the company Plaid Item to one bank_accounts row. Reconnecting the same
+    /// Plaid account updates that row. Extra accounts on the same Item get their own
+    /// row. A different bank replaces the previous live Item so the app stays on one login.
+    /// </summary>
+    public long AttachCompanyBankLink(
+        string name,
+        string institution,
+        string mask,
+        string accessToken,
+        string itemId,
+        string plaidAccountId)
+    {
+        name = (name ?? "").Trim();
+        institution = (institution ?? "").Trim();
+        mask = (mask ?? "").Trim();
+        itemId = (itemId ?? "").Trim();
+        plaidAccountId = (plaidAccountId ?? "").Trim();
+
+        var linked = ListLinkedBankAccounts();
+        long id = 0;
+        foreach (var account in linked)
+        {
+            if (plaidAccountId.Length > 0 &&
+                account.Link.AccountId.Equals(plaidAccountId, StringComparison.Ordinal))
+            {
+                id = account.Id;
+                break;
+            }
+        }
+
+        if (id == 0)
+        {
+            bool sameItem = itemId.Length > 0 &&
+                            linked.Any(a => a.Link.ItemId.Equals(itemId, StringComparison.Ordinal));
+            if (!sameItem && linked.Count > 0)
+                id = linked[0].Id;
+            else
+                id = InsertBankAccount(name, institution, mask, "Plaid live feed");
+        }
+
+        var row = ListBankAccounts().FirstOrDefault(a => a.Id == id);
+        string notes = row != null && row.Notes.Length > 0 ? row.Notes : "Plaid live feed";
+        UpdateBankAccount(id, name, institution, mask, notes);
+        SetBankLiveLink(id, accessToken, itemId, plaidAccountId, "");
+
+        foreach (var account in ListLinkedBankAccounts())
+        {
+            if (account.Id == id)
+                continue;
+            if (itemId.Length == 0 || !account.Link.ItemId.Equals(itemId, StringComparison.Ordinal))
+                ClearBankLiveLink(account.Id);
+        }
+
+        return id;
     }
 
     /// <summary>Updates only the Plaid transactions cursor so sync can resume.</summary>

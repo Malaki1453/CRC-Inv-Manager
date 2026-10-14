@@ -58,11 +58,11 @@ namespace CastRightCatchInvManagement
             var intro = new Label
             {
                 Dock = DockStyle.Top,
-                Height = 40,
+                Height = 56,
                 Padding = new Padding(16, 10, 16, 0),
                 Font = Theme.Small,
                 ForeColor = Theme.Muted,
-                Text = "Accounts are labels for imported statements. Download OFX, QFX, or CSV from the bank, then use Read file on Banking."
+                Text = "The live Plaid bank is one company login. Everyone with Banking sees the same transactions. Only an administrator can connect or disconnect it. Other rows are labels for imported statement files."
             };
 
             _grid.Dock = DockStyle.Fill;
@@ -86,9 +86,11 @@ namespace CastRightCatchInvManagement
                 _grid.ClearSelection();
                 _grid.Rows[e.RowIndex].Selected = true;
                 long id = RowId(e.RowIndex);
+                bool live = RowLive(e.RowIndex);
                 var menu = new ContextMenuStrip();
                 menu.Items.Add("Edit", null, (_, _) => Edit(id));
-                menu.Items.Add("Delete", null, (_, _) => Delete(id));
+                if (!live || AppState.IsAdmin)
+                    menu.Items.Add("Delete", null, (_, _) => Delete(id));
                 UiStyle.RowContextMenuShown = true;
                 menu.Show(_grid, _grid.PointToClient(Cursor.Position));
             };
@@ -190,9 +192,16 @@ namespace CastRightCatchInvManagement
             _grid.Columns.Add("Name", "Name");
             _grid.Columns.Add("Bank", "Bank");
             _grid.Columns.Add("Last4", "Last 4");
+            _grid.Columns.Add("Live", "Live");
             _grid.Columns.Add("Notes", "Notes");
             foreach (var account in SqliteInventory.ListBankAccounts())
-                _grid.Rows.Add(account.Id, account.Name, account.Bank, account.Last4, account.Notes);
+                _grid.Rows.Add(
+                    account.Id,
+                    account.Name,
+                    account.Bank,
+                    account.Last4,
+                    account.Live ? "Yes" : "",
+                    account.Notes);
         }
 
         /// <summary>Hidden Id cell for the row, or 0 when the value is not numeric.</summary>
@@ -201,11 +210,17 @@ namespace CastRightCatchInvManagement
             return long.TryParse(_grid.Rows[row].Cells[0].Value?.ToString(), out long id) ? id : 0;
         }
 
+        /// <summary>True when this row is the company Plaid live feed.</summary>
+        private bool RowLive(int row)
+        {
+            return string.Equals(_grid.Rows[row].Cells["Live"].Value?.ToString(), "Yes", StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>Add a new account or update the selected one.</summary>
         private void Edit(long? id)
         {
             var existing = id == null
-                ? default((long Id, string Name, string Bank, string Last4, string Notes))
+                ? default((long Id, string Name, string Bank, string Last4, string Notes, bool Live))
                 : SqliteInventory.ListBankAccounts().FirstOrDefault(a => a.Id == id.Value);
 
             using var form = new Form
@@ -271,9 +286,23 @@ namespace CastRightCatchInvManagement
         /// <summary>Remove the account label after confirm. Imported lines stay in Banking.</summary>
         private void Delete(long id)
         {
+            var account = SqliteInventory.ListBankAccounts().FirstOrDefault(a => a.Id == id);
+            if (account.Live && !AppState.IsAdmin)
+            {
+                MessageBox.Show(
+                    "Only an administrator can disconnect the live bank.",
+                    "Bank accounts",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            string prompt = account.Live
+                ? "Disconnect this live bank? Imported transactions stay in Banking. Only an administrator can connect it again."
+                : "Delete this bank account? Imported transactions stay in Banking.";
             // Accidental delete would drop the label used when reading the next statement.
             if (MessageBox.Show(
-                    "Delete this bank account? Imported transactions stay in Banking.",
+                    prompt,
                     "Bank accounts",
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Warning) != DialogResult.Yes)

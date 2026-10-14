@@ -237,6 +237,9 @@ public sealed class BankRowDto
 
     /// <summary>Free-form notes.</summary>
     public string Notes { get; set; } = "";
+
+    /// <summary>True when this row holds the company Plaid live link. The access token is never sent.</summary>
+    public bool Live { get; set; }
 }
 
 /// <summary>Write payload for bank rows and Plaid live-link fields.</summary>
