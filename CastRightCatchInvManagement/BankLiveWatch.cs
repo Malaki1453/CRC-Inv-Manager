@@ -12,6 +12,9 @@ namespace CastRightCatchInvManagement
         public static void Start()
         {
             Stop();
+            // Remote sessions let CrcInventoryServer own the interval so tokens stay on the host.
+            if (DataLink.IsRemote)
+                return;
             // Auto-sync is an admin setting; skip the timer when it is Off.
             if (AppState.PlaidSyncHours <= 0)
                 return;

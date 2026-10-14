@@ -231,7 +231,71 @@ internal sealed partial class InventoryStore
                 ClearTermStart(table, incompleteIds);
             }
 
+            RelabelArchiveFile();
             return moved;
+        }
+    }
+
+    /// <summary>Rename the old database to old_inventory MM yyyy - MM yyyy.db from dates inside it.</summary>
+    public void RelabelArchiveFile()
+    {
+        lock (_gate)
+            RelabelArchiveFileUnlocked();
+    }
+
+    private void RelabelArchiveFileUnlocked()
+    {
+        if (_engine is not SqliteStoreEngine sqlite)
+            return;
+        var (from, to) = ReadArchiveDateRangeUnlocked();
+        if (from == null || to == null)
+            return;
+        sqlite.StampArchiveFileName(from.Value, to.Value);
+    }
+
+    /// <summary>Earliest and latest dates found in the old database (term_start and date columns).</summary>
+    public (DateTime? From, DateTime? To) ReadArchiveDateRange()
+    {
+        lock (_gate)
+            return ReadArchiveDateRangeUnlocked();
+    }
+
+    private (DateTime? From, DateTime? To) ReadArchiveDateRangeUnlocked()
+    {
+        DateTime? from = null;
+        DateTime? to = null;
+        using var db = Open(archive: true);
+        foreach (var table in Schema.ProcessTables)
+        {
+            var columns = _engine.ListColumns(db, table);
+            if (columns.Count == 0)
+                continue;
+            var dateCols = columns
+                .Where(c => c.Equals("term_start", StringComparison.OrdinalIgnoreCase) ||
+                            c.Contains("date", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            foreach (var col in dateCols)
+            {
+                using var cmd = db.CreateCommand();
+                cmd.CommandText = $"SELECT MIN({Quote(col)}), MAX({Quote(col)}) FROM {Quote(table)} WHERE {Quote(col)} <> '';";
+                using var reader = cmd.Query(_engine);
+                if (!reader.Read())
+                    continue;
+                Consider(reader.IsDBNull(0) ? null : reader.GetValue(0)?.ToString());
+                Consider(reader.IsDBNull(1) ? null : reader.GetValue(1)?.ToString());
+            }
+        }
+
+        return (from, to);
+
+        void Consider(string? text)
+        {
+            if (!DateTime.TryParse(text, out var date))
+                return;
+            if (from == null || date < from)
+                from = date;
+            if (to == null || date > to)
+                to = date;
         }
     }
 

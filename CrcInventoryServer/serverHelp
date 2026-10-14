@@ -1,0 +1,15 @@
+#!/bin/sh
+cat <<'EOF'
+Cast Right Catch inventory server commands
+
+  sudo serverui        Live status board (Ctrl+C leaves; service keeps running)
+  sudo serverStart     Start crc-inventory
+  sudo serverStop      Stop crc-inventory
+  sudo serverRestart   Stop then start crc-inventory
+  sudo serverUpdate    Check GitHub for a newer Linux server zip and install it
+  sudo serverHelp      This list
+
+Service unit: crc-inventory
+Program:      /opt/crc-inventory/CrcInventoryServer
+Data:         /var/lib/crc-inventory
+EOF

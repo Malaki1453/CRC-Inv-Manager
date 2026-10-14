@@ -1,20 +1,15 @@
 using System.Data.Common;
-using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
-using Npgsql;
 
 namespace CrcInventory.Server;
 
 /// <summary>
-/// SQLite files by default. Postgres (Digital Ocean) when a connection string is set.
-/// Live and archive map to crc_inventory.db / old_inventory.db, or schemas live / archive.
+/// SQLite files in a data folder: live crc_inventory.db, archive old_inventory.db.
 /// </summary>
 internal abstract class StoreEngine
 {
     /// <summary>Human-readable engine name for the host log.</summary>
     public abstract string Name { get; }
-    /// <summary>True when this engine is Postgres rather than local SQLite files.</summary>
-    public abstract bool IsPostgres { get; }
     /// <summary>SQL fragment that declares the auto-increment primary key column.</summary>
     public abstract string IdColumn { get; }
     /// <summary>SQL type used for stored PDF bytes.</summary>
@@ -22,9 +17,9 @@ internal abstract class StoreEngine
     /// <summary>SQL type for case-insensitive username/key text.</summary>
     public abstract string NoCaseText { get; }
 
-    /// <summary>Opens live or archive (SQLite file or Postgres search_path).</summary>
+    /// <summary>Opens live or archive SQLite file.</summary>
     public abstract DbConnection Open(bool archive);
-    /// <summary>Lists column names on <paramref name="table"/> in the current schema/file.</summary>
+    /// <summary>Lists column names on <paramref name="table"/>.</summary>
     public abstract IReadOnlyList<string> ListColumns(DbConnection db, string table);
     /// <summary>Rewrites command text/parameters for this engine before execute.</summary>
     public abstract void Prepare(DbCommand cmd);
@@ -32,12 +27,9 @@ internal abstract class StoreEngine
     /// <summary>Double-quote identifier, doubling inner quotes.</summary>
     public static string Quote(string name) => "\"" + name.Replace("\"", "\"\"") + "\"";
 
-    /// <summary>Local SQLite engine using crc_inventory.db and old_inventory.db in <paramref name="folder"/>.</summary>
-    public static StoreEngine Sqlite(string folder) => new SqliteStoreEngine(folder);
-
-    /// <summary>Postgres engine using live/archive schemas on the given connection string.</summary>
-    public static StoreEngine Postgres(string connectionString) =>
-        new PostgresStoreEngine(connectionString);
+    /// <summary>SQLite engine with current and old databases in separate folders.</summary>
+    public static StoreEngine Sqlite(string liveFolder, string archiveFolder) =>
+        new SqliteStoreEngine(liveFolder, archiveFolder);
 }
 
 /// <summary>Helpers that bind parameters and run commands after <see cref="StoreEngine.Prepare"/>.</summary>
@@ -46,7 +38,6 @@ internal static class DbCmd
     /// <summary>Adds a named parameter, mapping null to DBNull and byte[] to Binary.</summary>
     public static void AddParam(this DbCommand cmd, string name, object? value)
     {
-        // cmd is the SQL command being parameterized (SQLite $name or Postgres @name).
         var parameter = cmd.CreateParameter();
         parameter.ParameterName = name;
         parameter.Value = value ?? DBNull.Value;
@@ -78,18 +69,25 @@ internal static class DbCmd
     }
 }
 
-/// <summary>SQLite files in a data folder: live crc_inventory.db, archive old_inventory.db.</summary>
+/// <summary>Current crc_inventory.db in one folder; dated old_inventory files in another.</summary>
 internal sealed class SqliteStoreEngine : StoreEngine
 {
-    private readonly string _folder;
+    private readonly string _liveFolder;
+    private readonly string _archiveFolder;
+    private string _archivePath;
 
-    /// <summary>Binds this engine to SQLite files under <paramref name="folder"/>.</summary>
-    public SqliteStoreEngine(string folder) => _folder = folder;
+    /// <summary>Binds live and old folders; creates them if missing.</summary>
+    public SqliteStoreEngine(string liveFolder, string archiveFolder)
+    {
+        _liveFolder = Path.GetFullPath(liveFolder);
+        _archiveFolder = Path.GetFullPath(archiveFolder);
+        Directory.CreateDirectory(_liveFolder);
+        Directory.CreateDirectory(_archiveFolder);
+        _archivePath = ResolveWorkingArchive();
+    }
 
     /// <inheritdoc />
     public override string Name => "sqlite (local files)";
-    /// <inheritdoc />
-    public override bool IsPostgres => false;
     /// <inheritdoc />
     public override string IdColumn => "id INTEGER PRIMARY KEY AUTOINCREMENT";
     /// <inheritdoc />
@@ -97,13 +95,17 @@ internal sealed class SqliteStoreEngine : StoreEngine
     /// <inheritdoc />
     public override string NoCaseText => "TEXT NOT NULL COLLATE NOCASE";
 
+    /// <summary>Full path of crc_inventory.db.</summary>
+    public string LivePath => Path.Combine(_liveFolder, Schema.LiveFileName);
+    /// <summary>Folder that holds dated old databases.</summary>
+    public string ArchiveFolder => _archiveFolder;
+    /// <summary>Old database currently written for View Old / Next Term.</summary>
+    public string ArchivePath => _archivePath;
+
     /// <inheritdoc />
     public override DbConnection Open(bool archive)
     {
-        string path = Path.Combine(
-            _folder,
-            archive ? Schema.ArchiveFileName : Schema.LiveFileName);
-        // db is the live or archive SQLite file connection.
+        string path = archive ? _archivePath : LivePath;
         var db = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = path,
@@ -111,10 +113,62 @@ internal sealed class SqliteStoreEngine : StoreEngine
             DefaultTimeout = 8
         }.ToString());
         db.Open();
-        using var pragma = db.CreateCommand(); // SQL command for SQLite busy_timeout
+        using var pragma = db.CreateCommand();
         pragma.CommandText = "PRAGMA busy_timeout=8000;";
         pragma.ExecuteNonQuery();
         return db;
+    }
+
+    /// <summary>
+    /// Prefer a working old_inventory.db; otherwise the newest dated file so View Old still works
+    /// after a stamp. If the operator removed the file, start a fresh old_inventory.db.
+    /// </summary>
+    public string ResolveWorkingArchive()
+    {
+        string working = Path.Combine(_archiveFolder, Schema.ArchiveFileName);
+        if (File.Exists(working))
+            return working;
+        var dated = Directory.GetFiles(_archiveFolder, "old_inventory *.db");
+        if (dated.Length > 0)
+            return dated.OrderByDescending(File.GetLastWriteTimeUtc).First();
+        return working;
+    }
+
+    /// <summary>
+    /// Rename the working old database to include MM yyyy - MM yyyy so off-system copies sort by dates.
+    /// </summary>
+    public void StampArchiveFileName(DateTime start, DateTime end)
+    {
+        CheckpointArchive();
+        string dest = Path.Combine(_archiveFolder, Schema.DatedArchiveFileName(start, end));
+        // Already named for this range.
+        if (string.Equals(_archivePath, dest, StringComparison.OrdinalIgnoreCase))
+            return;
+        // Do not overwrite another file that already has this range.
+        if (File.Exists(dest))
+            return;
+        if (!File.Exists(_archivePath))
+            return;
+        try
+        {
+            File.Move(_archivePath, dest);
+            _archivePath = dest;
+        }
+        catch (IOException)
+        {
+            // File in use (View Old / Next Term); keep the working name until the next stamp.
+        }
+    }
+
+    /// <summary>Flush WAL so the .db file can be renamed or copied off the machine.</summary>
+    public void CheckpointArchive()
+    {
+        if (!File.Exists(_archivePath))
+            return;
+        using var db = Open(archive: true);
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+        cmd.ExecuteNonQuery();
     }
 
     /// <inheritdoc />
@@ -132,151 +186,5 @@ internal sealed class SqliteStoreEngine : StoreEngine
     /// <summary>SQLite already accepts $params and COLLATE NOCASE; nothing to rewrite.</summary>
     public override void Prepare(DbCommand cmd)
     {
-    }
-}
-
-/// <summary>Postgres (Digital Ocean): live and archive schemas, CITEXT, BYTEA, lastval().</summary>
-internal sealed class PostgresStoreEngine : StoreEngine
-{
-    private static readonly Regex DollarParams = new(@"\$([A-Za-z_][A-Za-z0-9_]*)", RegexOptions.Compiled);
-    private readonly string _connectionString;
-    private readonly object _bootLock = new();
-    private bool _bootstrapped;
-
-    /// <summary>Normalizes the connection string (URI or Npgsql) and requires SSL.</summary>
-    public PostgresStoreEngine(string connectionString)
-    {
-        _connectionString = Normalize(connectionString);
-    }
-
-    /// <inheritdoc />
-    public override string Name => "postgres (Digital Ocean)";
-    /// <inheritdoc />
-    public override bool IsPostgres => true;
-    /// <inheritdoc />
-    public override string IdColumn => "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY";
-    /// <inheritdoc />
-    public override string BlobType => "BYTEA";
-    /// <inheritdoc />
-    public override string NoCaseText => "CITEXT NOT NULL";
-
-    /// <inheritdoc />
-    public override DbConnection Open(bool archive)
-    {
-        var db = new NpgsqlConnection(_connectionString); // live/archive Postgres connection (search_path set below)
-        db.Open();
-        Bootstrap(db);
-        using var path = db.CreateCommand(); // SQL command that sets search_path to live or archive
-        path.CommandText = archive
-            ? "SET search_path TO archive, public"
-            : "SET search_path TO live, public";
-        path.ExecuteNonQuery();
-        return db;
-    }
-
-    /// <inheritdoc />
-    public override IReadOnlyList<string> ListColumns(DbConnection db, string table)
-    {
-        var list = new List<string>();
-        using var cmd = db.CreateCommand();
-        cmd.CommandText =
-            """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = @table
-            ORDER BY ordinal_position;
-            """;
-        var parameter = cmd.CreateParameter();
-        parameter.ParameterName = "@table";
-        parameter.Value = table;
-        cmd.Parameters.Add(parameter);
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            list.Add(reader.GetString(0));
-        return list;
-    }
-
-    /// <summary>Rewrites $name parameters and SQLite-only SQL so the same commands run on Postgres.</summary>
-    public override void Prepare(DbCommand cmd)
-    {
-        string sql = cmd.CommandText ?? "";
-        sql = DollarParams.Replace(sql, "@$1");
-        sql = sql.Replace("COLLATE NOCASE", "", StringComparison.OrdinalIgnoreCase);
-        sql = sql.Replace("last_insert_rowid()", "lastval()", StringComparison.OrdinalIgnoreCase);
-        cmd.CommandText = sql;
-        foreach (DbParameter parameter in cmd.Parameters)
-        {
-            string name = parameter.ParameterName ?? "";
-            // Npgsql binds @name; leftover $name from SQLite-style commands must be rewritten.
-            if (name.StartsWith('$'))
-                parameter.ParameterName = "@" + name[1..];
-        }
-    }
-
-    /// <summary>Once per process: enable CITEXT and create live/archive schemas.</summary>
-    private void Bootstrap(NpgsqlConnection db)
-    {
-        // Already ran on this connection-string engine; skip the lock and DDL.
-        if (_bootstrapped)
-            return;
-        lock (_bootLock)
-        {
-            // Double-check after waiting so two Open calls do not both run CREATE.
-            if (_bootstrapped)
-                return;
-            using var cmd = db.CreateCommand();
-            cmd.CommandText =
-                """
-                CREATE EXTENSION IF NOT EXISTS citext;
-                CREATE SCHEMA IF NOT EXISTS live;
-                CREATE SCHEMA IF NOT EXISTS archive;
-                """;
-            cmd.ExecuteNonQuery();
-            _bootstrapped = true;
-        }
-    }
-
-    /// <summary>Accepts a URI or Npgsql string; forces SSL and Digital Ocean's 25060 port when needed.</summary>
-    internal static string Normalize(string raw)
-    {
-        raw = (raw ?? "").Trim();
-        // An empty string would open a default local server, which is never what we want.
-        if (raw.Length == 0)
-            throw new InvalidOperationException("Postgres connection string is empty.");
-
-        // DATABASE_URL style URIs from Digital Ocean / Heroku.
-        if (raw.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
-            raw.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
-        {
-            var uri = new Uri(raw);
-            string userInfo = uri.UserInfo ?? "";
-            int colon = userInfo.IndexOf(':');
-            string user = Uri.UnescapeDataString(colon < 0 ? userInfo : userInfo[..colon]);
-            string password = colon < 0 ? "" : Uri.UnescapeDataString(userInfo[(colon + 1)..]);
-            string database = uri.AbsolutePath.Trim('/');
-            var fromUri = new NpgsqlConnectionStringBuilder
-            {
-                Host = uri.Host,
-                Port = uri.IsDefaultPort
-                    ? (uri.Host.Contains("ondigitalocean.com", StringComparison.OrdinalIgnoreCase) ? 25060 : 5432)
-                    : uri.Port,
-                Database = database.Length > 0 ? database : "defaultdb",
-                Username = user,
-                Password = password,
-                SslMode = SslMode.Require
-            };
-            return fromUri.ToString();
-        }
-
-        var builder = new NpgsqlConnectionStringBuilder(raw);
-        // Managed Postgres requires TLS; weaker modes would fail or leak.
-        if (builder.SslMode is SslMode.Disable or SslMode.Allow or SslMode.Prefer)
-            builder.SslMode = SslMode.Require;
-        // Digital Ocean advertises 25060, not the default 5432.
-        if (builder.Port == 5432 &&
-            (builder.Host ?? "").Contains("ondigitalocean.com", StringComparison.OrdinalIgnoreCase))
-            builder.Port = 25060;
-        return builder.ToString();
     }
 }

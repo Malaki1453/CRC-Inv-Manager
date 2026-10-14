@@ -275,6 +275,7 @@ namespace CastRightCatchInvManagement
                 ["smtp_ssl"] = AppState.SmtpSsl ? "1" : "0",
                 ["plaid_client_id"] = AppState.PlaidClientId ?? "",
                 ["plaid_secret"] = AppState.PlaidSecret ?? "",
+                ["plaid_configured"] = AppState.PlaidConfigured ? "1" : "0",
                 ["plaid_env"] = AppState.PlaidEnv ?? "sandbox",
                 ["plaid_sync_hours"] = AppState.PlaidSyncHours.ToString(),
                 ["plaid_last_sync"] = AppState.PlaidLastSync?.ToString("o") ?? "",
@@ -316,7 +317,14 @@ namespace CastRightCatchInvManagement
             AppState.SmtpPassword = Get(shared, "smtp_password", AppState.SmtpPassword);
             AppState.SmtpSsl = Get(shared, "smtp_ssl", AppState.SmtpSsl ? "1" : "0") != "0";
             AppState.PlaidClientId = Get(shared, "plaid_client_id", AppState.PlaidClientId);
-            AppState.PlaidSecret = Get(shared, "plaid_secret", AppState.PlaidSecret);
+            string secret = Get(shared, "plaid_secret", "");
+            if (secret.Length > 0)
+                AppState.PlaidSecret = secret;
+            else
+                AppState.PlaidSecret = "";
+            AppState.PlaidConfigured =
+                Get(shared, "plaid_configured", AppState.PlaidConfigured ? "1" : "0") == "1" ||
+                (AppState.PlaidClientId.Trim().Length > 0 && AppState.PlaidSecret.Trim().Length > 0);
             AppState.PlaidEnv = Get(shared, "plaid_env", AppState.PlaidEnv);
             // Only 0 (off), 1, or 3 hours are valid auto-sync choices.
             if (int.TryParse(Get(shared, "plaid_sync_hours", AppState.PlaidSyncHours.ToString()), out int hours) &&
@@ -439,6 +447,8 @@ namespace CastRightCatchInvManagement
         public static bool SmtpSsl { get; set; } = true;
         public static string PlaidClientId { get; set; } = "";
         public static string PlaidSecret { get; set; } = "";
+        /// <summary>True when the host has a Plaid client id and secret. The secret itself is not sent to remote clients.</summary>
+        public static bool PlaidConfigured { get; set; }
         public static string PlaidEnv { get; set; } = "sandbox";
         /// <summary>0 = off, 1 or 3 = auto-sync hours while the app is open.</summary>
         public static int PlaidSyncHours { get; set; } = 1;

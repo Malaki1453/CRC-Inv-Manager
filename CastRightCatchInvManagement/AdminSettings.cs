@@ -38,6 +38,8 @@ namespace CastRightCatchInvManagement
         private TextBox _plaidSecret = null!;
         private ComboBox _plaidEnv = null!;
         private ComboBox _plaidSync = null!;
+        private bool _plaidSecretFresh;
+        private bool _loadingBank;
         private TextBox _smtpHost = null!;
         private TextBox _smtpPort = null!;
         private TextBox _smtpUser = null!;
@@ -1995,7 +1997,7 @@ namespace CastRightCatchInvManagement
             Theme.StyleFieldLabel(lblEnv);
             _plaidEnv = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
             Theme.StyleCombo(_plaidEnv);
-            _plaidEnv.Items.AddRange(new object[] { "sandbox", "development", "production" });
+            _plaidEnv.Items.AddRange(new object[] { "sandbox", "production" });
             lblEnv.Location = new Point(12, 8);
             _plaidEnv.Location = new Point(12, 26);
             _plaidEnv.Size = new Size(160, 26);
@@ -2015,6 +2017,13 @@ namespace CastRightCatchInvManagement
             lblSecret.Location = new Point(12, 64);
             _plaidSecret.Location = new Point(12, 82);
             _plaidSecret.Size = new Size(596, 26);
+            _plaidSecret.PlaceholderText = "Saved secret stays on the server — type again to replace";
+            _plaidSecret.TextChanged += (_, _) =>
+            {
+                if (_loadingBank)
+                    return;
+                _plaidSecretFresh = _plaidSecret.Text.Length > 0;
+            };
 
             var save = new Button
             {
@@ -2025,9 +2034,18 @@ namespace CastRightCatchInvManagement
             Theme.StyleGoldButton(save);
             save.Click += (_, _) => SaveBankFeed();
 
+            var dashboard = new Button
+            {
+                Text = "Open Plaid dashboard",
+                Size = new Size(180, 34),
+                Location = new Point(144, 118)
+            };
+            Theme.StyleOutlineButton(dashboard);
+            dashboard.Click += (_, _) => OpenPlaidDashboard();
+
             var how = new Label
             {
-                Text = "One-time: dashboard.plaid.com â†’ Team Settings â†’ Keys. Sandbox test login is user_good / pass_good. Use Development or Production after Plaid approves a live app.",
+                Text = "One-time: dashboard.plaid.com > Team Settings > Keys. Sandbox test login is user_good / pass_good. Use Production after Plaid approves a live app.",
                 Font = Theme.Small,
                 ForeColor = Theme.Muted,
                 Location = new Point(12, 158),
@@ -2041,6 +2059,7 @@ namespace CastRightCatchInvManagement
             _keysPanel.Controls.Add(lblSecret);
             _keysPanel.Controls.Add(_plaidSecret);
             _keysPanel.Controls.Add(save);
+            _keysPanel.Controls.Add(dashboard);
             _keysPanel.Controls.Add(how);
             card.Controls.Add(_keysPanel);
         }
@@ -2051,6 +2070,35 @@ namespace CastRightCatchInvManagement
             _keysPanel.Visible = show;
             _keysToggle.Text = show ? "Hide keys" : "API keys";
             _bankCard.Height = show ? 430 : 210;
+        }
+
+        /// <summary>Open Admin management on the live-feed card so keys can be saved.</summary>
+        internal void OpenBankFeedSetup()
+        {
+            ApplyTabs();
+            if (_adminTab != null && _tabs.TabPages.Contains(_adminTab))
+                _tabs.SelectedTab = _adminTab;
+            ShowKeys(true);
+            if (_bankCard.Parent is ScrollableControl host)
+                host.ScrollControlIntoView(_bankCard);
+            ToastAlert.Error(this, "Add API keys once, save, then Connect bank.");
+        }
+
+        /// <summary>Open Plaid's key page in the default browser.</summary>
+        private static void OpenPlaidDashboard()
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "https://dashboard.plaid.com/developers/keys",
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Plaid dashboard", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         private sealed class SyncChoice
@@ -2072,23 +2120,43 @@ namespace CastRightCatchInvManagement
         private void SaveBankFeedQuiet()
         {
             AppState.PlaidClientId = _plaidId.Text.Trim();
-            AppState.PlaidSecret = _plaidSecret.Text.Trim();
+            if (_plaidSecretFresh)
+                AppState.PlaidSecret = _plaidSecret.Text.Trim();
+            else
+                AppState.PlaidSecret = "";
             AppState.PlaidEnv = _plaidEnv.SelectedItem?.ToString() ?? "sandbox";
             AppState.PlaidSyncHours = _plaidSync.SelectedItem is SyncChoice choice ? choice.Hours : 1;
+            bool hadSecret = _plaidSecretFresh && AppState.PlaidSecret.Length > 0;
+            AppState.PlaidConfigured = AppState.PlaidClientId.Length > 0 &&
+                                       (hadSecret || AppState.PlaidConfigured);
             AppLock.SaveSettings();
+            if (DataLink.IsRemote)
+            {
+                AppState.PlaidSecret = "";
+                _loadingBank = true;
+                _plaidSecret.Text = "";
+                _plaidSecretFresh = false;
+                _loadingBank = false;
+            }
+
             BankLiveWatch.Start();
         }
 
         /// <summary>Fill Plaid fields and open keys when they are still empty.</summary>
         private void LoadBankFeed()
         {
+            _loadingBank = true;
             _plaidId.Text = AppState.PlaidClientId;
             _plaidSecret.Text = AppState.PlaidSecret;
-            string env = string.IsNullOrWhiteSpace(AppState.PlaidEnv) ? "sandbox" : AppState.PlaidEnv;
+            _plaidSecretFresh = AppState.PlaidSecret.Length > 0;
+            string env = string.IsNullOrWhiteSpace(AppState.PlaidEnv) ? "sandbox" : AppState.PlaidEnv.Trim();
+            if (env.Equals("development", StringComparison.OrdinalIgnoreCase))
+                env = "production";
             int index = _plaidEnv.Items.IndexOf(env);
             _plaidEnv.SelectedIndex = index >= 0 ? index : 0;
             int hours = AppState.PlaidSyncHours;
             _plaidSync.SelectedIndex = hours == 3 ? 2 : hours == 0 ? 0 : 1;
+            _loadingBank = false;
             ShowKeys(!PlaidClient.IsConfigured);
         }
 

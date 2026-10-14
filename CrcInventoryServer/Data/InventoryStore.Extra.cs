@@ -109,9 +109,11 @@ internal sealed partial class InventoryStore
             // Unknown id is an empty link, not an error.
             if (!reader.Read())
                 return new BankLinkDto();
+            string token = SecretProtect.Open(reader.IsDBNull(0) ? "" : reader.GetString(0));
             return new BankLinkDto
             {
-                AccessToken = SecretProtect.Open(reader.IsDBNull(0) ? "" : reader.GetString(0)),
+                Linked = token.Length > 0,
+                AccessToken = token,
                 ItemId = reader.IsDBNull(1) ? "" : reader.GetString(1),
                 AccountId = reader.IsDBNull(2) ? "" : reader.GetString(2),
                 Cursor = reader.IsDBNull(3) ? "" : reader.GetString(3)

@@ -4,7 +4,7 @@ using CrcInventory.Protocol;
 namespace CrcInventory.Server;
 
 /// <summary>
-/// Hosted inventory database: SQLite files or Postgres schemas, plus accounts, settings, PDFs, and bank links.
+/// Hosted inventory SQLite files, plus accounts, settings, PDFs, and bank links.
 /// </summary>
 internal sealed partial class InventoryStore
 {
@@ -12,14 +12,14 @@ internal sealed partial class InventoryStore
     private readonly StoreEngine _engine;
     private readonly object _gate = new();
 
-    /// <summary>Creates the data folder, picks SQLite or Postgres, loads roles, and ensures schema.</summary>
-    public InventoryStore(string dataFolder, string? postgres = null)
+    /// <summary>Creates the data folder, opens SQLite, loads roles, and ensures schema.</summary>
+    public InventoryStore(string dataFolder, string? liveFolder = null, string? archiveFolder = null)
     {
         _folder = Path.GetFullPath(dataFolder);
         Directory.CreateDirectory(_folder);
-        _engine = string.IsNullOrWhiteSpace(postgres)
-            ? StoreEngine.Sqlite(_folder)
-            : StoreEngine.Postgres(postgres);
+        string live = string.IsNullOrWhiteSpace(liveFolder) ? _folder : Path.GetFullPath(liveFolder);
+        string archive = string.IsNullOrWhiteSpace(archiveFolder) ? _folder : Path.GetFullPath(archiveFolder);
+        _engine = StoreEngine.Sqlite(live, archive);
         Roles = new RolesFile(_folder);
         Roles.Load();
         SecretProtect.UseFolder(_folder);
@@ -35,14 +35,27 @@ internal sealed partial class InventoryStore
     /// <summary>Human-readable engine name for the host log.</summary>
     public string EngineName => _engine.Name;
 
-    /// <summary>True when this store is Postgres rather than local SQLite files.</summary>
-    public bool UsesPostgres => _engine.IsPostgres;
+    /// <summary>Path of crc_inventory.db.</summary>
+    public string LivePath => _engine is SqliteStoreEngine sqlite
+        ? sqlite.LivePath
+        : Path.Combine(_folder, Schema.LiveFileName);
 
-    /// <summary>Path of crc_inventory.db (unused on Postgres except for logging).</summary>
-    public string LivePath => Path.Combine(_folder, Schema.LiveFileName);
+    /// <summary>Path of the old database currently in use (may be date-stamped).</summary>
+    public string ArchivePath => _engine is SqliteStoreEngine sqlite
+        ? sqlite.ArchivePath
+        : Path.Combine(_folder, Schema.ArchiveFileName);
 
-    /// <summary>Path of old_inventory.db (unused on Postgres except for logging).</summary>
-    public string ArchivePath => Path.Combine(_folder, Schema.ArchiveFileName);
+    /// <summary>Old .db files in the archive folder, newest write first.</summary>
+    public List<string> ListOldDatabaseFiles()
+    {
+        if (_engine is not SqliteStoreEngine sqlite)
+            return new List<string>();
+        if (!Directory.Exists(sqlite.ArchiveFolder))
+            return new List<string>();
+        return Directory.GetFiles(sqlite.ArchiveFolder, "old_inventory*.db")
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .ToList();
+    }
 
     /// <summary>Creates live and archive tables, app tables, and upgrades plaintext secrets.</summary>
     public void EnsureCreated()
@@ -57,14 +70,10 @@ internal sealed partial class InventoryStore
     /// <summary>Creates tables for one side (live or archive) and, on live, the app/account/PDF tables.</summary>
     private void EnsureCreated(bool archive)
     {
-        using var db = Open(archive); // live or archive database connection
-        using var cmd = db.CreateCommand(); // SQL command reused for CREATE/PRAGMA on this side
-        // WAL is a SQLite pragma; Postgres does not accept it.
-        if (!_engine.IsPostgres)
-        {
-            cmd.CommandText = "PRAGMA journal_mode=WAL;";
-            cmd.Exec(_engine);
-        }
+        using var db = Open(archive);
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "PRAGMA journal_mode=WAL;";
+        cmd.Exec(_engine);
 
         IEnumerable<string> tables = archive ? Schema.ProcessTables : Schema.All;
         foreach (var table in tables)
@@ -294,6 +303,46 @@ internal sealed partial class InventoryStore
 
     /// <summary>Public settings with secret keys omitted.</summary>
     public Dictionary<string, string> ReadPublicSettings() => ReadSettings(revealSecrets: false);
+
+    /// <summary>
+    /// Settings for a desktop client. SMTP password is optional; Plaid secret is never included.
+    /// plaid_configured is 1 when client id and secret are stored.
+    /// </summary>
+    public Dictionary<string, string> ReadClientSettings(bool revealSmtp)
+    {
+        lock (_gate)
+        {
+            var raw = ReadSettingsUnlocked();
+            string clientId = Setting(raw, "plaid_client_id");
+            string secret = SecretProtect.Open(Setting(raw, "plaid_secret"));
+            var map = revealSmtp
+                ? SecretProtect.RevealSettings(raw)
+                : SecretProtect.WithoutSecrets(raw);
+            map.Remove("plaid_secret");
+            map["plaid_configured"] = clientId.Length > 0 && secret.Length > 0 ? "1" : "0";
+            return map;
+        }
+    }
+
+    /// <summary>Opened Plaid keys used only on this host. Never sent to a client.</summary>
+    public (string ClientId, string Secret, string Env, string ClientName) PlaidCredentials()
+    {
+        lock (_gate)
+        {
+            var raw = ReadSettingsUnlocked();
+            return (
+                Setting(raw, "plaid_client_id"),
+                SecretProtect.Open(Setting(raw, "plaid_secret")),
+                Setting(raw, "plaid_env"),
+                Setting(raw, "business_name"));
+        }
+    }
+
+    /// <summary>Trimmed setting value, or empty when the key is missing.</summary>
+    private static string Setting(Dictionary<string, string> map, string key)
+    {
+        return map.TryGetValue(key, out var value) ? (value ?? "").Trim() : "";
+    }
 
     /// <summary>Upserts settings; empty secret values are skipped so a blank field does not wipe the stored secret.</summary>
     public void WriteSettings(Dictionary<string, string> values)

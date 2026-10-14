@@ -13,9 +13,12 @@ namespace CastRightCatchInvManagement
             UiStyle.ApplyDataPage(this, "Banking", lblTitle, btnUpload, dataGridView1);
             UiStyle.AddDataPageAction(this, "Accounts", (_, _) => BankAccountsForm.ShowList(this));
             UiStyle.AddDataPageAction(this, "Read file", (_, _) => ReadBankFile());
-            // Only administrators may pull the live Plaid feed.
+            // Only administrators may connect or pull the live Plaid feed.
             if (AppState.IsAdmin)
-                UiStyle.AddDataPageAction(this, "Sync live feed", async (_, _) => await BankLive.SyncAllAsync(this), gold: true);
+            {
+                UiStyle.AddDataPageAction(this, "Sync live feed", async (_, _) => await BankLive.SyncAllAsync(this));
+                UiStyle.AddDataPageAction(this, "Connect bank", async (_, _) => await ConnectLiveFeed(), gold: true);
+            }
             DataFiles.DataChanged += LoadTable;
             BankFeed.EnsureSchema();
             LoadTable();
@@ -29,6 +32,20 @@ namespace CastRightCatchInvManagement
         {
             BankFeed.EnsureSchema();
             DataFiles.FillGrid(dataGridView1, DataFiles.BankTransactions);
+        }
+
+        /// <summary>Open Plaid Link, or send the administrator to API keys if they are still empty.</summary>
+        private async Task ConnectLiveFeed()
+        {
+            if (!PlaidClient.IsConfigured)
+            {
+                var admin = Navigator.Ensure<AdminSettings>(AppPage.Admin);
+                Navigator.GoTo(AppPage.Admin);
+                admin.OpenBankFeedSetup();
+                return;
+            }
+
+            await BankLive.ConnectAsync(this);
         }
 
         /// <summary>

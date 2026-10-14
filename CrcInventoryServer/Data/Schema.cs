@@ -5,8 +5,19 @@ internal static class Schema
 {
     /// <summary>Live SQLite file name (crc_inventory.db).</summary>
     public const string LiveFileName = "crc_inventory.db";
-    /// <summary>Archive SQLite file name (old_inventory.db).</summary>
+    /// <summary>Working archive file name before it is stamped with a date range.</summary>
     public const string ArchiveFileName = "old_inventory.db";
+
+    /// <summary>
+    /// File name for an old database that can be taken off the machine and sorted by dates,
+    /// e.g. old_inventory 06 2025 - 08 2025.db.
+    /// </summary>
+    public static string DatedArchiveFileName(DateTime start, DateTime end)
+    {
+        if (end < start)
+            (start, end) = (end, start);
+        return "old_inventory " + start.ToString("MM yyyy") + " - " + end.ToString("MM yyyy") + ".db";
+    }
     /// <summary>On-disk admin/IT username list.</summary>
     public const string RolesFileName = "admins.json";
     /// <summary>Self-signed TLS certificate PFX in the data folder.</summary>

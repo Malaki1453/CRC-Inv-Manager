@@ -103,12 +103,18 @@ public static class ServerOps
     public const string BankUpdate = "bank.update";
     /// <summary>Delete a bank_accounts row.</summary>
     public const string BankDelete = "bank.delete";
-    /// <summary>Read decrypted Plaid link fields (admin only).</summary>
+    /// <summary>Read non-secret Plaid link fields (admin only). Access token is never returned.</summary>
     public const string BankLinkGet = "bank.linkGet";
-    /// <summary>Write Plaid link fields (admin only).</summary>
+    /// <summary>Write Plaid link fields (admin only). Used for tests/seeding, not by the desktop Connect flow.</summary>
     public const string BankLinkSet = "bank.linkSet";
     /// <summary>Update only the Plaid transactions cursor (admin only).</summary>
     public const string BankCursor = "bank.cursor";
+    /// <summary>Create a Plaid Link token on the host (admin only). Secret stays on the server.</summary>
+    public const string BankLinkToken = "bank.linkToken";
+    /// <summary>Exchange a public_token, store the access token, and import the first batch (admin only).</summary>
+    public const string BankConnect = "bank.connect";
+    /// <summary>Sync Plaid transactions for every linked account (admin only).</summary>
+    public const string BankSync = "bank.sync";
 
     /// <summary>Store a PDF under kind+key.</summary>
     public const string PdfSave = "pdf.save";

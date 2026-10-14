@@ -1,0 +1,178 @@
+#!/bin/sh
+# Look up CrcInventoryServer-linux-x64.zip on GitHub Releases and install it.
+set -e
+
+REPO="Malaki1453/CRC-Inv-Manager"
+PREFIX="/opt/crc-inventory"
+DATA="/var/lib/crc-inventory"
+API="https://api.github.com/repos/${REPO}/releases"
+
+need() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "serverUpdate needs $1 installed." >&2
+        exit 1
+    }
+}
+
+need curl
+need unzip
+need python3
+
+token=""
+if [ -n "${CRC_GITHUB_TOKEN:-}" ]; then
+    token="$CRC_GITHUB_TOKEN"
+elif [ -n "${GH_TOKEN:-}" ]; then
+    token="$GH_TOKEN"
+elif [ -f "$DATA/github-update.token" ]; then
+    token=$(tr -d '\r\n' < "$DATA/github-update.token")
+elif [ -f "$PREFIX/github-update.token" ]; then
+    token=$(tr -d '\r\n' < "$PREFIX/github-update.token")
+fi
+
+installed="0.0.0"
+if [ -x "$PREFIX/CrcInventoryServer" ]; then
+    installed=$("$PREFIX/CrcInventoryServer" --version 2>/dev/null | head -n 1 | tr -d '\r') || installed="0.0.0"
+fi
+if [ -z "$installed" ]; then
+    installed="0.0.0"
+fi
+
+echo "Installed: $installed"
+echo "Checking GitHub for CrcInventoryServer-linux-x64.zip…"
+
+github_get() {
+    if [ -n "$token" ]; then
+        curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: CRC-Inventory-Server-Update" \
+            -H "Authorization: Bearer $token" \
+            "$1"
+    else
+        curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: CRC-Inventory-Server-Update" \
+            "$1"
+    fi
+}
+
+json=$(github_get "$API") || {
+    echo "Could not read GitHub releases. If the repo is private, put a PAT in $DATA/github-update.token" >&2
+    exit 1
+}
+
+picked=$(printf '%s' "$json" | INSTALLED="$installed" python3 -c '
+import json, os, sys
+
+def parse(tag):
+    t = (tag or "").strip()
+    if t.lower().startswith("v"):
+        t = t[1:]
+    if t.lower().startswith("server-"):
+        t = t[7:]
+    parts = []
+    for p in t.replace("-", ".").split("."):
+        try:
+            parts.append(int(p))
+        except ValueError:
+            break
+    while len(parts) < 4:
+        parts.append(0)
+    return tuple(parts[:4])
+
+def zip_url(release):
+    for asset in release.get("assets") or []:
+        name = asset.get("name") or ""
+        url = asset.get("browser_download_url") or ""
+        if not url:
+            continue
+        lower = name.lower()
+        if lower == "crcinventoryserver-linux-x64.zip" or lower.endswith("-linux-x64.zip"):
+            return name, url
+    return None, None
+
+releases = json.load(sys.stdin)
+installed = parse(os.environ.get("INSTALLED", "0.0.0"))
+best = None
+for rel in releases:
+    name, url = zip_url(rel)
+    if not url:
+        continue
+    tag = rel.get("tag_name") or ""
+    ver = parse(tag)
+    if best is None or ver > best[0]:
+        best = (ver, tag, name, url)
+
+if best is None:
+    print("NONE")
+    sys.exit(0)
+
+ver, tag, name, url = best
+if ver <= installed:
+    print("CURRENT\t%s\t%s" % (tag, name))
+else:
+    print("UPDATE\t%s\t%s\t%s" % (tag, name, url))
+')
+
+kind=$(printf '%s' "$picked" | cut -f1)
+if [ "$kind" = "NONE" ] || [ -z "$kind" ]; then
+    echo "No Linux server zip was found on GitHub Releases."
+    echo "Publish CrcInventoryServer-linux-x64.zip on a release, then run sudo serverUpdate again."
+    exit 1
+fi
+
+tag=$(printf '%s' "$picked" | cut -f2)
+name=$(printf '%s' "$picked" | cut -f3)
+if [ "$kind" = "CURRENT" ]; then
+    echo "Already up to date ($tag / $name)."
+    exit 0
+fi
+
+url=$(printf '%s' "$picked" | cut -f4)
+echo "Found $tag ($name). Downloading…"
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+zip="$work/$name"
+if [ -n "$token" ]; then
+    curl -fL --progress-bar \
+        -H "User-Agent: CRC-Inventory-Server-Update" \
+        -H "Authorization: Bearer $token" \
+        -o "$zip" \
+        "$url"
+else
+    curl -fL --progress-bar \
+        -H "User-Agent: CRC-Inventory-Server-Update" \
+        -o "$zip" \
+        "$url"
+fi
+
+unzip -q -o "$zip" -d "$work/unpack"
+bin=$(find "$work/unpack" -type f -name 'CrcInventoryServer' | head -n 1)
+if [ -z "$bin" ]; then
+    echo "The zip did not contain CrcInventoryServer." >&2
+    exit 1
+fi
+
+echo "Stopping crc-inventory…"
+systemctl stop crc-inventory || true
+mkdir -p "$PREFIX"
+cp "$bin" "$PREFIX/CrcInventoryServer"
+chmod +x "$PREFIX/CrcInventoryServer"
+
+dir=$(dirname "$bin")
+for wrap in serverui serverStart serverStop serverRestart serverHelp serverUpdate; do
+    if [ -f "$dir/$wrap" ]; then
+        install -m 755 "$dir/$wrap" /usr/local/bin/"$wrap"
+        install -m 755 "$dir/$wrap" "$PREFIX/$wrap"
+    fi
+done
+if [ -f "$dir/crc-inventory.service" ]; then
+    cp "$dir/crc-inventory.service" /etc/systemd/system/crc-inventory.service
+    systemctl daemon-reload
+fi
+
+echo "$tag" > "$PREFIX/VERSION"
+echo "Starting crc-inventory…"
+systemctl start crc-inventory
+systemctl --no-pager --full status crc-inventory || true
+echo "Updated to $tag. Data in $DATA was left alone."

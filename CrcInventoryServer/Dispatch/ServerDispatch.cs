@@ -61,7 +61,7 @@ internal sealed class ServerDispatch
             // Admin-only settings with secrets revealed.
             ServerOps.SettingsRead => ReadAdminSettings(session),
             // Settings with secret keys omitted.
-            ServerOps.SettingsReadPublic => _store.ReadPublicSettings(),
+            ServerOps.SettingsReadPublic => _store.ReadClientSettings(revealSmtp: false),
             // Admin-only settings write.
             ServerOps.SettingsWrite => WriteSettings(payload, session),
             // Signed-in user's UI preferences.
@@ -112,12 +112,18 @@ internal sealed class ServerDispatch
             ServerOps.BankUpdate => BankUpdate(payload, session),
             // Delete bank row if the caller may write banking.
             ServerOps.BankDelete => BankDelete(payload, session),
-            // Admin: decrypted Plaid link.
+            // Admin: Plaid link fields without the access token.
             ServerOps.BankLinkGet => BankLinkGet(payload, session),
-            // Admin: write Plaid link.
+            // Admin: write Plaid link (tests/seeding).
             ServerOps.BankLinkSet => BankLinkSet(payload, session),
             // Admin: Plaid cursor only.
             ServerOps.BankCursor => BankCursor(payload, session),
+            // Admin: mint a Link token on the host.
+            ServerOps.BankLinkToken => BankLinkToken(session),
+            // Admin: exchange public_token and import the first batch.
+            ServerOps.BankConnect => BankConnect(payload, session),
+            // Admin: sync every linked account.
+            ServerOps.BankSync => BankSync(session),
             // Store a PDF if the caller may write invoices or purchases for that kind.
             ServerOps.PdfSave => PdfSave(payload, session),
             // PDF exists? Denied kinds look missing.
@@ -373,11 +379,11 @@ internal sealed class ServerDispatch
     /// <summary>Latest term_start as yyyy-MM-dd, or null.</summary>
     private string? LatestTerm() => _store.LatestTerm()?.ToString("yyyy-MM-dd");
 
-    /// <summary>Admin-only settings with secrets revealed.</summary>
+    /// <summary>Admin-only settings. SMTP password may be revealed; Plaid secret stays on the host.</summary>
     private Dictionary<string, string> ReadAdminSettings(ClientSession session)
     {
         RequireAdmin(session);
-        return _store.ReadSettings(revealSecrets: true);
+        return _store.ReadClientSettings(revealSmtp: true);
     }
 
     /// <summary>Admin-only settings write.</summary>
@@ -620,12 +626,36 @@ internal sealed class ServerDispatch
         return true;
     }
 
-    /// <summary>Admin-only decrypted Plaid link fields.</summary>
+    /// <summary>Admin-only Plaid link fields. Access token is stripped before the reply leaves the host.</summary>
     private BankLinkDto BankLinkGet(JsonElement payload, ClientSession session)
     {
         RequireAdmin(session);
         var request = Read<BankWriteRequest>(payload);
-        return _store.GetBankLiveLink(request.Id);
+        var link = _store.GetBankLiveLink(request.Id);
+        link.AccessToken = "";
+        return link;
+    }
+
+    /// <summary>Admin-only Link token minted with keys that never leave the host.</summary>
+    private BankLinkTokenDto BankLinkToken(ClientSession session)
+    {
+        RequireAdmin(session);
+        return PlaidLive.CreateLinkToken(_store, session.Username);
+    }
+
+    /// <summary>Admin-only public_token exchange, account insert, and first import.</summary>
+    private BankConnectResult BankConnect(JsonElement payload, ClientSession session)
+    {
+        RequireAdmin(session);
+        var request = Read<BankConnectRequest>(payload);
+        return PlaidLive.Connect(_store, request);
+    }
+
+    /// <summary>Admin-only sync of every linked Plaid account.</summary>
+    private BankSyncResult BankSync(ClientSession session)
+    {
+        RequireAdmin(session);
+        return PlaidLive.SyncAll(_store);
     }
 
     /// <summary>Admin-only write of Plaid link fields.</summary>

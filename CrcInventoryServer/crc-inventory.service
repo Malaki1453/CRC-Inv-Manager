@@ -1,0 +1,17 @@
+[Unit]
+Description=Cast Right Catch Inventory Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/crc-inventory
+Environment=DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+ExecStart=/opt/crc-inventory/CrcInventoryServer --data /var/lib/crc-inventory
+Restart=always
+RestartSec=2
+
+# Optional split folders (uncomment and create the directories first):
+# ExecStart=/opt/crc-inventory/CrcInventoryServer --data /var/lib/crc-inventory --live /var/lib/crc-inventory/live --archive /var/lib/crc-inventory/old
+
+[Install]
+WantedBy=multi-user.target

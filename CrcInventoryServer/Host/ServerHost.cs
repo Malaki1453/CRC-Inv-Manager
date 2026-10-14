@@ -11,16 +11,31 @@ namespace CrcInventory.Server;
 internal static class ServerHost
 {
     /// <summary>Binds <paramref name="bind"/>:<paramref name="port"/> and serves clients until <paramref name="cancel"/>.</summary>
+    public static Task RunAsync(
+        string dataFolder,
+        string bind,
+        int port,
+        CancellationToken cancel,
+        string? liveFolder = null,
+        string? archiveFolder = null) =>
+        RunAsync(dataFolder, bind, port, connections: null, log: null, cancel, liveFolder, archiveFolder);
+
+    /// <summary>Same as the other RunAsync, with optional connected-user tracking and status lines for the GUI.</summary>
     public static async Task RunAsync(
         string dataFolder,
         string bind,
         int port,
-        string? postgres,
-        CancellationToken cancel)
+        ConnectionHub? connections,
+        Action<string>? log,
+        CancellationToken cancel,
+        string? liveFolder = null,
+        string? archiveFolder = null)
     {
-        var store = new InventoryStore(dataFolder, postgres);
+        var store = new InventoryStore(dataFolder, liveFolder, archiveFolder);
         using var cert = ServerCert.LoadOrCreate(dataFolder, out string fingerprint);
         var dispatch = new ServerDispatch(store, fingerprint);
+        // Console / systemd has no ServerForm hub; still track sessions for --ui.
+        connections ??= new ConnectionHub();
 
         // A non-IP bind string would throw later with a poorer message.
         if (!IPAddress.TryParse(bind, out var address))
@@ -28,17 +43,22 @@ internal static class ServerHost
 
         var listener = new TcpListener(address, port);
         listener.Start();
-        Console.WriteLine("Cast Right Catch inventory server");
-        Console.WriteLine("  data         " + store.Folder);
-        Console.WriteLine("  database     " + store.EngineName);
-        Console.WriteLine("  listen       " + address + ":" + port);
-        Console.WriteLine("  fingerprint  " + fingerprint);
-        Console.WriteLine("  first IT     " + (store.HasItUser() ? "yes" : "no — run with --bootstrap on this PC"));
-        Console.WriteLine(
-            store.UsesPostgres
-                ? "Clients connect over TLS. Inventory data is Postgres (live / archive schemas)."
-                : "Clients connect over TLS. Database files stay on this machine.");
-        Console.WriteLine("Press Ctrl+C to stop.");
+        string listen = "Listening on " + address + ":" + port;
+        WriteLine(log, "Cast Right Catch inventory server");
+        WriteLine(log, "  data         " + store.Folder);
+        WriteLine(log, "  database     " + store.EngineName);
+        WriteLine(log, listen);
+        WriteLine(log, "  fingerprint  " + fingerprint);
+        WriteLine(log, "  first IT     " + (store.HasItUser() ? "yes" : "no — create an IT user first"));
+        WriteLine(log, "Clients connect over TLS. SQLite files stay on this machine.");
+        WriteLine(log, "Status board  " + StatusBoard.Url + "  (CrcInventoryServer --ui)");
+        // Console-only hosts still print how to stop.
+        if (log == null)
+            Console.WriteLine("Press Ctrl+C to stop.");
+
+        using var status = new StatusBoard(store, connections, fingerprint, listen);
+        Task statusTask = status.RunAsync(cancel);
+        Task bankSyncTask = BankSyncWatch.RunAsync(store, cancel);
 
         // Accept clients until the process is asked to stop.
         try
@@ -57,14 +77,24 @@ internal static class ServerHost
                     break;
                 }
 
-                _ = Task.Run(() => HandleClientAsync(client, cert, dispatch, cancel), cancel);
+                _ = Task.Run(() => HandleClientAsync(client, cert, dispatch, connections, cancel), cancel);
             }
         }
         // Always release the listen port, including after Ctrl+C.
         finally
         {
             listener.Stop();
+            try { await statusTask.ConfigureAwait(false); } catch (Exception) { }
+            try { await bankSyncTask.ConfigureAwait(false); } catch (Exception) { }
         }
+    }
+
+    private static void WriteLine(Action<string>? log, string line)
+    {
+        if (log != null)
+            log(line);
+        else
+            Console.WriteLine(line);
     }
 
     /// <summary>TLS handshake then request loop for one TCP client; swallows drop/auth cancel, logs other errors.</summary>
@@ -72,11 +102,17 @@ internal static class ServerHost
         TcpClient tcp,
         X509Certificate2 cert,
         ServerDispatch dispatch,
+        ConnectionHub? connections,
         CancellationToken cancel)
     {
         tcp.NoDelay = true;
-        var session = new ClientSession();
-        string remote = tcp.Client.RemoteEndPoint?.ToString() ?? "client";
+        var session = new ClientSession
+        {
+            Remote = tcp.Client.RemoteEndPoint?.ToString() ?? "client",
+            ConnectedAt = DateTime.Now
+        };
+        string remote = session.Remote;
+        connections?.Add(session);
         // Handshake and request loop; drop/auth failures are handled below.
         try
         {
@@ -116,6 +152,7 @@ internal static class ServerHost
                 {
                     // request.Op is the named ServerOps string; payload is the JSON result to frame.
                     object? payload = dispatch.Handle(request.Op, request.Payload, session);
+                    connections?.Notify();
                     await Wire.WriteAsync(ssl, Wire.Ok(request.Id, payload), cancel).ConfigureAwait(false);
                 }
                 // Per-op failures stay on this connection; only a public message is sent back.
@@ -141,6 +178,7 @@ internal static class ServerHost
         // Always close the socket so a hung client does not leak connections.
         finally
         {
+            connections?.Remove(session);
             tcp.Dispose();
         }
     }

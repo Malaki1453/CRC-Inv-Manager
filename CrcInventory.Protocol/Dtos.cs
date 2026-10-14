@@ -270,10 +270,13 @@ public sealed class BankWriteRequest
     public string? Cursor { get; set; }
 }
 
-/// <summary>Decrypted Plaid link fields for an administrator.</summary>
+/// <summary>Non-secret Plaid link fields for an administrator. Access tokens stay on the host.</summary>
 public sealed class BankLinkDto
 {
-    /// <summary>Opened Plaid access token, or empty when none is stored.</summary>
+    /// <summary>True when a live Plaid access token is stored for this account.</summary>
+    public bool Linked { get; set; }
+
+    /// <summary>Always empty on the wire. Kept so older clients deserialize.</summary>
     public string AccessToken { get; set; } = "";
 
     /// <summary>Plaid item id.</summary>
@@ -284,6 +287,83 @@ public sealed class BankLinkDto
 
     /// <summary>Last transactions cursor.</summary>
     public string Cursor { get; set; } = "";
+}
+
+/// <summary>Plaid Link token minted on the host so the desktop can open bank login.</summary>
+public sealed class BankLinkTokenDto
+{
+    /// <summary>Short-lived Plaid Link token. Not an access token.</summary>
+    public string LinkToken { get; set; } = "";
+}
+
+/// <summary>Public token and Link metadata from the desktop bank-login window.</summary>
+public sealed class BankConnectRequest
+{
+    /// <summary>One-time public_token from Plaid Link.</summary>
+    public string PublicToken { get; set; } = "";
+
+    /// <summary>Institution display name from Link metadata.</summary>
+    public string? Institution { get; set; }
+
+    /// <summary>Selected Plaid account id.</summary>
+    public string? AccountId { get; set; }
+
+    /// <summary>Selected account name.</summary>
+    public string? AccountName { get; set; }
+
+    /// <summary>Last-four mask from Link metadata.</summary>
+    public string? AccountMask { get; set; }
+}
+
+/// <summary>Result of exchanging a public token and importing the first transactions.</summary>
+public sealed class BankConnectResult
+{
+    /// <summary>bank_accounts id that now holds the live link.</summary>
+    public long Id { get; set; }
+
+    /// <summary>Account label stored for Banking.</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>How many new bank_transactions rows were imported.</summary>
+    public int Added { get; set; }
+
+    /// <summary>User-facing error; empty on success.</summary>
+    public string Error { get; set; } = "";
+}
+
+/// <summary>Result of syncing every linked Plaid account.</summary>
+public sealed class BankSyncResult
+{
+    /// <summary>How many new bank_transactions rows were imported.</summary>
+    public int Added { get; set; }
+
+    /// <summary>User-facing error; empty on success.</summary>
+    public string Error { get; set; } = "";
+}
+
+/// <summary>One parsed bank line before it is written to bank_transactions.</summary>
+public sealed class BankTxnDto
+{
+    /// <summary>Posted date.</summary>
+    public DateTime Date { get; set; }
+
+    /// <summary>Signed amount; deposits are positive.</summary>
+    public decimal Amount { get; set; }
+
+    /// <summary>Memo / merchant text.</summary>
+    public string Description { get; set; } = "";
+
+    /// <summary>Check number or other bank reference.</summary>
+    public string Reference { get; set; } = "";
+
+    /// <summary>Payment method label (Plaid, OFX type, …).</summary>
+    public string Method { get; set; } = "";
+
+    /// <summary>Bank or Plaid unique line id.</summary>
+    public string ExternalId { get; set; } = "";
+
+    /// <summary>Deposit or Withdrawal.</summary>
+    public string Type { get; set; } = "";
 }
 
 /// <summary>Lookup or write of a stored PDF by kind and document key.</summary>

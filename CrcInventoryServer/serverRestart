@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+systemctl restart crc-inventory
+echo "crc-inventory restarted."
+systemctl --no-pager --full status crc-inventory
