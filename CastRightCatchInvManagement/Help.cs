@@ -62,7 +62,7 @@ namespace CastRightCatchInvManagement
                 "A loading window with a spinner shows while the app is opening data. If the main window is slow to appear, that spinner means it is still working.",
                 "After sign-in you land on Home, a full-area image with no buttons. Click the logo in the top-left of the sidebar to return there.",
                 DataLink.UseInventoryServer
-                    ? "Connect to the inventory server (enter its IP address) before the rest of the workspace unlocks. A local data folder is still available if you need it."
+                    ? "Connect to the inventory server before the rest of the workspace unlocks. Inventory data lives on that host, not in a folder on this PC."
                     : "Choose a data folder before the rest of the workspace unlocks.",
                 "Green and red notices appear in the bottom-right. They close on their own or with ×.");
 

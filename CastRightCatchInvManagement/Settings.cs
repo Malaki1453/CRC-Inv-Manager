@@ -152,7 +152,7 @@ namespace CastRightCatchInvManagement
         {
             var heading = new Label
             {
-                Text = DataLink.IsRemote ? "Inventory server && term" : "Data folder && term",
+                Text = DataLink.UseInventoryServer ? "Inventory server && term" : "Data folder && term",
                 Font = Theme.SectionTitle,
                 ForeColor = Theme.Navy,
                 Location = new Point(24, 14),
@@ -173,6 +173,7 @@ namespace CastRightCatchInvManagement
             card.Controls.Add(note);
 
             Theme.StyleFieldLabel(lblFolder);
+            lblFolder.Text = DataLink.UseInventoryServer ? "INVENTORY SERVER" : "DATA FOLDER PATH";
             Theme.StyleField(txtFolderPath);
             Theme.StyleNavyButton(btnChangeFolder);
             Theme.StyleOutlineButton(btnRollToNextTerm);
@@ -760,9 +761,10 @@ namespace CastRightCatchInvManagement
             txtFolderPath.BackColor = ready ? Theme.Paper : Theme.DangerFill;
             txtFolderPath.ForeColor = ready ? Theme.Ink : Theme.Danger;
 
-            // Highlight the missing folder so they click Change Folder.
             if (!ready)
-                txtFolderPath.Text = "No folder selected — click Change Folder";
+                txtFolderPath.Text = DataLink.UseInventoryServer
+                    ? "Not connected to the inventory server"
+                    : "No folder selected — click Change Folder";
 
             btnChangeFolder.Enabled = !DataLink.UseInventoryServer;
             btnChangeFolder.Visible = !DataLink.UseInventoryServer;
@@ -821,8 +823,8 @@ namespace CastRightCatchInvManagement
             if (!AppLock.HasFolder())
             {
                 MessageBox.Show(
-                    "Select a data folder first.",
-                    "No Folder",
+                    AppLock.NeedStoreMessage(),
+                    "Roll to Next Term",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
                 return;

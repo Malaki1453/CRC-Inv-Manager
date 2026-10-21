@@ -20,16 +20,24 @@ namespace CastRightCatchInvManagement
 
         private static bool _loadingShared;
 
-        /// <summary>True when a shared folder exists locally or this PC is connected to the server.</summary>
+        /// <summary>
+        /// True when this PC can use inventory data. Hosted builds only check a live
+        /// server session. The local-SQLite build still needs a folder on disk.
+        /// </summary>
         public static bool HasFolder()
         {
-            // Remote clients have no local inventory folder; the server is the lock.
-            if (DataLink.IsRemote)
-                return true;
+            if (DataLink.UseInventoryServer)
+                return DataLink.IsRemote;
 
             return !string.IsNullOrWhiteSpace(AppState.InventoryFolder) &&
                    Directory.Exists(AppState.InventoryFolder);
         }
+
+        /// <summary>User-facing hint when HasFolder is false.</summary>
+        public static string NeedStoreMessage() =>
+            DataLink.UseInventoryServer
+                ? "Connect to the inventory server first."
+                : "Select a data folder in Settings first.";
 
         /// <summary>Read this PC's last folder or server host from the local JSON file.</summary>
         public static void LoadSavedFolder()
@@ -48,8 +56,10 @@ namespace CastRightCatchInvManagement
                 if (settings == null)
                     return;
 
-                // Only restore a folder that still exists on disk.
-                if (!string.IsNullOrWhiteSpace(settings.InventoryFolder) &&
+                // Hosted builds never use a local inventory folder, even if an old path is in JSON.
+                if (DataLink.UseInventoryServer)
+                    AppState.InventoryFolder = null;
+                else if (!string.IsNullOrWhiteSpace(settings.InventoryFolder) &&
                     Directory.Exists(settings.InventoryFolder))
                 {
                     AppState.InventoryFolder = settings.InventoryFolder;
@@ -119,6 +129,10 @@ namespace CastRightCatchInvManagement
         /// <summary>Point this PC at a shared folder and drop any server connection.</summary>
         public static void SaveFolder(string folder)
         {
+            // Hosted builds have no local inventory folder.
+            if (DataLink.UseInventoryServer)
+                return;
+
             AppState.UseServer = false;
             AppState.InventoryFolder = folder;
             DataLink.Disconnect();
@@ -150,7 +164,7 @@ namespace CastRightCatchInvManagement
             }
 
             // Skip the shared write while LoadSharedSettings is applying rows (avoids a loop).
-            if (!_loadingShared && (HasFolder() || DataLink.IsRemote))
+            if (!_loadingShared && HasFolder())
             {
                 try
                 {
@@ -205,14 +219,14 @@ namespace CastRightCatchInvManagement
         /// <summary>Tell open windows that folder or company settings changed.</summary>
         public static void NotifyChanged() => Changed?.Invoke();
 
-        /// <summary>Disable nav buttons until a data folder or server is available; Settings stays enabled.</summary>
+        /// <summary>Disable nav buttons until the store is available; Settings stays enabled.</summary>
         public static void ApplyNavLock(params Button[] buttons)
         {
             bool unlocked = HasFolder();
 
             foreach (var btn in buttons)
             {
-                // Settings must stay clickable so a folder can still be chosen.
+                // Settings stays clickable so a disconnected session can still open it.
                 if (btn.Name == "btnSettings")
                     continue;
 
@@ -225,7 +239,7 @@ namespace CastRightCatchInvManagement
         {
             var settings = new AppSettings
             {
-                InventoryFolder = AppState.InventoryFolder,
+                InventoryFolder = DataLink.UseInventoryServer ? null : AppState.InventoryFolder,
                 UseServer = AppState.UseServer,
                 ServerHost = AppState.ServerHost,
                 ServerPort = AppState.ServerPort,

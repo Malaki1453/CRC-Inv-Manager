@@ -38,8 +38,9 @@ namespace CastRightCatchInvManagement
         /// <summary>admins.json in the shared inventory folder, or null when no folder is set.</summary>
         public static string? GetFilePath()
         {
-            // Roles live with the database; a missing folder means we cannot read them yet.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) ||
+            // Hosted builds read roles over the wire. Local-SQLite still needs the shared folder.
+            if (DataLink.UseInventoryServer ||
+                string.IsNullOrWhiteSpace(AppState.InventoryFolder) ||
                 !Directory.Exists(AppState.InventoryFolder))
                 return null;
 

@@ -35,6 +35,9 @@ namespace CastRightCatchInvManagement
         /// <summary>Full path of crc_inventory.db, or null when no inventory folder is selected.</summary>
         public static string? GetPath()
         {
+            // Hosted builds never open a local database file.
+            if (DataLink.UseInventoryServer)
+                return null;
             // AppState.InventoryFolder is blank or not on disk; no live database path to return.
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) ||
                 !Directory.Exists(AppState.InventoryFolder))
@@ -46,6 +49,9 @@ namespace CastRightCatchInvManagement
         /// <summary>Full path of old_inventory.db, or null when no inventory folder is selected.</summary>
         public static string? GetArchivePath()
         {
+            // Hosted builds never open a local archive file.
+            if (DataLink.UseInventoryServer)
+                return null;
             // AppState.InventoryFolder is blank or not on disk; no archive database path to return.
             if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) ||
                 !Directory.Exists(AppState.InventoryFolder))
@@ -57,9 +63,9 @@ namespace CastRightCatchInvManagement
         /// <summary>True when the live database file exists, or when a remote session is connected.</summary>
         public static bool Exists()
         {
-            // Remote clients talk to the server, so treat the inventory as present without a local file.
-            if (DataLink.IsRemote)
-                return true;
+            // Hosted builds talk to the server; treat the inventory as present only while connected.
+            if (DataLink.UseInventoryServer)
+                return DataLink.IsRemote;
             // path: full filesystem path of crc_inventory.db, or null if no folder is selected.
             string? path = GetPath();
             return path != null && File.Exists(path);
@@ -68,12 +74,15 @@ namespace CastRightCatchInvManagement
         /// <summary>Create both database files and any missing tables or columns.</summary>
         public static void EnsureCreated()
         {
+            // Hosted builds ask the server to create tables and never write local SQLite files.
+            if (DataLink.UseInventoryServer)
+            {
+                DataLink.Try(ServerOps.TableEnsure, new { }, out bool _);
+                return;
+            }
             // Point SecretProtect at this folder so sealed values use the same DPAPI scope as the files.
             if (!string.IsNullOrWhiteSpace(AppState.InventoryFolder))
                 SecretProtect.UseFolder(AppState.InventoryFolder);
-            // Server already created tables; skip the local live/archive files.
-            if (DataLink.Try(ServerOps.TableEnsure, new { }, out bool _))
-                return;
             EnsureCreated(archive: false);
             EnsureCreated(archive: true);
         }
@@ -295,8 +304,8 @@ namespace CastRightCatchInvManagement
         /// <summary>Load leftover table_*.csv files into empty tables so a first open keeps old spreadsheet data.</summary>
         public static void ImportCsvsIfEmpty()
         {
-            // Remote clients have no leftover CSV files on this PC.
-            if (DataLink.IsRemote)
+            // Hosted builds have no leftover CSV files on this PC.
+            if (DataLink.UseInventoryServer)
                 return;
             // No inventory folder selected, so there is nowhere to look for CSVs.
             if (GetPath() == null)
@@ -352,6 +361,14 @@ namespace CastRightCatchInvManagement
             // headers: visible column names from the server (id/term_start/dropped leftovers already omitted).
             if (DataLink.Try(ServerOps.TableHeaders, DataLink.Table(table), out string[]? headers) && headers != null)
                 return headers;
+            // Remote clients have no local table to inspect; fall back to the schema header list.
+            if (DataLink.IsRemote)
+            {
+                return DataFiles.GetExpectedHeader(table).Split(',')
+                    .Select(h => h.Trim())
+                    .Where(h => h.Length > 0)
+                    .ToArray();
+            }
             EnsureCreated();
             var expected = DataFiles.GetExpectedHeader(table).Split(',')
                 .Select(h => h.Trim())
@@ -433,6 +450,9 @@ namespace CastRightCatchInvManagement
             if (DataLink.Try(ServerOps.TableRead, DataLink.Table(table), out List<Dictionary<string, string>>? rows) &&
                 rows != null)
                 return rows;
+            // Remote clients have no local SQLite file; an empty list is the failed-read result.
+            if (DataLink.IsRemote)
+                return new List<Dictionary<string, string>>();
             EnsureCreated();
             var result = new List<Dictionary<string, string>>();
             // Old toggle is on for a process table; include archived rows before live rows.
@@ -458,6 +478,9 @@ namespace CastRightCatchInvManagement
             {
                 return remote.Select(row => (row.Id, row.Fields ?? new Dictionary<string, string>())).ToList();
             }
+            // Remote clients have no local SQLite file; an empty list is the failed-read result.
+            if (DataLink.IsRemote)
+                return new List<(long, Dictionary<string, string>)>();
             EnsureCreated();
             var result = new List<(long, Dictionary<string, string>)>();
             // Old toggle is on; prepend archive rows (negative ids) then live rows.
@@ -506,8 +529,8 @@ namespace CastRightCatchInvManagement
             DateTime? term = null)
         {
             // Remote session: bulk insert on the server and return how many it wrote.
-            if (DataLink.Try(ServerOps.TableInsertMany, DataLink.Table(table, rows: rows, term: term), out int inserted))
-                return inserted;
+            if (DataLink.IsRemote)
+                return DataLink.Call<int>(ServerOps.TableInsertMany, DataLink.Table(table, rows: rows, term: term));
             EnsureCreated();
             EnsureTerm();
             var headers = Headers(table);
@@ -546,8 +569,8 @@ namespace CastRightCatchInvManagement
         public static bool UpdateById(string table, long id, Dictionary<string, string> values)
         {
             // Remote session: the server routes live vs archive from the signed id.
-            if (DataLink.Try(ServerOps.TableUpdate, DataLink.Table(table, values, id), out bool updated))
-                return updated;
+            if (DataLink.IsRemote)
+                return DataLink.Call<bool>(ServerOps.TableUpdate, DataLink.Table(table, values, id));
             EnsureCreated();
             bool archive = IsArchiveRowId(id);
             long rawId = DecodeRowId(id);
@@ -617,6 +640,9 @@ namespace CastRightCatchInvManagement
             // Remote session: use the server's count for this table and term filter.
             if (DataLink.Try(ServerOps.TableCount, DataLink.Table(table, currentTermOnly: currentTermOnly), out int count))
                 return count;
+            // Remote clients have no local SQLite file; 0 is the failed-count result.
+            if (DataLink.IsRemote)
+                return 0;
             EnsureCreated();
             _ = currentTermOnly;
             int total = CountIn(table, archive: false);
@@ -632,8 +658,8 @@ namespace CastRightCatchInvManagement
         public static int ArchiveCompleted(DateTime? term = null)
         {
             // Remote session: the server moves completed process rows into Old Inventory.
-            if (DataLink.Try(ServerOps.TableArchive, DataLink.Table("", term: term), out int movedRemote))
-                return movedRemote;
+            if (DataLink.IsRemote)
+                return DataLink.Call<int>(ServerOps.TableArchive, DataLink.Table("", term: term));
             EnsureCreated();
             string fallbackTerm = (term ?? AppState.TermStartDate ?? DateTime.Today).ToString("yyyy-MM-dd");
             int moved = 0;
@@ -689,6 +715,9 @@ namespace CastRightCatchInvManagement
             // Remote session: parse the server's newest term_start, or null if it is blank.
             if (DataLink.Try(ServerOps.TableLatestTerm, new { }, out string? text))
                 return DateTime.TryParse(text, out var parsed) ? parsed : null;
+            // Remote clients have no local SQLite file; there is no term to restore.
+            if (DataLink.IsRemote)
+                return null;
             // Live database file is missing; there is no term to restore.
             if (!Exists())
                 return null;
@@ -816,6 +845,9 @@ namespace CastRightCatchInvManagement
             if (DataLink.Try(ServerOps.PrefsRead, new { }, out Dictionary<string, string>? remote) &&
                 remote != null)
                 return remote;
+            // Remote clients have no local app_prefs table.
+            if (DataLink.IsRemote)
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             EnsureCreated();
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             using var db = Open();
@@ -2776,8 +2808,8 @@ namespace CastRightCatchInvManagement
         /// <summary>Import leftover invoice and sales-order PDFs from disk folders into stored_pdfs.</summary>
         public static void ImportPdfsFromFolders()
         {
-            // Remote clients have no leftover PDF folders on this PC.
-            if (DataLink.IsRemote)
+            // Hosted builds have no leftover PDF folders on this PC.
+            if (DataLink.UseInventoryServer)
                 return;
             // No inventory folder selected; nowhere to look for leftover PDFs.
             if (GetPath() == null)
@@ -3045,7 +3077,7 @@ namespace CastRightCatchInvManagement
             string? path = archive ? GetArchivePath() : GetPath();
             // No inventory folder selected; cannot open either database file.
             if (path == null)
-                throw new InvalidOperationException("Select a data folder first.");
+                throw new InvalidOperationException(AppLock.NeedStoreMessage());
 
             bool shared = IsSharedLocation(AppState.InventoryFolder);
             var db = new SqliteConnection(new SqliteConnectionStringBuilder

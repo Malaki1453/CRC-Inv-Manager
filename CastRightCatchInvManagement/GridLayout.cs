@@ -16,9 +16,8 @@ namespace CastRightCatchInvManagement
         /// <summary>Restore this user's last visible columns and order for the table, if any.</summary>
         public static void Apply(DataGridView grid, string baseName)
         {
-            // No table or folder means there is nothing to restore.
-            if (string.IsNullOrWhiteSpace(baseName) ||
-                string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            // No table, folder, or live server session means there is nothing to restore.
+            if (string.IsNullOrWhiteSpace(baseName) || !AppLock.HasFolder())
                 return;
 
             var names = Load(baseName);
@@ -53,10 +52,10 @@ namespace CastRightCatchInvManagement
             // Ignore events fired while ApplyNames is rearranging columns.
             if (_applying)
                 return false;
-            // Need a ColumnSearch tag, table name, and inventory folder to write the default layout.
+            // Need a ColumnSearch tag, table name, and a local folder or live server session to write the default layout.
             if (grid.Tag is not ColumnSearch search ||
                 string.IsNullOrWhiteSpace(search.FileBaseName) ||
-                string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+                !AppLock.HasFolder())
                 return false;
             // Layout defaults belong to a signed-in user, not a locked kiosk.
             if (!AppState.SignedIn)
@@ -88,10 +87,10 @@ namespace CastRightCatchInvManagement
             // Ignore events fired while ApplyNames is rearranging columns.
             if (_applying)
                 return;
-            // Need a ColumnSearch tag, table name, and inventory folder to persist the current layout.
+            // Need a ColumnSearch tag, table name, and a local folder or live server session to persist the current layout.
             if (grid.Tag is not ColumnSearch search ||
                 string.IsNullOrWhiteSpace(search.FileBaseName) ||
-                string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+                !AppLock.HasFolder())
                 return;
 
             var names = VisibleNames(grid);

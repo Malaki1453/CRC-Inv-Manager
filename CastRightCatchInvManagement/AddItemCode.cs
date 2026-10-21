@@ -219,7 +219,7 @@ namespace CastRightCatchInvManagement
         {
             if (!AppLock.HasFolder())
             {
-                MessageBox.Show("Select a data folder in Settings first.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(AppLock.NeedStoreMessage(), Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
 

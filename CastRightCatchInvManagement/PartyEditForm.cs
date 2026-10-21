@@ -347,7 +347,7 @@ namespace CastRightCatchInvManagement
             // Cannot write a party without a database.
             if (!AppLock.HasFolder())
             {
-                MessageBox.Show("Select a data folder in Settings first.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(AppLock.NeedStoreMessage(), Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
 

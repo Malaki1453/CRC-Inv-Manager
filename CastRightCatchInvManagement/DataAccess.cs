@@ -384,8 +384,8 @@ namespace CastRightCatchInvManagement
             BlockedKeys.Clear();
             foreach (var seed in BlockedCompanies)
                 BlockedKeys.Add(seed);
-            // Nothing to expand without seeds or a database to read related codes from.
-            if (BlockedKeys.Count == 0 || string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            // Nothing to expand without seeds or a local folder / live server session to read related codes from.
+            if (BlockedKeys.Count == 0 || !AppLock.HasFolder())
                 return;
 
             Absorb(DataFiles.ReadAllRecords(DataFiles.Customers), PartyFields);

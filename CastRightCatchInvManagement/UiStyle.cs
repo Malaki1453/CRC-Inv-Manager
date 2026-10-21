@@ -575,7 +575,9 @@ namespace CastRightCatchInvManagement
         {
             // No folder or server yet: explain why tables are locked.
             if (!AppLock.HasFolder())
-                return "Select a data folder in Settings to unlock the workspace";
+                return DataLink.UseInventoryServer
+                    ? "Connect to the inventory server to unlock the workspace"
+                    : "Select a data folder in Settings to unlock the workspace";
 
             string term = AppState.ViewingOldInventory
                 ? "All inventory"
@@ -584,9 +586,12 @@ namespace CastRightCatchInvManagement
                     : "Term not set";
 
             string? file = DataFiles.GetDisplayedFileName(page);
-            // Chrome pages (Home/Help) have no table file; show the folder name instead.
+            // Chrome pages (Home/Help) have no table file; show the host or folder name instead.
+            string place = DataLink.IsRemote
+                ? DataLink.DefaultHost
+                : Path.GetFileName(AppState.InventoryFolder ?? "");
             return string.IsNullOrWhiteSpace(file)
-                ? $"{term}  ·  {Path.GetFileName(AppState.InventoryFolder)}"
+                ? $"{term}  ·  {place}"
                 : $"{term}  ·  {file}";
         }
     }

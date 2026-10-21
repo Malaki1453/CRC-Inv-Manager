@@ -69,28 +69,39 @@ namespace CastRightCatchInvManagement
             return $"{baseName}_{start:yyyy-MM-dd}.csv";
         }
 
+        /// <summary>True when this PC has a local leftover-CSV folder (local-SQLite build only).</summary>
+        private static bool UsingLocalFolder() =>
+            !DataLink.UseInventoryServer &&
+            !string.IsNullOrWhiteSpace(AppState.InventoryFolder) &&
+            Directory.Exists(AppState.InventoryFolder);
+
         /// <summary>Full path of that leftover CSV inside the chosen inventory folder.</summary>
         public static string GetPath(string baseName)
         {
-            // InventoryFolder is blank: there is no directory to combine with the leftover CSV name.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
-                throw new InvalidOperationException("No data folder has been selected.");
+            // Hosted builds keep inventory files on the server; leftover CSVs are local-SQLite only.
+            if (!UsingLocalFolder())
+                throw new InvalidOperationException(AppLock.NeedStoreMessage());
 
-            return Path.Combine(AppState.InventoryFolder, GetFileName(baseName));
+            return Path.Combine(AppState.InventoryFolder!, GetFileName(baseName));
         }
+
+        /// <summary>True when a live server session (or a local folder in the local-SQLite build) can serve inventory tables.</summary>
+        public static bool HasStore() => AppLock.HasFolder();
 
         /// <summary>True when the live database exists locally, or when a remote session is connected.</summary>
         public static bool Exists(string baseName)
         {
-            // Remote clients never see a folder file; the server owns the tables.
-            if (DataLink.IsRemote)
+            // Hosted builds never look for a local folder; the server owns the tables.
+            if (DataLink.UseInventoryServer)
             {
+                if (!DataLink.IsRemote)
+                    return false;
                 SqliteInventory.EnsureCreated();
                 return true;
             }
 
             // InventoryFolder is blank in local mode: no database file can exist until a folder is chosen.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            if (!UsingLocalFolder())
                 return false;
 
             SqliteInventory.EnsureCreated();
@@ -100,12 +111,11 @@ namespace CastRightCatchInvManagement
         /// <summary>Newest leftover CSV for this table in the folder, by parsed term date.</summary>
         public static string? FindCurrentFile(string baseName)
         {
-            // InventoryFolder is blank or missing: GetFiles would throw and leftover CSVs cannot exist.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) ||
-                !Directory.Exists(AppState.InventoryFolder))
+            // Hosted builds and a missing local folder: leftover CSVs cannot exist.
+            if (!UsingLocalFolder())
                 return null;
 
-            var matches = Directory.GetFiles(AppState.InventoryFolder, baseName + "_*.csv");
+            var matches = Directory.GetFiles(AppState.InventoryFolder!, baseName + "_*.csv");
 
             DateTime bestDate = DateTime.MinValue;
             // Newest leftover CSV whose name parsed as table_yyyy-MM-dd.csv.
@@ -135,14 +145,12 @@ namespace CastRightCatchInvManagement
             DateTime? latest = SqliteInventory.LatestTerm();
 
             // Empty new databases still inherit a term from leftover CSVs in the folder.
-            if (latest == null &&
-                !string.IsNullOrWhiteSpace(AppState.InventoryFolder) &&
-                Directory.Exists(AppState.InventoryFolder))
+            if (latest == null && UsingLocalFolder())
             {
                 foreach (var baseName in All)
                 {
                     // path is a leftover CSV for this table that may still encode a term date.
-                    foreach (var path in Directory.GetFiles(AppState.InventoryFolder, baseName + "_*.csv"))
+                    foreach (var path in Directory.GetFiles(AppState.InventoryFolder!, baseName + "_*.csv"))
                     {
                         // Name parses and is newer than the current latest: inherit the newest leftover term.
                         if (TryParseStartDate(Path.GetFileName(path), baseName, out var date) &&
@@ -238,11 +246,11 @@ namespace CastRightCatchInvManagement
         /// <summary>Folder for leftover invoice PDFs next to the database, or null if no folder is chosen.</summary>
         public static string? GetStoredInvoicesFolder()
         {
-            // InventoryFolder is blank: Stored Invoices lives next to the database, so there is no path.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            // Hosted builds store PDFs in the server database, not a local folder.
+            if (!UsingLocalFolder())
                 return null;
 
-            return Path.Combine(AppState.InventoryFolder, StoredInvoicesFolderName);
+            return Path.Combine(AppState.InventoryFolder!, StoredInvoicesFolderName);
         }
 
         /// <summary>Create the Stored Invoices folder when a data folder is selected.</summary>
@@ -427,8 +435,8 @@ namespace CastRightCatchInvManagement
             // Document number is blank: an empty key would match the wrong PDF or every leftover.
             if (key.Length == 0)
                 return null;
-            // Local session with no folder: there is no database and no leftover folder to search (remote still has the server DB).
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) && !DataLink.IsRemote)
+            // No live server session (or local folder in the local-SQLite build): nothing to search.
+            if (!HasStore())
                 return null;
 
             // Database blob and filename if this kind+key was already imported.
@@ -700,11 +708,11 @@ namespace CastRightCatchInvManagement
         /// <summary>Folder for leftover sales-order PDFs next to the database, or null if no folder is chosen.</summary>
         public static string? GetStoredSalesOrdersFolder()
         {
-            // InventoryFolder is blank: leftover sales-order PDFs live next to the database.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            // Hosted builds store PDFs in the server database, not a local folder.
+            if (!UsingLocalFolder())
                 return null;
 
-            return Path.Combine(AppState.InventoryFolder, StoredSalesOrdersFolderName);
+            return Path.Combine(AppState.InventoryFolder!, StoredSalesOrdersFolderName);
         }
 
         /// <summary>Create the Stored Sales Orders folder when a data folder is selected.</summary>
@@ -722,15 +730,16 @@ namespace CastRightCatchInvManagement
         /// <summary>Create the database, import leftover CSVs/PDFs, and default the term date if needed.</summary>
         public static void EnsureFilesExistOrAsk()
         {
-            // This client talks to a server: do not create local folders/CSVs; the server already owns the DB.
-            if (DataLink.IsRemote)
+            // Hosted builds never create local folders/CSVs; the server already owns the DB.
+            if (DataLink.UseInventoryServer)
             {
-                SqliteInventory.EnsureCreated();
+                if (DataLink.IsRemote)
+                    SqliteInventory.EnsureCreated();
                 return;
             }
 
             // No local folder chosen: EnsureCreated/Import would have nowhere to put files.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            if (!UsingLocalFolder())
                 return;
 
             Accounts.EnsureFile();
@@ -761,32 +770,32 @@ namespace CastRightCatchInvManagement
         /// </summary>
         public static void RollToNextTerm()
         {
-            // No folder or the folder is gone: archiving CSVs and old_inventory.db needs a real directory.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) ||
-                !Directory.Exists(AppState.InventoryFolder))
-            {
-                throw new InvalidOperationException("No data folder is selected.");
-            }
+            if (!HasStore())
+                throw new InvalidOperationException(AppLock.NeedStoreMessage());
 
             SyncTermStartFromFiles();
 
             DateTime start = AppState.TermStartDate ?? DateTime.Today;
             DateTime end = DateTime.Today;
 
-            string archiveFolder = Path.Combine(AppState.InventoryFolder, "old data");
-            Directory.CreateDirectory(archiveFolder);
-
-            foreach (var baseName in All)
+            // Local-SQLite leftover CSVs move into old data next to the database. Hosted builds skip this.
+            if (UsingLocalFolder())
             {
-                // currentPath is a leftover live CSV about to be moved into old data.
-                foreach (var currentPath in Directory.GetFiles(AppState.InventoryFolder, baseName + "_*.csv"))
+                string archiveFolder = Path.Combine(AppState.InventoryFolder!, "old data");
+                Directory.CreateDirectory(archiveFolder);
+
+                foreach (var baseName in All)
                 {
-                    string archivedName = $"{baseName}_{start:yyyy-MM-dd}_{end:yyyy-MM-dd}.csv";
-                    string archivePath = Path.Combine(archiveFolder, Path.GetFileName(currentPath));
-                    // Leftover CSV already sits in old data under that name: File.Move would fail on an existing dest.
-                    if (File.Exists(archivePath))
-                        File.Delete(archivePath);
-                    File.Move(currentPath, archivePath);
+                    // currentPath is a leftover live CSV about to be moved into old data.
+                    foreach (var currentPath in Directory.GetFiles(AppState.InventoryFolder!, baseName + "_*.csv"))
+                    {
+                        string archivedName = $"{baseName}_{start:yyyy-MM-dd}_{end:yyyy-MM-dd}.csv";
+                        string archivePath = Path.Combine(archiveFolder, Path.GetFileName(currentPath));
+                        // Leftover CSV already sits in old data under that name: File.Move would fail on an existing dest.
+                        if (File.Exists(archivePath))
+                            File.Delete(archivePath);
+                        File.Move(currentPath, archivePath);
+                    }
                 }
             }
 
@@ -844,8 +853,8 @@ namespace CastRightCatchInvManagement
         /// <summary>Visible rows for a table, adding newer customer/vendor columns when missing.</summary>
         public static List<Dictionary<string, string>> ReadRecords(string baseName)
         {
-            // InventoryFolder is blank: Read would fail; empty list is safer for grids.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            // No local folder and no live server session: Read would fail; empty list is safer for grids.
+            if (!HasStore())
                 return new List<Dictionary<string, string>>();
 
             // Reading customers: older DBs lack Address/Email/etc.; add those columns before Read.
@@ -865,8 +874,8 @@ namespace CastRightCatchInvManagement
         /// <summary>Every row, including blocked ones. Used for numbering and unique-code checks.</summary>
         public static List<Dictionary<string, string>> ReadAllRecords(string baseName)
         {
-            // InventoryFolder is blank: unrestricted read still needs a database path.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            // No local folder and no live server session: unrestricted read still needs a store.
+            if (!HasStore())
                 return new List<Dictionary<string, string>>();
             return SqliteInventory.ReadUnrestricted(baseName);
         }
@@ -2091,8 +2100,8 @@ namespace CastRightCatchInvManagement
             Func<Dictionary<string, string>, bool> match,
             Action<Dictionary<string, string>> mutate)
         {
-            // InventoryFolder is blank: nothing to update; ReadWithIds would fail.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            // No local folder and no live server session: nothing to update; ReadWithIds would fail.
+            if (!HasStore())
                 return 0;
 
             int updated = 0;
@@ -3247,8 +3256,8 @@ namespace CastRightCatchInvManagement
             Func<Dictionary<string, string>, bool> match,
             IReadOnlyList<string> fields)
         {
-            // InventoryFolder is blank: cannot update without a database.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            // No local folder and no live server session: cannot update without a store.
+            if (!HasStore())
                 return false;
 
             var header = SqliteInventory.Headers(baseName);
@@ -3593,8 +3602,8 @@ namespace CastRightCatchInvManagement
         /// <summary>Row count for a table in the current view, or 0 when no folder is selected.</summary>
         public static int CountDataRows(string baseName)
         {
-            // InventoryFolder is blank: Count would fail; 0 is the empty-state count.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            // No local folder and no live server session: Count would fail; 0 is the empty-state count.
+            if (!HasStore())
                 return 0;
 
             return SqliteInventory.Count(baseName);
@@ -3630,8 +3639,8 @@ namespace CastRightCatchInvManagement
                 EnsurePurchaseColumns();
 
             var data = new GridFillData();
-            // No folder or table/db missing: cannot read headers/rows; ApplyGridFill shows "Select a data folder".
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder) || !Exists(baseName))
+            // No local folder, no live server session, or table/db missing: ApplyGridFill shows the empty-store hint.
+            if (!HasStore() || !Exists(baseName))
             {
                 data.NoFolder = true;
                 return data;
@@ -3674,7 +3683,9 @@ namespace CastRightCatchInvManagement
                 if (data.NoFolder)
                 {
                     grid.Columns.Add("Status", "Status");
-                    grid.Rows.Add("Select a data folder in Settings");
+                    grid.Rows.Add(DataLink.UseInventoryServer
+                        ? "Not connected to the inventory server"
+                        : "Select a data folder in Settings");
                     return;
                 }
 
@@ -3757,10 +3768,10 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
-            // No data folder: InsertMany needs the database.
-            if (string.IsNullOrWhiteSpace(AppState.InventoryFolder))
+            // No local folder and no live server session: InsertMany needs the store.
+            if (!HasStore())
             {
-                message = "Select a data folder in Settings first.";
+                message = AppLock.NeedStoreMessage();
                 return false;
             }
 

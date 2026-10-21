@@ -1041,10 +1041,9 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void CreateSalesOrder(bool keepCustomer = false)
         {
-            // Sales are stored in the chosen data folder.
             if (!AppLock.HasFolder())
             {
-                ToastAlert.Error(this, "Select a data folder in Settings first.");
+                ToastAlert.Error(this, AppLock.NeedStoreMessage());
                 return;
             }
 

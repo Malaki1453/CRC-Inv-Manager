@@ -393,11 +393,14 @@ namespace CastRightCatchInvManagement
         {
             bool serverUi = _serverCard.Visible;
             bool ready = AppLock.HasFolder();
-            _folder.Text = !string.IsNullOrWhiteSpace(AppState.InventoryFolder)
-                ? AppState.InventoryFolder
-                : "No folder selected — click Change";
-            _folder.BackColor = Directory.Exists(AppState.InventoryFolder ?? "") ? Theme.Paper : Theme.DangerFill;
-            _folder.ForeColor = Directory.Exists(AppState.InventoryFolder ?? "") ? Theme.Ink : Theme.Danger;
+            if (!DataLink.UseInventoryServer)
+            {
+                _folder.Text = !string.IsNullOrWhiteSpace(AppState.InventoryFolder)
+                    ? AppState.InventoryFolder
+                    : "No folder selected — click Change";
+                _folder.BackColor = Directory.Exists(AppState.InventoryFolder ?? "") ? Theme.Paper : Theme.DangerFill;
+                _folder.ForeColor = Directory.Exists(AppState.InventoryFolder ?? "") ? Theme.Ink : Theme.Danger;
+            }
 
             // Server card is showing: connect first, then sign in over TLS (not local SQLite).
             if (serverUi)

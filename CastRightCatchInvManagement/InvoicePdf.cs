@@ -1742,12 +1742,11 @@ namespace CastRightCatchInvManagement
         /// </summary>
         private void CreateInvoice(bool stayOnForm = false)
         {
-            // Invoices are stored in the chosen data folder.
             if (!AppLock.HasFolder())
             {
                 MessageBox.Show(
-                    "Select a data folder in Settings first.",
-                    "No Folder",
+                    AppLock.NeedStoreMessage(),
+                    Text,
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
                 return;

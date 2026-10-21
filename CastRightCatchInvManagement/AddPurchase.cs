@@ -458,10 +458,9 @@ namespace CastRightCatchInvManagement
         /// <summary>Insert or update one purchases row per product line, then refresh the PO PDF.</summary>
         private void SavePurchase(bool keepVendor = false)
         {
-            // Purchases are stored in the chosen data folder.
             if (!AppLock.HasFolder())
             {
-                ToastAlert.Error(this, "Select a data folder in Settings first.");
+                ToastAlert.Error(this, AppLock.NeedStoreMessage());
                 return;
             }
 
