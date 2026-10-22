@@ -1400,25 +1400,26 @@ namespace CastRightCatchInvManagement
         }
     }
 
-    /// <summary>Icon Back / Forward next to the page title. Hidden with the header on Home.</summary>
+    /// <summary>Icon Back / Forward / Refresh next to the page title. Hidden with the header on Home.</summary>
     internal sealed class NavHistoryBar : Panel
     {
         private readonly Workspace _workspace;
         private readonly HistoryIconButton _back;
         private readonly HistoryIconButton _forward;
+        private readonly HistoryIconButton _refresh;
         private readonly ToolTip _tips = new() { ShowAlways = true };
 
-        /// <summary>Back and Forward chevrons bound to this workspace's history stacks.</summary>
+        /// <summary>Back, Forward, and Refresh icons bound to this workspace.</summary>
         public NavHistoryBar(Workspace workspace)
         {
             _workspace = workspace;
-            Width = 92;
-            MinimumSize = new Size(84, 40);
+            Width = 140;
+            MinimumSize = new Size(128, 40);
             BackColor = Theme.Paper;
             Padding = new Padding(16, 20, 8, 16);
             Theme.EnableDoubleBuffer(this);
 
-            _back = new HistoryIconButton(back: true);
+            _back = new HistoryIconButton(HistoryIconKind.Back);
             _back.Click += (_, _) =>
             {
                 // Gold/usable only when this window has back history; faded clicks are ignored.
@@ -1427,7 +1428,7 @@ namespace CastRightCatchInvManagement
             };
             _tips.SetToolTip(_back, "Back  ·  mouse side button or Alt+Left");
 
-            _forward = new HistoryIconButton(back: false);
+            _forward = new HistoryIconButton(HistoryIconKind.Forward);
             _forward.Click += (_, _) =>
             {
                 // Gold/usable only when this window has forward history; faded clicks are ignored.
@@ -1436,6 +1437,12 @@ namespace CastRightCatchInvManagement
             };
             _tips.SetToolTip(_forward, "Forward  ·  mouse side button or Alt+Right");
 
+            _refresh = new HistoryIconButton(HistoryIconKind.Refresh);
+            _refresh.Usable = true;
+            _refresh.Click += (_, _) => Navigator.ReloadCurrent(_workspace);
+            _tips.SetToolTip(_refresh, "Refresh  ·  F5");
+
+            Controls.Add(_refresh);
             Controls.Add(_forward);
             Controls.Add(_back);
             Resize += (_, _) => LayoutButtons();
@@ -1443,35 +1450,47 @@ namespace CastRightCatchInvManagement
             Sync();
         }
 
-        /// <summary>Gold when this window has back/forward history; faded otherwise.</summary>
+        /// <summary>Gold when this window has back/forward history; faded otherwise. Refresh stays gold.</summary>
         public void Sync()
         {
             _back.Usable = _workspace.CanGoBack;
             _forward.Usable = _workspace.CanGoForward;
+            _refresh.Usable = true;
         }
 
-        /// <summary>Place the two 32px chevrons side by side in the header.</summary>
+        /// <summary>Place Back/Forward at 32px and a slightly larger Refresh beside them.</summary>
         private void LayoutButtons()
         {
-            int size = 32;
-            int y = Math.Max(Padding.Top, (ClientSize.Height - size) / 2);
-            _back.SetBounds(Padding.Left, y, size, size);
-            _forward.SetBounds(Padding.Left + size + 4, y, size, size);
+            int chevron = 32;
+            int refresh = 40;
+            int yChevron = Math.Max(Padding.Top, (ClientSize.Height - chevron) / 2);
+            int yRefresh = Math.Max(Padding.Top, (ClientSize.Height - refresh) / 2);
+            _back.SetBounds(Padding.Left, yChevron, chevron, chevron);
+            _forward.SetBounds(Padding.Left + chevron + 4, yChevron, chevron, chevron);
+            _refresh.SetBounds(Padding.Left + chevron * 2 + 8, yRefresh, refresh, refresh);
         }
     }
 
-    /// <summary>Chevron icon. Gold when it can navigate, dark and faded when it cannot.</summary>
+    /// <summary>Which glyph a header history button draws.</summary>
+    internal enum HistoryIconKind
+    {
+        Back,
+        Forward,
+        Refresh
+    }
+
+    /// <summary>Header icon. Gold when it can run, dark and faded when it cannot.</summary>
     internal sealed class HistoryIconButton : Control
     {
-        private readonly bool _back;
+        private readonly HistoryIconKind _kind;
         private bool _usable;
         private bool _hover;
         private bool _down;
 
-        /// <summary>back draws a left chevron; otherwise a right chevron.</summary>
-        public HistoryIconButton(bool back)
+        /// <summary>Back/Forward are chevrons; Refresh is a circular arrow.</summary>
+        public HistoryIconButton(HistoryIconKind kind)
         {
-            _back = back;
+            _kind = kind;
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint |
                 ControlStyles.OptimizedDoubleBuffer |
@@ -1545,7 +1564,7 @@ namespace CastRightCatchInvManagement
             base.OnMouseUp(e);
         }
 
-        /// <summary>Draw a gold, hover, pressed, or faded chevron.</summary>
+        /// <summary>Draw a gold, hover, pressed, or faded chevron or circular refresh arrow.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -1569,10 +1588,22 @@ namespace CastRightCatchInvManagement
 
             float cx = Width / 2f;
             float cy = Height / 2f;
+            if (_kind == HistoryIconKind.Refresh)
+            {
+                using var refreshPen = new Pen(color, 2.6f)
+                {
+                    StartCap = LineCap.Round,
+                    EndCap = LineCap.Round,
+                    LineJoin = LineJoin.Round
+                };
+                DrawRefresh(e.Graphics, refreshPen, color, cx, cy);
+                return;
+            }
+
             float dx = 6.5f;
             float dy = 8f;
             // Left chevron for back; right chevron for forward.
-            if (_back)
+            if (_kind == HistoryIconKind.Back)
             {
                 e.Graphics.DrawLines(pen, new[]
                 {
@@ -1591,6 +1622,28 @@ namespace CastRightCatchInvManagement
                     new PointF(cx - dx, cy + dy)
                 });
             }
+        }
+
+        /// <summary>Circular arrow ending at 12 o'clock with a right-pointing head, like a browser refresh.</summary>
+        private static void DrawRefresh(Graphics g, Pen pen, Color color, float cx, float cy)
+        {
+            const float radius = 9.2f;
+            const float start = -10f;
+            const float sweep = 280f;
+            g.DrawArc(pen, cx - radius, cy - radius, radius * 2, radius * 2, start, sweep);
+
+            float end = (start + sweep) * (MathF.PI / 180f);
+            float tipX = cx + radius * MathF.Cos(end);
+            float tipY = cy + radius * MathF.Sin(end);
+            float tx = -MathF.Sin(end);
+            float ty = MathF.Cos(end);
+            float nx = -ty;
+            float ny = tx;
+            var tip = new PointF(tipX + tx * 2.2f, tipY + ty * 2.2f);
+            var a = new PointF(tipX - tx * 1.6f + nx * 3.4f, tipY - ty * 1.6f + ny * 3.4f);
+            var b = new PointF(tipX - tx * 1.6f - nx * 3.4f, tipY - ty * 1.6f - ny * 3.4f);
+            using var brush = new SolidBrush(color);
+            g.FillPolygon(brush, new[] { tip, a, b });
         }
     }
 }

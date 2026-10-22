@@ -1609,6 +1609,23 @@ namespace CastRightCatchInvManagement
                 GetRecord(record, "Item Code").Equals(item, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>Visible invoice row whose Invoice # matches, or null.</summary>
+        public static Dictionary<string, string>? FindInvoiceByNumber(string? invoiceNumber)
+        {
+            string needle = (invoiceNumber ?? "").Trim();
+            if (needle.Length == 0)
+                return null;
+
+            foreach (var record in ReadRecords(Invoices))
+            {
+                if (GetRecord(record, "Invoice #").Trim()
+                    .Equals(needle, StringComparison.OrdinalIgnoreCase))
+                    return record;
+            }
+
+            return null;
+        }
+
         /// <summary>True when an invoice row already uses this number (case-insensitive).</summary>
         public static bool InvoiceNumberExists(string? invoiceNumber)
         {

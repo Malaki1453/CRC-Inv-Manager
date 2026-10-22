@@ -274,7 +274,7 @@ namespace CastRightCatchInvManagement
                 _edit.Visible = true;
                 _save.Text = "Save to database";
                 _subtitle.Text = stored
-                    ? "Mark up in this window, then Save to database. Edit invoice opens Create Invoice."
+                    ? "Mark up in this window, then Save to database. Edit invoice opens Create Invoice and closes this window."
                     : "Send this PDF, or edit the source document.";
             }
             // Sales-order PDFs edit on Create Sales Order, not New Sale.
@@ -284,7 +284,7 @@ namespace CastRightCatchInvManagement
                 _edit.Visible = true;
                 _save.Text = "Save to database";
                 _subtitle.Text = stored
-                    ? "Mark up in this window, then Save to database. Edit sales order opens Create Sales Order."
+                    ? "Mark up in this window, then Save to database. Edit sales order opens Create Sales Order and closes this window."
                     : "Send this PDF, or edit the source document.";
             }
             // Both CRC purchase PDFs and stored vendor invoices edit on New Purchase.
@@ -296,8 +296,8 @@ namespace CastRightCatchInvManagement
                 _save.Text = "Save to database";
                 _subtitle.Text = stored
                     ? _kind == DataFiles.PdfKindPurchaseInvoice
-                        ? "Vendor invoice stored with this PO. Mark up, then Save to database. Edit purchase opens New Purchase."
-                        : "Mark up in this window, then Save to database. Edit purchase opens New Purchase."
+                        ? "Vendor invoice stored with this PO. Mark up, then Save to database. Edit purchase opens New Purchase and closes this window."
+                        : "Mark up in this window, then Save to database. Edit purchase opens New Purchase and closes this window."
                     : "Send this PDF, or edit the source document.";
             }
             // Sale PDFs are per-PO product lines, edited as a sales order.
@@ -307,7 +307,7 @@ namespace CastRightCatchInvManagement
                 _edit.Visible = true;
                 _save.Text = "Save to database";
                 _subtitle.Text = stored
-                    ? "Mark up in this window, then Save to database. Edit sale opens New Sale."
+                    ? "Mark up in this window, then Save to database. Edit sale opens New Sale and closes this window."
                     : "Send this PDF, or edit the source document.";
             }
             // Ad-hoc files have no source form to jump to.
@@ -403,30 +403,86 @@ namespace CastRightCatchInvManagement
             PdfSendForm.ShowFor(this, _path, _title.Text);
         }
 
-        /// <summary>Jump to the form that created this stored PDF so they can change the data.</summary>
+        /// <summary>Open the matching edit page with this document loaded, then close the viewer.</summary>
         private void EditSource()
         {
-            // Invoice PDFs are edited on Create Invoice.
+            string table = TableForKind(_kind);
+            if (table.Length > 0 && !DataAccess.CanMutate(table))
+            {
+                MessageBox.Show(
+                    "This account can only view that document.",
+                    _edit.Text,
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            string key = (_key ?? "").Trim();
+            bool opened = false;
             if (_kind == DataFiles.PdfKindInvoice)
-                Navigator.GoTo(AppPage.InvoicePdf);
-            // Sales-order PDFs open Create Sales Order.
+            {
+                var invoice = DataFiles.FindInvoiceByNumber(key);
+                if (invoice == null)
+                {
+                    ToastAlert.Error(this, "No invoice was found for this PDF.");
+                    return;
+                }
+
+                InvoicePdf.OpenEdit(invoice);
+                opened = true;
+            }
             else if (_kind == DataFiles.PdfKindSalesOrder)
-                Navigator.GoTo(AppPage.SalesOrder);
-            // Purchase and stored vendor-invoice PDFs open New Purchase.
+            {
+                var rows = DataFiles.FindSalesBySo(key);
+                if (rows.Count == 0)
+                {
+                    ToastAlert.Error(this, "No sales order was found for this PDF.");
+                    return;
+                }
+
+                SalesOrder.OpenEdit(rows[0]);
+                opened = true;
+            }
             else if (_kind == DataFiles.PdfKindPurchase ||
                      _kind == DataFiles.PdfKindPurchaseInvoice)
-                Navigator.GoTo(AppPage.AddPurchase);
-            // Sale PDFs try to reopen the matching PO lines.
+            {
+                var rows = DataFiles.FindPurchasesByPo(key);
+                if (rows.Count == 0)
+                {
+                    ToastAlert.Error(this, "No purchase was found for this PDF.");
+                    return;
+                }
+
+                AddPurchase.OpenEdit(rows[0]);
+                opened = true;
+            }
             else if (_kind == DataFiles.PdfKindSale)
             {
-                var rows = DataFiles.FindSalesByPo(_key);
-                // Prefer editing the existing sale lines when the PO is still live.
-                if (rows.Count > 0)
-                    SalesOrder.OpenEdit(rows[0]);
-                // No live sale lines for that PO: open a blank Create Sales Order.
-                else
-                    Navigator.GoTo(AppPage.SalesOrder);
+                var rows = DataFiles.FindSalesByPo(key);
+                if (rows.Count == 0)
+                {
+                    ToastAlert.Error(this, "No sale was found for this PDF.");
+                    return;
+                }
+
+                SalesOrder.OpenEdit(rows[0]);
+                opened = true;
             }
+
+            if (opened)
+                Close();
+        }
+
+        /// <summary>Inventory table this stored PDF kind is edited from, or empty when there is none.</summary>
+        private static string TableForKind(string? kind)
+        {
+            if (kind == DataFiles.PdfKindInvoice)
+                return DataFiles.Invoices;
+            if (kind == DataFiles.PdfKindSalesOrder || kind == DataFiles.PdfKindSale)
+                return DataFiles.Sales;
+            if (kind == DataFiles.PdfKindPurchase || kind == DataFiles.PdfKindPurchaseInvoice)
+                return DataFiles.PurchaseSales;
+            return "";
         }
 
         /// <summary>Shell-open the file when WebView2 cannot display or print it.</summary>

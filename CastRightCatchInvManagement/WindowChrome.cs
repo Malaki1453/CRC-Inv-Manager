@@ -5,7 +5,7 @@ namespace CastRightCatchInvManagement
     /// <summary>
     /// Custom navy title bar: DWM caption, cream text, gold border.
     /// Minimize, maximize, and close stay as system buttons.
-    /// Back/Forward chevrons live on NavHistoryBar and paint gold when usable.
+    /// Back/Forward/Refresh icons live on NavHistoryBar and paint gold when usable.
     /// </summary>
     internal static class WindowChrome
     {

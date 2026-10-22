@@ -85,6 +85,20 @@ namespace CastRightCatchInvManagement
         /// <summary>Go forward in the active workspace's page history.</summary>
         public static void GoForward() => GoForward(_active ?? _main);
 
+        /// <summary>Reload the page this workspace is showing from the store.</summary>
+        public static void ReloadCurrent() => ReloadCurrent(_active ?? _main);
+
+        /// <summary>Reload the nested page in this window so tables pick up other users' saves.</summary>
+        internal static void ReloadCurrent(Workspace? workspace)
+        {
+            workspace ??= _active ?? _main;
+            if (workspace == null || !workspace.IsAlive || workspace.CurrentPage == null)
+                return;
+            if (_instances.TryGetValue(workspace.CurrentPage.Value, out var form) &&
+                form != null && !form.IsDisposed)
+                Highlight(form);
+        }
+
         /// <summary>Pop the back stack and show that page in this workspace without stealing another window.</summary>
         internal static void GoBack(Workspace? workspace)
         {
@@ -911,6 +925,7 @@ namespace CastRightCatchInvManagement
         private const int XButton2 = 0x0002;
         private const int AppCommandBrowserBack = 1;
         private const int AppCommandBrowserForward = 2;
+        private const int AppCommandBrowserRefresh = 3;
 
         /// <summary>Consume back/forward hardware and Alt+Left/Right when a workspace is in front.</summary>
         public bool PreFilterMessage(ref Message m)
@@ -942,6 +957,8 @@ namespace CastRightCatchInvManagement
                 // Browser-forward app command.
                 if (command == AppCommandBrowserForward)
                     return TryForward();
+                if (command == AppCommandBrowserRefresh)
+                    return TryReload();
                 return false;
             }
 
@@ -956,6 +973,8 @@ namespace CastRightCatchInvManagement
                 // BrowserForward key or Alt+Right is forward.
                 if (key == Keys.BrowserForward || (alt && key == Keys.Right))
                     return TryForward();
+                if (key == Keys.F5 || key == Keys.BrowserRefresh)
+                    return TryReload();
             }
 
             return false;
@@ -980,6 +999,16 @@ namespace CastRightCatchInvManagement
             if (!WorkspaceIsForeground() || workspace == null || !workspace.CanGoForward)
                 return false;
             Navigator.GoForward(workspace);
+            return true;
+        }
+
+        /// <summary>Reload the current page when a workspace is focused.</summary>
+        private static bool TryReload()
+        {
+            var workspace = Navigator.ActiveWorkspace;
+            if (!WorkspaceIsForeground() || workspace == null)
+                return false;
+            Navigator.ReloadCurrent(workspace);
             return true;
         }
 
@@ -1120,7 +1149,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(footer);
         }
 
-        /// <summary>Place Back/Forward next to the title once the workspace exists.</summary>
+        /// <summary>Place Back/Forward/Refresh next to the title once the workspace exists.</summary>
         public void BindHistory(Workspace workspace)
         {
             _history = new NavHistoryBar(workspace);

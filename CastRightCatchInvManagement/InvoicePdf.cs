@@ -50,6 +50,8 @@ namespace CastRightCatchInvManagement
         private string _importName = "";
 
         internal static PurchaseInvoiceDraft? PendingImport { get; set; }
+        /// <summary>Invoice row queued by OpenEdit until this page is shown.</summary>
+        internal static Dictionary<string, string>? PendingEdit { get; set; }
 
         /// <summary>Build Create Invoice and start on a blank outgoing draft.</summary>
         public InvoicePdf()
@@ -63,6 +65,16 @@ namespace CastRightCatchInvManagement
         public void HighlightCurrentPage()
         {
             RefreshLookups();
+            // PDF Edit / OpenEdit queued an invoices row to load.
+            if (PendingEdit != null)
+            {
+                var invoice = PendingEdit;
+                PendingEdit = null;
+                PendingImport = null;
+                LoadExistingInvoice(invoice);
+                return;
+            }
+
             // OpenImport queued a parsed PDF for review on this page.
             if (PendingImport != null)
             {
@@ -76,6 +88,36 @@ namespace CastRightCatchInvManagement
             if (_lines.Count == 0)
                 AddLine(lockPrevious: false);
             RefreshLines();
+        }
+
+        /// <summary>Open Create Invoice with this invoices row loaded for edit.</summary>
+        public static void OpenEdit(Dictionary<string, string> invoice)
+        {
+            if (!DataAccess.CanMutate(DataFiles.Invoices))
+            {
+                MessageBox.Show(
+                    "This account can only view invoices.",
+                    "Edit Invoice",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            PendingImport = null;
+            PendingEdit = invoice;
+            Navigator.GoTo(AppPage.InvoicePdf);
+        }
+
+        /// <summary>Fill the form from a stored invoices row (header plus Lines Json when present).</summary>
+        private void LoadExistingInvoice(Dictionary<string, string> invoice)
+        {
+            bool received = DataFiles.IsReceivedInvoice(invoice);
+            ResetDraft(received: received);
+            BeginEdit(invoice);
+            if (DataFiles.TryInvoiceDraft(invoice, out var stored) && stored.Lines.Count > 0)
+                ApplyDraft(stored);
+            RefreshLines();
+            UpdateTotals();
         }
 
         /// <summary>Pick an invoice PDF, detect incoming vs outgoing, and fill this form.</summary>
@@ -112,6 +154,7 @@ namespace CastRightCatchInvManagement
             if (!ConfirmImport(draft))
                 return;
 
+            PendingEdit = null;
             PendingImport = draft;
             Navigator.GoTo(AppPage.InvoicePdf);
         }
