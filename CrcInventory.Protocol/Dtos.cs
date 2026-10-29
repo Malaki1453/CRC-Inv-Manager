@@ -220,6 +220,39 @@ public sealed class AccountWriteRequest
     public string? Json { get; set; }
 }
 
+/// <summary>One access group from the catalog, including how many accounts list it.</summary>
+public sealed class AccessGroupDto
+{
+    /// <summary>Group name stored in access_groups.</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>table_access JSON for this group; empty means no denials.</summary>
+    public string Access { get; set; } = "";
+
+    /// <summary>How many app_accounts rows currently list this group.</summary>
+    public int Members { get; set; }
+}
+
+/// <summary>Named access group for get, save, delete, and member-count ops.</summary>
+public sealed class AccessGroupRequest
+{
+    /// <summary>Group name to read, write, or delete.</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>table_access JSON when saving; unused on get, delete, and count.</summary>
+    public string? Json { get; set; }
+}
+
+/// <summary>Replace the access-group names stored on an account.</summary>
+public sealed class AccountGroupsRequest
+{
+    /// <summary>Target username whose membership list is being replaced.</summary>
+    public string Username { get; set; } = "";
+
+    /// <summary>Group names to store; empty clears membership.</summary>
+    public List<string> Groups { get; set; } = new();
+}
+
 /// <summary>Non-secret bank-account row shown in the banking list.</summary>
 public sealed class BankRowDto
 {

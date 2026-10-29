@@ -2112,6 +2112,8 @@ namespace CastRightCatchInvManagement
             // Remote session: per-user table_access overlay comes from the server.
             if (DataLink.Try(ServerOps.AccountsAccessGet, new AccountWriteRequest { Username = username }, out string? access))
                 return access ?? "";
+            if (DataLink.IsRemote)
+                return "";
 
             EnsureCreated();
             using var db = Open();
@@ -2125,9 +2127,6 @@ namespace CastRightCatchInvManagement
         /// <summary>Merged table_access JSON from every group this user belongs to (allowed wins).</summary>
         public static string GetGroupAccessMerged(string username)
         {
-            // Remote clients use the policy from AuthResponse, not a local access_groups table.
-            if (DataLink.IsRemote)
-                return AppState.EffectiveTableAccess ?? "";
             var groups = GetAccessGroups(username);
             // User belongs to no groups; merged access is empty (overlay may still apply later).
             if (groups.Count == 0)
@@ -2141,9 +2140,26 @@ namespace CastRightCatchInvManagement
         /// <summary>Group access with this user's overlay applied.</summary>
         public static string GetEffectiveTableAccess(string username)
         {
-            // Remote clients already received group+overlay JSON at sign-in.
+            username = (username ?? "").Trim();
             if (DataLink.IsRemote)
-                return AppState.EffectiveTableAccess ?? "";
+            {
+                bool isCurrent = username.Equals(AppState.CurrentUsername, StringComparison.OrdinalIgnoreCase);
+                // Older hosts have no groupsGet; keep the AuthResponse cache for the signed-in user.
+                if (!DataLink.Try(ServerOps.AccountsGroupsGet, new AccountWriteRequest { Username = username }, out string? stored))
+                    return isCurrent ? (AppState.EffectiveTableAccess ?? "") : GetTableAccess(username);
+
+                var groups = AccessGroups.Parse(stored);
+                string baseline = groups.Count == 0
+                    ? ""
+                    : groups.Count == 1
+                        ? GetGroupAccess(groups[0])
+                        : DataAccess.Merge(groups.Select(GetGroupAccess));
+                string json = DataAccess.Overlay(baseline, GetTableAccess(username));
+                if (isCurrent)
+                    AppState.EffectiveTableAccess = json;
+                return json;
+            }
+
             return DataAccess.Overlay(GetGroupAccessMerged(username), GetTableAccess(username));
         }
 
@@ -2162,7 +2178,9 @@ namespace CastRightCatchInvManagement
             // Blank username; return an empty membership list.
             if (username.Length == 0)
                 return new List<string>();
-            // Remote clients have no local app_accounts file.
+            // Remote session: membership list lives on the inventory server.
+            if (DataLink.Try(ServerOps.AccountsGroupsGet, new AccountWriteRequest { Username = username }, out string? stored))
+                return AccessGroups.Parse(stored);
             if (DataLink.IsRemote)
                 return new List<string>();
             EnsureCreated();
@@ -2185,9 +2203,16 @@ namespace CastRightCatchInvManagement
             // Blank username; skip so we do not update every account.
             if (username.Length == 0)
                 return;
-            // Remote clients have no local app_accounts file to update.
+            // Remote session: membership list is stored on the inventory server.
             if (DataLink.IsRemote)
+            {
+                DataLink.Send(ServerOps.AccountsGroupsSet, new AccountGroupsRequest
+                {
+                    Username = username,
+                    Groups = AccessGroups.Parse(AccessGroups.Join(groups))
+                });
                 return;
+            }
             EnsureCreated();
             using var db = Open();
             // cmd: UPDATE access_group membership for this username.
@@ -2227,7 +2252,9 @@ namespace CastRightCatchInvManagement
         /// <summary>All access groups, with Admin then IT first, then the rest A–Z.</summary>
         public static List<(string Name, string Access)> ListAccessGroups()
         {
-            // Remote clients have no local access_groups table.
+            // Remote session: the catalog lives on the inventory server.
+            if (DataLink.Try(ServerOps.GroupsList, null, out List<AccessGroupDto>? remote) && remote != null)
+                return remote.Select(g => (g.Name ?? "", g.Access ?? "")).ToList();
             if (DataLink.IsRemote)
                 return new List<(string Name, string Access)>();
             EnsureCreated();
@@ -2260,7 +2287,10 @@ namespace CastRightCatchInvManagement
             // Blank group name; no JSON to return.
             if (name.Length == 0)
                 return "";
-            // Remote clients have no local access_groups table.
+            // Remote session: group JSON lives on the inventory server.
+            if (DataLink.Try(ServerOps.GroupsGet, new AccessGroupRequest { Name = name }, out AccessGroupDto? group) &&
+                group != null)
+                return group.Access ?? "";
             if (DataLink.IsRemote)
                 return "";
             EnsureCreated();
@@ -2305,11 +2335,23 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
-            // Remote clients have no local access_groups table.
+            // Remote session: upsert the group on the inventory server.
             if (DataLink.IsRemote)
             {
-                error = "Access groups are stored on the inventory server.";
-                return false;
+                try
+                {
+                    DataLink.Send(ServerOps.GroupsSave, new AccessGroupRequest
+                    {
+                        Name = name,
+                        Json = json ?? ""
+                    });
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
             }
 
             try
@@ -2352,11 +2394,19 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
-            // Remote clients have no local access_groups table.
+            // Remote session: delete the group on the inventory server.
             if (DataLink.IsRemote)
             {
-                error = "Access groups are stored on the inventory server.";
-                return false;
+                try
+                {
+                    DataLink.Send(ServerOps.GroupsDelete, new AccessGroupRequest { Name = name });
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    return false;
+                }
             }
 
             try
@@ -2412,7 +2462,9 @@ namespace CastRightCatchInvManagement
             // Blank group name; there are no members to count.
             if (name.Length == 0)
                 return 0;
-            // Remote clients have no local app_accounts file.
+            // Remote session: member counts come from the inventory server.
+            if (DataLink.Try(ServerOps.GroupsMembers, new AccessGroupRequest { Name = name }, out int remoteCount))
+                return remoteCount;
             if (DataLink.IsRemote)
                 return 0;
             EnsureCreated();

@@ -94,6 +94,21 @@ public static class ServerOps
     public const string AccountsAccessGet = "accounts.accessGet";
     /// <summary>Write table-access overlay; admin or IT.</summary>
     public const string AccountsAccessSet = "accounts.accessSet";
+    /// <summary>Read the account's access-group names; self, IT, or admin.</summary>
+    public const string AccountsGroupsGet = "accounts.groupsGet";
+    /// <summary>Replace the account's access-group names; admin or IT.</summary>
+    public const string AccountsGroupsSet = "accounts.groupsSet";
+
+    /// <summary>List access_groups (admin or IT).</summary>
+    public const string GroupsList = "groups.list";
+    /// <summary>Read one access group (admin or IT).</summary>
+    public const string GroupsGet = "groups.get";
+    /// <summary>Insert or update an access group (admin or IT; Admin locked; IT JSON admin-only).</summary>
+    public const string GroupsSave = "groups.save";
+    /// <summary>Delete a custom access group and strip it from accounts (admin or IT).</summary>
+    public const string GroupsDelete = "groups.delete";
+    /// <summary>Count accounts that list an access group (admin or IT).</summary>
+    public const string GroupsMembers = "groups.members";
 
     /// <summary>List bank_accounts rows (no Plaid secrets).</summary>
     public const string BankList = "bank.list";

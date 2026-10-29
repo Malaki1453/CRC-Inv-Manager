@@ -448,6 +448,214 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>All access groups, Admin then IT first, then the rest A–Z, with member counts.</summary>
+    public List<AccessGroupDto> ListAccessGroups()
+    {
+        lock (_gate)
+        {
+            var list = new List<AccessGroupDto>();
+            var memberships = new List<string>();
+            using var db = Open();
+            using (var cmd = db.CreateCommand())
+            {
+                cmd.CommandText =
+                    "SELECT name, COALESCE(table_access, '') FROM access_groups ORDER BY name COLLATE NOCASE;";
+                using var reader = cmd.Query(_engine);
+                while (reader.Read())
+                {
+                    list.Add(new AccessGroupDto
+                    {
+                        Name = reader.IsDBNull(0) ? "" : reader.GetString(0),
+                        Access = reader.IsDBNull(1) ? "" : reader.GetString(1)
+                    });
+                }
+            }
+
+            using (var acc = db.CreateCommand())
+            {
+                acc.CommandText = "SELECT COALESCE(access_group, '') FROM app_accounts;";
+                using var reader = acc.Query(_engine);
+                while (reader.Read())
+                    memberships.Add(reader.IsDBNull(0) ? "" : reader.GetString(0));
+            }
+
+            foreach (var group in list)
+            {
+                group.Members = memberships.Count(stored =>
+                    SplitGroups(stored).Any(name =>
+                        name.Equals(group.Name, StringComparison.OrdinalIgnoreCase)));
+            }
+
+            list.Sort((a, b) =>
+            {
+                int rank = GroupRank(a.Name).CompareTo(GroupRank(b.Name));
+                return rank != 0
+                    ? rank
+                    : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+            });
+            return list;
+        }
+    }
+
+    /// <summary>How many accounts currently list this group.</summary>
+    public int CountGroupMembers(string name)
+    {
+        name = (name ?? "").Trim();
+        // Blank group name; there are no members to count.
+        if (name.Length == 0)
+            return 0;
+        lock (_gate)
+        {
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT COALESCE(access_group, '') FROM app_accounts;";
+            using var reader = cmd.Query(_engine);
+            int count = 0;
+            while (reader.Read())
+            {
+                if (SplitGroups(reader.IsDBNull(0) ? "" : reader.GetString(0))
+                    .Any(group => group.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                    count++;
+            }
+
+            return count;
+        }
+    }
+
+    /// <summary>Insert or update a group. Admin is locked; only an administrator can change IT.</summary>
+    public bool SaveAccessGroup(string name, string json, bool callerIsAdmin, out string error)
+    {
+        error = "";
+        name = (name ?? "").Trim();
+        // Blank group name; the client must supply one.
+        if (name.Length == 0)
+        {
+            error = "Enter a group name.";
+            return false;
+        }
+
+        // Comma or semicolon would break the stored membership list format.
+        if (name.Contains(',') || name.Contains(';'))
+        {
+            error = "Group names cannot contain commas.";
+            return false;
+        }
+
+        // Admin is a built-in locked group; its table_access must stay deny-all.
+        if (Schema.AdminGroup.Equals(name, StringComparison.OrdinalIgnoreCase))
+        {
+            error = "The Admin group cannot be changed.";
+            return false;
+        }
+
+        // IT group can only be edited by an administrator, not by IT itself.
+        if (Schema.ItGroup.Equals(name, StringComparison.OrdinalIgnoreCase) && !callerIsAdmin)
+        {
+            error = "Only an administrator can change the IT group.";
+            return false;
+        }
+
+        lock (_gate)
+        {
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText =
+                """
+                INSERT INTO access_groups (name, table_access)
+                VALUES ($name, $json)
+                ON CONFLICT(name) DO UPDATE SET table_access = excluded.table_access;
+                """;
+            cmd.AddParam("$name", name);
+            cmd.AddParam("$json", json ?? "");
+            cmd.Exec(_engine);
+        }
+
+        return true;
+    }
+
+    /// <summary>Delete a custom group and strip it from every account; built-in groups cannot be removed.</summary>
+    public bool DeleteAccessGroup(string name, out string error)
+    {
+        error = "";
+        name = (name ?? "").Trim();
+        // Blank group name; nothing to delete.
+        if (name.Length == 0)
+            return false;
+        // Admin and IT are built-in; refuse so they stay available.
+        if (Schema.AdminGroup.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+            Schema.ItGroup.Equals(name, StringComparison.OrdinalIgnoreCase))
+        {
+            error = "The " + name + " group cannot be deleted.";
+            return false;
+        }
+
+        lock (_gate)
+        {
+            using var db = Open();
+            var updates = new List<(string User, string Groups)>();
+            using (var list = db.CreateCommand())
+            {
+                list.CommandText = "SELECT username, COALESCE(access_group, '') FROM app_accounts;";
+                using var reader = list.Query(_engine);
+                while (reader.Read())
+                {
+                    string user = reader.IsDBNull(0) ? "" : reader.GetString(0);
+                    string stored = reader.IsDBNull(1) ? "" : reader.GetString(1);
+                    var groups = SplitGroups(stored);
+                    // This account is not in the deleted group; leave its membership alone.
+                    if (!groups.Any(group => group.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                    updates.Add((user, string.Join(", ", groups
+                        .Where(group => !group.Equals(name, StringComparison.OrdinalIgnoreCase)))));
+                }
+            }
+
+            foreach (var (user, groups) in updates)
+            {
+                using var update = db.CreateCommand();
+                update.CommandText = "UPDATE app_accounts SET access_group = $group WHERE username = $user;";
+                update.AddParam("$group", groups);
+                update.AddParam("$user", user);
+                update.Exec(_engine);
+            }
+
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "DELETE FROM access_groups WHERE name = $name;";
+            cmd.AddParam("$name", name);
+            cmd.Exec(_engine);
+        }
+
+        return true;
+    }
+
+    /// <summary>Replace the account's group membership list.</summary>
+    public void SetAccessGroups(string username, IEnumerable<string> groups)
+    {
+        username = (username ?? "").Trim();
+        // Blank username; skip so we do not update every account.
+        if (username.Length == 0)
+            return;
+        string stored = string.Join(", ", (groups ?? Array.Empty<string>())
+            .Select(name => (name ?? "").Trim())
+            .Where(name => name.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+        lock (_gate)
+        {
+            using var db = Open();
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = "UPDATE app_accounts SET access_group = $group WHERE username = $user;";
+            cmd.AddParam("$group", stored);
+            cmd.AddParam("$user", username);
+            cmd.Exec(_engine);
+        }
+    }
+
+    /// <summary>Admin first, then IT, then custom groups.</summary>
+    private static int GroupRank(string name) =>
+        Schema.AdminGroup.Equals(name, StringComparison.OrdinalIgnoreCase) ? 0
+        : Schema.ItGroup.Equals(name, StringComparison.OrdinalIgnoreCase) ? 1
+        : 2;
+
     /// <summary>Writes the user's table_access overlay JSON; no-ops on a blank name.</summary>
     public void SetTableAccess(string username, string json)
     {

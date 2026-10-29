@@ -104,6 +104,20 @@ internal sealed class ServerDispatch
             ServerOps.AccountsAccessGet => AccessGet(payload, session),
             // Admin or IT: write overlay.
             ServerOps.AccountsAccessSet => AccessSet(payload, session),
+            // Self, IT, or admin: access-group names on the account.
+            ServerOps.AccountsGroupsGet => GroupsGetForAccount(payload, session),
+            // Admin or IT: replace access-group names on the account.
+            ServerOps.AccountsGroupsSet => GroupsSetForAccount(payload, session),
+            // Admin or IT: catalog of access groups.
+            ServerOps.GroupsList => RequireAdminOrIt(session, () => _store.ListAccessGroups()),
+            // Admin or IT: one group's table_access JSON.
+            ServerOps.GroupsGet => GroupGet(payload, session),
+            // Admin or IT: insert or update a group (Admin locked; IT JSON admin-only).
+            ServerOps.GroupsSave => GroupSave(payload, session),
+            // Admin or IT: delete a custom group and strip memberships.
+            ServerOps.GroupsDelete => GroupDelete(payload, session),
+            // Admin or IT: how many accounts list this group.
+            ServerOps.GroupsMembers => GroupMembers(payload, session),
             // Bank list without Plaid secrets (banking policy).
             ServerOps.BankList => BankList(session),
             // Insert bank row if the caller may write banking.
@@ -582,6 +596,94 @@ internal sealed class ServerDispatch
         return true;
     }
 
+    /// <summary>Access-group names stored on an account for self, IT, or admin.</summary>
+    private string GroupsGetForAccount(JsonElement payload, ClientSession session)
+    {
+        var request = Read<AccountWriteRequest>(payload);
+        // Admins may inspect any membership list; others only self unless IT.
+        if (!SelfOrIt(session, request.Username) && !session.IsAdmin)
+            throw new InvalidOperationException("Not allowed.");
+        return _store.GetAccessGroup(request.Username);
+    }
+
+    /// <summary>Admin or IT replaces the access-group names on an account.</summary>
+    private bool GroupsSetForAccount(JsonElement payload, ClientSession session)
+    {
+        RequireAdminOrIt(session);
+        var request = Read<AccountGroupsRequest>(payload);
+        var previous = SplitGroupNames(_store.GetAccessGroup(request.Username));
+        var selected = request.Groups ?? new List<string>();
+        bool addingAdmin = selected.Any(IsAdminGroup) && !previous.Any(IsAdminGroup);
+        bool removingAdmin = previous.Any(IsAdminGroup) && !selected.Any(IsAdminGroup);
+        // Only administrators may change Admin membership.
+        if ((addingAdmin || removingAdmin) && !session.IsAdmin)
+            throw new InvalidOperationException(addingAdmin
+                ? "Only an administrator can assign the Admin group."
+                : "Only an administrator can move someone out of the Admin group.");
+        _store.SetAccessGroups(request.Username, selected);
+        return true;
+    }
+
+    /// <summary>One access group for admin or IT, including member count.</summary>
+    private AccessGroupDto GroupGet(JsonElement payload, ClientSession session)
+    {
+        RequireAdminOrIt(session);
+        var request = Read<AccessGroupRequest>(payload);
+        string name = (request.Name ?? "").Trim();
+        return new AccessGroupDto
+        {
+            Name = name,
+            Access = _store.GetGroupAccess(name),
+            Members = _store.CountGroupMembers(name)
+        };
+    }
+
+    /// <summary>Insert or update a group. Admin is locked; IT JSON is administrator-only.</summary>
+    private bool GroupSave(JsonElement payload, ClientSession session)
+    {
+        RequireAdminOrIt(session);
+        var request = Read<AccessGroupRequest>(payload);
+        if (!_store.SaveAccessGroup(request.Name, request.Json ?? "", session.IsAdmin, out string error))
+            throw new InvalidOperationException(error);
+        return true;
+    }
+
+    /// <summary>Delete a custom group and strip it from every account.</summary>
+    private bool GroupDelete(JsonElement payload, ClientSession session)
+    {
+        RequireAdminOrIt(session);
+        var request = Read<AccessGroupRequest>(payload);
+        if (!_store.DeleteAccessGroup(request.Name, out string error))
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(error)
+                ? "That group could not be deleted."
+                : error);
+        return true;
+    }
+
+    /// <summary>How many accounts currently list this group.</summary>
+    private int GroupMembers(JsonElement payload, ClientSession session)
+    {
+        RequireAdminOrIt(session);
+        var request = Read<AccessGroupRequest>(payload);
+        return _store.CountGroupMembers(request.Name);
+    }
+
+    /// <summary>True when the name is the built-in Admin group.</summary>
+    private static bool IsAdminGroup(string? name) =>
+        Schema.AdminGroup.Equals((name ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Splits a stored access_group string on commas and semicolons.</summary>
+    private static List<string> SplitGroupNames(string stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored))
+            return new List<string>();
+        return stored
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(name => name.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     /// <summary>Bank accounts the caller may see; denied banking policy returns none.</summary>
     private List<BankRowDto> BankList(ClientSession session)
     {
@@ -773,6 +875,21 @@ internal sealed class ServerDispatch
         // Settings and Plaid secrets are administrator-only.
         if (!session.IsAdmin)
             throw new InvalidOperationException("Administrator access is required.");
+    }
+
+    /// <summary>Runs <paramref name="action"/> after confirming the session is admin or IT.</summary>
+    private static T RequireAdminOrIt<T>(ClientSession session, Func<T> action)
+    {
+        RequireAdminOrIt(session);
+        return action();
+    }
+
+    /// <summary>Throws when the session is neither administrator nor IT.</summary>
+    private static void RequireAdminOrIt(ClientSession session)
+    {
+        // Access-group catalog and membership writes are staff-only.
+        if (!session.IsAdmin && !session.IsIt)
+            throw new InvalidOperationException("Not allowed.");
     }
 
     /// <summary>True when the session is IT or the username is the signed-in user.</summary>
