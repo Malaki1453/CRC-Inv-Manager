@@ -4,8 +4,6 @@ namespace CastRightCatchInvManagement
     public class PendingChanges : Form, INavigationPage
     {
         private DataGridView _grid = null!;
-        private Button _accept = null!;
-        private Button _reject = null!;
         private readonly List<List<Dictionary<string, string>>> _groups = new();
 
         /// <summary>Build the Review page and load waiting add/edit/delete requests.</summary>
@@ -22,7 +20,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Reload queued changes when this page is shown.</summary>
         public void HighlightCurrentPage() => LoadTable();
 
-        /// <summary>Lay out the review grid and Accept / Reject actions.</summary>
+        /// <summary>Lay out the review grid. Accept and Reject are on the details popup.</summary>
         private void BuildUi()
         {
             var title = new Label
@@ -35,31 +33,11 @@ namespace CastRightCatchInvManagement
             };
             var intro = new Label
             {
-                Text = "Shift-click to select more than one. Right-click for Accept or Reject. Purchase and sales deletes stay hidden until an administrator reviews them.",
+                Text = "Double-click a request to see each field. Changed fields show old value → new value, with Accept and Reject on that window. Shift-click and right-click to accept or reject more than one. Purchase and sales deletes stay hidden until an administrator reviews them.",
                 Font = Theme.Body,
                 ForeColor = Theme.Muted,
                 Dock = DockStyle.Top,
-                Height = 28
-            };
-
-            var actions = new Panel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 52,
-                BackColor = Theme.Cream
-            };
-            _accept = new Button { Text = "Accept", Size = new Size(130, 34), Anchor = AnchorStyles.Right | AnchorStyles.Top };
-            Theme.StyleGoldButton(_accept);
-            _accept.Click += (_, _) => Review(accept: true);
-            _reject = new Button { Text = "Reject", Size = new Size(130, 34), Anchor = AnchorStyles.Right | AnchorStyles.Top };
-            Theme.StyleNavyButton(_reject);
-            _reject.Click += (_, _) => Review(accept: false);
-            actions.Controls.Add(_accept);
-            actions.Controls.Add(_reject);
-            actions.Resize += (_, _) =>
-            {
-                _accept.Location = new Point(Math.Max(150, actions.Width - 150), 8);
-                _reject.Location = new Point(Math.Max(8, actions.Width - 290), 8);
+                Height = 44
             };
 
             _grid = new DataGridView { Dock = DockStyle.Fill };
@@ -75,7 +53,6 @@ namespace CastRightCatchInvManagement
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "What", HeaderText = "Changes (old → new)", FillWeight = 48 });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "State", HeaderText = "Status", FillWeight = 14 });
             _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
-            _grid.SelectionChanged += (_, _) => SyncReviewActions();
             _grid.CellDoubleClick += (_, e) =>
             {
                 // Header clicks and stale indexes have no pending row to open.
@@ -100,7 +77,6 @@ namespace CastRightCatchInvManagement
             card.Controls.Add(_grid);
 
             Controls.Add(card);
-            Controls.Add(actions);
             Controls.Add(intro);
             Controls.Add(title);
         }
@@ -147,7 +123,6 @@ namespace CastRightCatchInvManagement
                             DataFiles.GetRecord(record, "Status"));
                     }
 
-                    SyncReviewActions();
                 });
         }
 
@@ -172,18 +147,9 @@ namespace CastRightCatchInvManagement
             return list;
         }
 
-        /// <summary>Accept all / Reject all only when more than one review row is selected.</summary>
-        private void SyncReviewActions()
-        {
-            bool many = SelectedGroups().Count > 1;
-            _accept.Text = many ? "Accept all" : "Accept";
-            _reject.Text = many ? "Reject all" : "Reject";
-        }
-
         /// <summary>Right-click Accept / Reject for the current selection.</summary>
         private void ShowReviewMenu()
         {
-            SyncReviewActions();
             bool many = SelectedGroups().Count > 1;
             UiStyle.RowContextMenuShown = true;
             var menu = new ContextMenuStrip();
@@ -192,23 +158,11 @@ namespace CastRightCatchInvManagement
             menu.Show(_grid, _grid.PointToClient(Control.MousePosition));
         }
 
-        /// <summary>Open the whole purchase or sales order, including hidden waiting-delete lines.</summary>
+        /// <summary>Open field-by-field review with Accept and Reject. Changed values show old → new.</summary>
         private void OpenDetails(List<Dictionary<string, string>> members)
         {
-            var sample = DataFiles.PendingOrderSample(members);
-            string table = DataFiles.GetRecord(members[0], "Table");
-            string title = table.Equals(DataFiles.Sales, StringComparison.OrdinalIgnoreCase)
-                ? "Sale"
-                : table.Equals(DataFiles.PurchaseSales, StringComparison.OrdinalIgnoreCase)
-                    ? "Purchase"
-                    : table.Equals(DataFiles.Customers, StringComparison.OrdinalIgnoreCase)
-                        ? "Customer"
-                        : table.Equals(DataFiles.Vendors, StringComparison.OrdinalIgnoreCase)
-                            ? "Vendor"
-                            : table.Equals(DataFiles.ItemCodes, StringComparison.OrdinalIgnoreCase)
-                                ? "Inventory"
-                                : "Pending change";
-            RecordDetailsForm.ShowRecord(this, title, sample, table, includeHidden: true);
+            if (ReviewDetailsForm.ShowReview(this, members))
+                LoadTable();
         }
 
         /// <summary>Accept the selected request into live tables, or reject and undo it.</summary>
@@ -239,10 +193,18 @@ namespace CastRightCatchInvManagement
                     continue;
                 }
 
-                if (!DataFiles.ReviewPendingGroup(group, accept))
+                try
+                {
+                    if (!DataFiles.ReviewPendingGroup(group, accept))
+                        ok = false;
+                    else
+                        done++;
+                }
+                catch (Exception ex)
+                {
                     ok = false;
-                else
-                    done++;
+                    ToastAlert.Error(this, ex.Message);
+                }
             }
 
             if (done == 0)

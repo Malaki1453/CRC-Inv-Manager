@@ -28,6 +28,7 @@ namespace CastRightCatchInvManagement
         private readonly NumericDateBox _to;
         private readonly Panel _toolbar;
         private readonly ColumnSearch _columnSearch;
+        private Button? _idleAction;
         private readonly System.Windows.Forms.Timer _debounce;
         private readonly System.Windows.Forms.Timer _anim;
 
@@ -52,6 +53,21 @@ namespace CastRightCatchInvManagement
 
         /// <summary>True when compact search is showing (user has typed or set dates).</summary>
         public bool IsSearching => _active;
+
+        /// <summary>Outline button under the idle search hint (Customers Import, and similar).</summary>
+        public void AddIdleAction(string text, EventHandler click)
+        {
+            _idleAction = new Button
+            {
+                Text = text,
+                Size = new Size(180, 34),
+                Visible = false
+            };
+            Theme.StyleOutlineButton(_idleAction);
+            _idleAction.Click += click;
+            Controls.Add(_idleAction);
+            ApplyLayout();
+        }
 
         /// <summary>Put text in the page search box, expand the table, and filter to matching rows.</summary>
         public void Prefill(string query)
@@ -388,6 +404,14 @@ namespace CastRightCatchInvManagement
             else
                 // Dates closed: hint sits just under the box with no From/To row in between.
                 _hint.Bounds = new Rectangle(idle.X, idle.Bottom + 12, idle.Width, 22);
+
+            if (_idleAction != null)
+            {
+                int w = _idleAction.Width;
+                _idleAction.Location = new Point(
+                    idle.X + Math.Max(0, (idle.Width - w) / 2),
+                    _hint.Bottom + 16);
+            }
         }
 
         /// <summary>Show page title and hint when idle; show the SEARCH label when compact.</summary>
@@ -397,6 +421,8 @@ namespace CastRightCatchInvManagement
             _gold.Visible = idle;
             _hint.Visible = idle;
             _searchLabel.Visible = !idle;
+            if (_idleAction != null)
+                _idleAction.Visible = idle;
             // Compact bar: pin the SEARCH caption to the left of the box.
             if (!idle)
                 _searchLabel.Bounds = new Rectangle(16, 16, 78, 22);

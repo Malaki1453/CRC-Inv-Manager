@@ -48,6 +48,8 @@ namespace CastRightCatchInvManagement
         public const string InvoiceTypeIssued = "Issued";
         public const string InvoiceTypeReceived = "Received";
         public const string FreightCompanyColumn = "Freight Company";
+        public const string FreightTermsColumn = "Freight Terms";
+        public const string PaymentTermColumn = "Payment Term";
 
         public static readonly string[] All =
         {
@@ -813,10 +815,10 @@ namespace CastRightCatchInvManagement
             return baseName switch
             {
                 PurchaseSales =>
-                    "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Price Paid / LB,Overhead / LB,Freight / LB,Freight Company,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Sale By Date,Override Minimum Profit,Record Status",
+                    "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Price Paid / LB,Overhead / LB,Freight / LB,Freight Company,Freight Terms,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Sale By Date,Override Minimum Profit,Record Status",
 
                 Sales =>
-                    "PO #,SO #,Customer Code,Customer,Item Code,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Record Status",
+                    "PO #,SO #,Customer Code,Customer,Item Code,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Freight Terms,Payment Term,Overhead / LB,Freight / LB,Other / LB,Record Status",
 
                 Customers =>
                     "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Shipping Address,Email,Phone,Current Balance,Notes,Description,Routing Number,Account Number,Record Status",
@@ -867,6 +869,8 @@ namespace CastRightCatchInvManagement
                 EnsureItemColumns();
             if (baseName == PurchaseSales)
                 EnsurePurchaseColumns();
+            if (baseName == Sales)
+                EnsureSalesColumns();
 
             return SqliteInventory.Read(baseName);
         }
@@ -895,21 +899,98 @@ namespace CastRightCatchInvManagement
                 "Email",
                 "Phone",
                 "Company",
+                "Credit Limit",
                 "Current Balance",
                 "Notes",
                 "Description",
                 RoutingNumber,
                 AccountNumber);
 
+        /// <summary>One customer warehouse used as a Ship To choice.</summary>
+        public readonly record struct CustomerWarehouse(string Name, string Address);
+
         /// <summary>Billing address stored in Address.</summary>
         public static string CustomerBillingAddress(Dictionary<string, string> record) =>
             GetRecord(record, "Address").Trim();
 
-        /// <summary>Shipping address, or billing when shipping was left the same.</summary>
+        /// <summary>First warehouse address, or billing when none are on file.</summary>
         public static string CustomerShippingAddress(Dictionary<string, string> record)
         {
-            string ship = GetRecord(record, ShippingAddressColumn).Trim();
-            return ship.Length > 0 ? ship : CustomerBillingAddress(record);
+            var warehouses = CustomerWarehouses(record);
+            if (warehouses.Count > 0)
+                return warehouses[0].Address;
+            return CustomerBillingAddress(record);
+        }
+
+        /// <summary>Warehouse list stored in Shipping Address (JSON, or one legacy plain address).</summary>
+        public static List<CustomerWarehouse> CustomerWarehouses(Dictionary<string, string> record)
+        {
+            string raw = GetRecord(record, ShippingAddressColumn).Trim();
+            var list = new List<CustomerWarehouse>();
+            if (raw.Length == 0)
+                return list;
+            if (raw.StartsWith('['))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(raw);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var el in doc.RootElement.EnumerateArray())
+                        {
+                            string name = "";
+                            string address = "";
+                            if (el.ValueKind == JsonValueKind.String)
+                                address = (el.GetString() ?? "").Trim();
+                            else if (el.ValueKind == JsonValueKind.Object)
+                            {
+                                if (el.TryGetProperty("Name", out var n) || el.TryGetProperty("name", out n))
+                                    name = (n.GetString() ?? "").Trim();
+                                if (el.TryGetProperty("Address", out var a) || el.TryGetProperty("address", out a))
+                                    address = (a.GetString() ?? "").Trim();
+                            }
+
+                            if (address.Length > 0)
+                                list.Add(new CustomerWarehouse(name, address));
+                        }
+
+                        return list;
+                    }
+                }
+                catch
+                {
+                    // Corrupt JSON still has to round-trip as a single address.
+                }
+            }
+
+            list.Add(new CustomerWarehouse("", raw));
+            return list;
+        }
+
+        /// <summary>JSON for Shipping Address, or blank when the customer has no warehouses.</summary>
+        public static string FormatCustomerWarehouses(IEnumerable<CustomerWarehouse> warehouses)
+        {
+            var list = new List<CustomerWarehouse>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in warehouses)
+            {
+                string address = (item.Address ?? "").Trim();
+                if (address.Length == 0 || !seen.Add(address))
+                    continue;
+                list.Add(new CustomerWarehouse((item.Name ?? "").Trim(), address));
+            }
+
+            return list.Count == 0 ? "" : JsonSerializer.Serialize(list);
+        }
+
+        /// <summary>Name plus address lines for the customer history view.</summary>
+        public static string CustomerWarehouseDisplay(Dictionary<string, string> record)
+        {
+            var warehouses = CustomerWarehouses(record);
+            if (warehouses.Count == 0)
+                return "";
+            return string.Join("\n\n", warehouses.Select(item =>
+                item.Name.Length > 0 ? item.Name + "\n" + item.Address : item.Address));
         }
 
         /// <summary>Next unused C-n customer code.</summary>
@@ -1187,6 +1268,15 @@ namespace CastRightCatchInvManagement
             return InvoiceOutstanding(invoice) <= 0 && ParseMoney(GetRecord(invoice, "Amount")) > 0;
         }
 
+        /// <summary>Start date plus NET days from terms. Defaults to 15 when terms has no number.</summary>
+        public static DateTime DueDateFromTerms(DateTime start, string? terms)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(terms ?? "", @"\d+");
+            if (match.Success && int.TryParse(match.Value, out int days) && days >= 0)
+                return start.Date.AddDays(days);
+            return start.Date.AddDays(15);
+        }
+
         /// <summary>True when Due Date parses and is before today; unparseable dates are not treated as late.</summary>
         internal static bool InvoiceIsPastDue(Dictionary<string, string> invoice)
         {
@@ -1211,6 +1301,217 @@ namespace CastRightCatchInvManagement
             return "";
         }
 
+        /// <summary>Legal/company name on a customer or vendor row (stored in Name).</summary>
+        public static string PartyCompanyName(Dictionary<string, string> record) =>
+            GetRecord(record, "Name").Trim();
+
+        /// <summary>Doing-business-as name on a customer or vendor row (stored in Company).</summary>
+        public static string PartyDba(Dictionary<string, string> record) =>
+            GetRecord(record, "Company").Trim();
+
+        /// <summary>Invoice/SO/PO label: company DBA dba, or company alone when DBA is blank or the same.</summary>
+        public static string PartyDocumentName(Dictionary<string, string> record)
+        {
+            string company = PartyCompanyName(record);
+            string dba = PartyDba(record);
+            // No company on the row: fall back to DBA so lookups still have a label.
+            if (company.Length == 0)
+                return dba;
+            // Blank or duplicate DBA would print "Acme DBA Acme"; keep the company name only.
+            if (dba.Length == 0 || dba.Equals(company, StringComparison.OrdinalIgnoreCase))
+                return company;
+            return company + " DBA " + dba;
+        }
+
+        /// <summary>True when two party labels are the same company, including company DBA dba vs company alone.</summary>
+        public static bool PartyLabelMatches(string? a, string? b)
+        {
+            a = (a ?? "").Trim();
+            b = (b ?? "").Trim();
+            // Either side blank: there is no name to compare.
+            if (a.Length == 0 || b.Length == 0)
+                return false;
+            if (a.Equals(b, StringComparison.OrdinalIgnoreCase))
+                return true;
+            // New documents store "Company DBA Dba"; older ones stored only the company name.
+            if (a.StartsWith(b + " DBA ", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (b.StartsWith(a + " DBA ", StringComparison.OrdinalIgnoreCase))
+                return true;
+            return false;
+        }
+
+        /// <summary>True when <paramref name="name"/> is this party's company, DBA, or document label.</summary>
+        public static bool PartyNameEquals(Dictionary<string, string> record, string? name)
+        {
+            name = (name ?? "").Trim();
+            // Blank name cannot match a customer or vendor.
+            if (name.Length == 0)
+                return false;
+            return PartyLabelMatches(PartyDocumentName(record), name) ||
+                   PartyLabelMatches(PartyCompanyName(record), name) ||
+                   PartyLabelMatches(PartyDba(record), name);
+        }
+
+        /// <summary>
+        /// Money still owed this vendor: purchase lot Total Cost plus signed bank amounts
+        /// (withdrawals are negative, so payments to the vendor reduce the balance).
+        /// </summary>
+        public static decimal VendorCurrentBalance(Dictionary<string, string> vendor) =>
+            VendorCurrentBalance(
+                GetRecord(vendor, "Code"),
+                PartyCompanyName(vendor),
+                PartyDba(vendor),
+                vendor);
+
+        /// <summary>Money still owed the vendor identified by code/company/DBA.</summary>
+        public static decimal VendorCurrentBalance(
+            string? code,
+            string? name,
+            string? company,
+            Dictionary<string, string>? stored = null)
+        {
+            code = (code ?? "").Trim();
+            name = (name ?? "").Trim();
+            company = (company ?? "").Trim();
+            // No inventory store: fall back to the value already on the vendor row.
+            if (!HasStore())
+                return StoredVendorBalance(stored);
+
+            // Hidden purchase table: lots cannot be summed, so keep the stored balance.
+            if (!TableAccess.Can(TableAccess.Purchases))
+                return stored != null ? StoredVendorBalance(stored) : StoredVendorBalanceByCode(code);
+
+            decimal lots = 0;
+            foreach (var purchase in ReadRecords(PurchaseSales))
+            {
+                // Queued adds are not live payables yet.
+                if (IsWaitingAdd(purchase))
+                    continue;
+                if (!MatchesVendor(purchase, code, name))
+                    continue;
+                lots += ParseMoney(GetRecord(purchase, "Total Cost"));
+            }
+
+            decimal bank = 0;
+            // Hidden banking table: show lot cost only; payments are not visible to this user.
+            if (TableAccess.Can(TableAccess.Banking))
+            {
+                foreach (var row in BankFeed.TransactionsForVendor(code, name, company))
+                    bank += ParseMoney(GetRecord(row, "Amount"));
+            }
+
+            return lots + bank;
+        }
+
+        /// <summary>Current Balance per vendor Code from lots and bank statements.</summary>
+        public static Dictionary<string, decimal> VendorCurrentBalances(
+            List<Dictionary<string, string>> vendors)
+        {
+            var map = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+            // Empty vendor list or no store: callers overlay nothing.
+            if (vendors.Count == 0 || !HasStore())
+                return map;
+
+            // Hidden purchase table: keep whatever is already stored on each vendor row.
+            if (!TableAccess.Can(TableAccess.Purchases))
+            {
+                foreach (var vendor in vendors)
+                {
+                    string code = GetRecord(vendor, "Code").Trim();
+                    if (code.Length == 0)
+                        continue;
+                    map[code] = StoredVendorBalance(vendor);
+                }
+
+                return map;
+            }
+
+            foreach (var vendor in vendors)
+            {
+                string code = GetRecord(vendor, "Code").Trim();
+                if (code.Length > 0)
+                    map[code] = 0;
+            }
+
+            foreach (var purchase in ReadRecords(PurchaseSales))
+            {
+                // Queued adds are not live payables yet.
+                if (IsWaitingAdd(purchase))
+                    continue;
+                foreach (var vendor in vendors)
+                {
+                    string code = GetRecord(vendor, "Code").Trim();
+                    if (code.Length == 0 || !MatchesVendor(purchase, code, PartyCompanyName(vendor)))
+                        continue;
+                    map[code] = map[code] + ParseMoney(GetRecord(purchase, "Total Cost"));
+                    break;
+                }
+            }
+
+            // Hidden banking table: leave the lot totals as-is.
+            if (!TableAccess.Can(TableAccess.Banking))
+                return map;
+
+            foreach (var vendor in vendors)
+            {
+                string code = GetRecord(vendor, "Code").Trim();
+                if (code.Length == 0)
+                    continue;
+                decimal bank = 0;
+                foreach (var row in BankFeed.TransactionsForVendor(
+                             code,
+                             PartyCompanyName(vendor),
+                             PartyDba(vendor)))
+                    bank += ParseMoney(GetRecord(row, "Amount"));
+                map.TryGetValue(code, out decimal current);
+                map[code] = current + bank;
+            }
+
+            return map;
+        }
+
+        /// <summary>Write Current Balance and legacy Amount from lots plus bank statements.</summary>
+        public static void ApplyVendorCurrentBalance(
+            Dictionary<string, string> fields,
+            string code,
+            string name,
+            string company)
+        {
+            string stored = MoneyFormat.Plain(VendorCurrentBalance(code, name, company));
+            fields["Current Balance"] = stored;
+            fields["Amount"] = stored;
+        }
+
+        /// <summary>Stored Current Balance, or Amount when that cell was never filled.</summary>
+        private static decimal StoredVendorBalance(Dictionary<string, string>? vendor)
+        {
+            // No vendor row to read: callers treat missing stored balance as 0.
+            if (vendor == null)
+                return 0;
+            string current = GetRecord(vendor, "Current Balance").Trim();
+            // Current Balance has a typed/computed value: prefer it over the older Amount column.
+            if (current.Length > 0)
+                return ParseMoney(current);
+            return ParseMoney(GetRecord(vendor, "Amount"));
+        }
+
+        /// <summary>Look up the stored vendor balance by Code when the row was not passed in.</summary>
+        private static decimal StoredVendorBalanceByCode(string code)
+        {
+            // Blank code cannot match a vendor row.
+            if (code.Length == 0)
+                return 0;
+            foreach (var vendor in ReadRecords(Vendors))
+            {
+                if (!GetRecord(vendor, "Code").Equals(code, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                return StoredVendorBalance(vendor);
+            }
+
+            return 0;
+        }
+
         /// <summary>Uppercase PO/SO key with whitespace removed so CRC26-10001 matches CRC26 - 10001.</summary>
         public static string NormalizePo(string? po)
         {
@@ -1227,12 +1528,51 @@ namespace CastRightCatchInvManagement
 
         /// <summary>Add purchase columns that older databases may not have yet.</summary>
         public static void EnsurePurchaseColumns() =>
-            EnsureFileColumns(PurchaseSales, SaleByDateColumn, OverrideMinimumProfitColumn);
+            EnsureFileColumns(PurchaseSales, SaleByDateColumn, OverrideMinimumProfitColumn, FreightTermsColumn);
 
-        /// <summary>True when the catalog marks this item as frozen.</summary>
+        /// <summary>Add sales columns that older databases may not have yet.</summary>
+        public static void EnsureSalesColumns() =>
+            EnsureFileColumns(
+                Sales,
+                FreightCompanyColumn,
+                FreightTermsColumn,
+                PaymentTermColumn,
+                "Overhead / LB",
+                "Freight / LB",
+                "Other / LB");
+
+        /// <summary>Stored item-codes column for product condition (Fresh, Frozen, PF).</summary>
+        public const string ItemConditionColumn = "Fresh / Frozen";
+
+        /// <summary>Fresh, Frozen, or PF. Maps older “Previously frozen” text to PF.</summary>
+        public static string NormalizeItemCondition(string? value)
+        {
+            value = (value ?? "").Trim();
+            if (value.Length == 0)
+                return "";
+            if (value.Equals("PF", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("PF ", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("Previously frozen", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("Previously frozen", StringComparison.OrdinalIgnoreCase))
+                return "PF";
+            if (value.Equals("Frozen", StringComparison.OrdinalIgnoreCase))
+                return "Frozen";
+            if (value.Equals("Fresh", StringComparison.OrdinalIgnoreCase))
+                return "Fresh";
+            return value;
+        }
+
+        /// <summary>True for Frozen and PF (previously frozen); Fresh is not.</summary>
+        public static bool ItemConditionIsFrozen(string? condition)
+        {
+            string value = NormalizeItemCondition(condition);
+            return value.Equals("Frozen", StringComparison.OrdinalIgnoreCase) ||
+                   value.Equals("PF", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>True when the catalog marks this item as Frozen or PF.</summary>
         public static bool ItemIsFrozen(string? itemCode) =>
-            ItemMasterField(itemCode, "Fresh / Frozen")
-                .Contains("Frozen", StringComparison.OrdinalIgnoreCase);
+            ItemConditionIsFrozen(ItemMasterField(itemCode, ItemConditionColumn));
 
         /// <summary>Frozen shelf life in months. Blank or invalid frozen items default to 12.</summary>
         public static int ItemShelfLifeMonths(string? itemCode)
@@ -2066,13 +2406,14 @@ namespace CastRightCatchInvManagement
             return result;
         }
 
-        /// <summary>Write SO # (and optional freight company) onto matching sale lines that have no conflicting SO.</summary>
+        /// <summary>Write SO # (and optional freight company/terms) onto matching sale lines that have no conflicting SO.</summary>
         public static int AssignSalesOrderNumber(
             IEnumerable<string> purchaseOrders,
             string? customerCode,
             string? customerName,
             string soNumber,
-            string? freightCompany = null)
+            string? freightCompany = null,
+            string? freightTerms = null)
         {
             soNumber = (soNumber ?? "").Trim();
             // No SO number to assign: writing empty would clear existing SO #s.
@@ -2089,6 +2430,7 @@ namespace CastRightCatchInvManagement
                 return 0;
 
             string company = (freightCompany ?? "").Trim();
+            string terms = (freightTerms ?? "").Trim();
             // record is a sale row being considered for SO # assignment.
             return UpdateRecords(Sales, record =>
             {
@@ -2108,6 +2450,8 @@ namespace CastRightCatchInvManagement
                 // Freight company was provided: do not overwrite freight with blank when only assigning SO #.
                 if (company.Length > 0)
                     record[FreightCompanyColumn] = company;
+                if (terms.Length > 0)
+                    record[FreightTermsColumn] = terms;
             });
         }
 
@@ -2225,7 +2569,11 @@ namespace CastRightCatchInvManagement
 
             // Both names are present and equal: match by name when codes are missing or different.
             if (name.Length > 0 && recName.Length > 0 &&
-                recName.Equals(name, StringComparison.OrdinalIgnoreCase))
+                PartyLabelMatches(recName, name))
+                return true;
+
+            // Vendor master rows store company/DBA separately from the document label.
+            if (PartyNameEquals(record, name))
                 return true;
 
             return false;
@@ -2253,7 +2601,11 @@ namespace CastRightCatchInvManagement
 
             // Both names are present and equal: match by name when codes are missing or different.
             if (name.Length > 0 && recName.Length > 0 &&
-                recName.Equals(name, StringComparison.OrdinalIgnoreCase))
+                PartyLabelMatches(recName, name))
+                return true;
+
+            // Customer master rows store company/DBA separately from the document label.
+            if (PartyNameEquals(record, name))
                 return true;
 
             return false;
@@ -2834,9 +3186,11 @@ namespace CastRightCatchInvManagement
         /// <summary>Apply a pending add/edit/delete as Live, skipping the confirm queue, then mark it accepted.</summary>
         public static bool AcceptPending(Dictionary<string, string> pending)
         {
+            pending = ReloadPending(pending) ?? pending;
             string table = GetRecord(pending, "Table");
             string action = GetRecord(pending, "Action");
             var after = ParseJsonMap(GetRecord(pending, "After Json"));
+            var before = ParseJsonMap(GetRecord(pending, "Before Json"));
             var match = ParseJsonMap(GetRecord(pending, "Match Json"));
             DataAccess.ApplyingReview = true;
             try
@@ -2846,7 +3200,11 @@ namespace CastRightCatchInvManagement
                     action.Equals("edit", StringComparison.OrdinalIgnoreCase))
                 {
                     after[RecordStatus] = RecordLive;
-                    ReplaceMatchingRowRaw(table, row => MatchesIdentity(match, row), after);
+                    ReplaceMatchingRowRaw(
+                        table,
+                        row => MatchesPendingTarget(table, match, before, after, row),
+                        after,
+                        unrestricted: true);
                 }
                 // Pending is a delete: remove the live row now that review accepted it.
                 else if (action.Equals("delete", StringComparison.OrdinalIgnoreCase))
@@ -2854,7 +3212,7 @@ namespace CastRightCatchInvManagement
                     foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(table))
                     {
                         // This row is not the pending match: do not delete the wrong row.
-                        if (!MatchesIdentity(match, map))
+                        if (!MatchesPendingTarget(table, match, before, after, map))
                             continue;
                         SqliteInventory.DeleteById(table, id);
                         break;
@@ -2872,9 +3230,11 @@ namespace CastRightCatchInvManagement
         /// <summary>Undo a queued add/edit/delete and mark the pending row rejected.</summary>
         public static bool RejectPending(Dictionary<string, string> pending)
         {
+            pending = ReloadPending(pending) ?? pending;
             string table = GetRecord(pending, "Table");
             string action = GetRecord(pending, "Action");
             var before = ParseJsonMap(GetRecord(pending, "Before Json"));
+            var after = ParseJsonMap(GetRecord(pending, "After Json"));
             var match = ParseJsonMap(GetRecord(pending, "Match Json"));
             DataAccess.ApplyingReview = true;
             try
@@ -2885,7 +3245,7 @@ namespace CastRightCatchInvManagement
                     foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(table))
                     {
                         // This row is not the pending match: do not delete the wrong waiting-add row.
-                        if (!MatchesIdentity(match, map))
+                        if (!MatchesPendingTarget(table, match, before, after, map))
                             continue;
                         SqliteInventory.DeleteById(table, id);
                         break;
@@ -2895,7 +3255,11 @@ namespace CastRightCatchInvManagement
                 else if (action.Equals("edit", StringComparison.OrdinalIgnoreCase))
                 {
                     before[RecordStatus] = RecordLive;
-                    ReplaceMatchingRowRaw(table, row => MatchesIdentity(match, row), before);
+                    ReplaceMatchingRowRaw(
+                        table,
+                        row => MatchesPendingTarget(table, match, before, after, row),
+                        before,
+                        unrestricted: true);
                 }
                 // Rejecting a queued delete: clear Waiting for delete so the row stays live.
                 else if (action.Equals("delete", StringComparison.OrdinalIgnoreCase))
@@ -2903,7 +3267,7 @@ namespace CastRightCatchInvManagement
                     foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(table))
                     {
                         // This row is not the pending match: do not restore the wrong row.
-                        if (!MatchesIdentity(match, map))
+                        if (!MatchesPendingTarget(table, match, before, after, map))
                             continue;
                         map[RecordStatus] = RecordLive;
                         SqliteInventory.UpdateById(table, id, map);
@@ -2917,6 +3281,53 @@ namespace CastRightCatchInvManagement
             }
 
             return MarkPending(pending, "rejected");
+        }
+
+        /// <summary>True when this live row is the pending add/edit/delete, even if identity columns changed.</summary>
+        private static bool MatchesPendingTarget(
+            string table,
+            Dictionary<string, string> match,
+            Dictionary<string, string> before,
+            Dictionary<string, string> after,
+            Dictionary<string, string> row)
+        {
+            if (match.Count > 0 && MatchesIdentity(match, row))
+                return true;
+            if (after.Count > 0 && MatchesIdentity(IdentityOf(table, after), row))
+                return true;
+            if (before.Count > 0 && MatchesIdentity(IdentityOf(table, before), row))
+                return true;
+            return false;
+        }
+
+        /// <summary>Re-read the pending_changes row so Before/After Json are complete for accept/reject.</summary>
+        private static Dictionary<string, string>? ReloadPending(Dictionary<string, string> pending)
+        {
+            string table = GetRecord(pending, "Table");
+            string action = GetRecord(pending, "Action");
+            string requestedAt = GetRecord(pending, "Requested At");
+            string by = GetRecord(pending, "Requested By");
+            string matchJson = GetRecord(pending, "Match Json");
+            string summary = GetRecord(pending, "Summary");
+            foreach (var (_, map) in SqliteInventory.ReadWithIdsUnrestricted(PendingChanges))
+            {
+                if (!GetRecord(map, "Status").Equals("pending", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!GetRecord(map, "Table").Equals(table, StringComparison.OrdinalIgnoreCase) ||
+                    !GetRecord(map, "Action").Equals(action, StringComparison.OrdinalIgnoreCase) ||
+                    !GetRecord(map, "Requested By").Equals(by, StringComparison.OrdinalIgnoreCase) ||
+                    !GetRecord(map, "Requested At").Equals(requestedAt, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (matchJson.Length > 0 &&
+                    !GetRecord(map, "Match Json").Equals(matchJson, StringComparison.Ordinal))
+                    continue;
+                if (matchJson.Length == 0 &&
+                    !GetRecord(map, "Summary").Equals(summary, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                return map;
+            }
+
+            return null;
         }
 
         /// <summary>Accept or reject every pending row in a PO/SO group (or a single ungrouped request).</summary>
@@ -3059,6 +3470,199 @@ namespace CastRightCatchInvManagement
             return value;
         }
 
+        /// <summary>Window title for a Review details popup.</summary>
+        public static string PendingReviewTitle(IReadOnlyList<Dictionary<string, string>> members)
+        {
+            if (members.Count == 0)
+                return "Pending change";
+            string action = GetRecord(members[0], "Action");
+            string table = PendingReviewTableTitle(GetRecord(members[0], "Table"));
+            string label = PendingOrderLabel(members);
+            var parts = new List<string>();
+            if (action.Length > 0)
+                parts.Add(char.ToUpperInvariant(action[0]) + action[1..].ToLowerInvariant());
+            if (table.Length > 0)
+                parts.Add(table);
+            if (label.Length > 0)
+                parts.Add(label);
+            return parts.Count == 0 ? "Pending change" : string.Join("  ·  ", parts);
+        }
+
+        /// <summary>Subtitle for a Review details popup (who requested, and when).</summary>
+        public static string PendingReviewSubtitle(IReadOnlyList<Dictionary<string, string>> members)
+        {
+            if (members.Count == 0)
+                return "Pending change";
+            string by = GetRecord(members[0], "Requested By");
+            string at = GetRecord(members[0], "Requested At");
+            string action = GetRecord(members[0], "Action");
+            int lines = members.Count;
+            var parts = new List<string>();
+            if (action.Length > 0)
+                parts.Add(action);
+            if (lines > 1)
+                parts.Add(lines + " lines");
+            if (by.Length > 0)
+                parts.Add(by);
+            if (at.Length > 0)
+                parts.Add(at);
+            return parts.Count == 0 ? "Pending change" : string.Join("  ·  ", parts);
+        }
+
+        /// <summary>Field rows for Review details. Changed fields are old → new.</summary>
+        public static List<(string Label, string Value, bool Changed)> PendingReviewFields(
+            Dictionary<string, string> pending)
+        {
+            string table = GetRecord(pending, "Table");
+            string action = GetRecord(pending, "Action");
+            var before = ParseJsonMap(GetRecord(pending, "Before Json"));
+            var after = ParseJsonMap(GetRecord(pending, "After Json"));
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string key in before.Keys)
+                keys.Add(key);
+            foreach (string key in after.Keys)
+                keys.Add(key);
+
+            string[] prefer = PendingFieldOrder(table);
+            var ordered = new List<string>();
+            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string key in prefer)
+            {
+                if (!keys.Contains(key) || !used.Add(key))
+                    continue;
+                ordered.Add(key);
+            }
+
+            foreach (string key in keys)
+            {
+                if (!used.Add(key))
+                    continue;
+                ordered.Add(key);
+            }
+
+            var list = new List<(string Label, string Value, bool Changed)>();
+            foreach (string key in ordered)
+            {
+                if (SkipReviewDetailField(key))
+                    continue;
+                string oldVal = FormatReviewValue(table, key, GetRecord(before, key));
+                string newVal = FormatReviewValue(table, key, GetRecord(after, key));
+                if (action.Equals("add", StringComparison.OrdinalIgnoreCase) && oldVal.Length == 0)
+                    oldVal = "";
+                if (action.Equals("delete", StringComparison.OrdinalIgnoreCase) && newVal.Length == 0)
+                    newVal = "";
+                bool changed = !string.Equals(oldVal, newVal, StringComparison.Ordinal);
+                if (!changed && oldVal.Length == 0 && newVal.Length == 0)
+                    continue;
+                string label = DisplayColumnHeader(table, Array.Empty<string>(), key);
+                string value;
+                if (changed)
+                {
+                    string left = oldVal.Length == 0 ? "(blank)" : oldVal;
+                    string right = newVal.Length == 0 ? "(blank)" : newVal;
+                    value = left + " → " + right;
+                }
+                else
+                    value = newVal.Length > 0 ? newVal : oldVal;
+                list.Add((label, value, changed));
+            }
+
+            return list;
+        }
+
+        private static string PendingReviewTableTitle(string table)
+        {
+            if (table.Equals(Sales, StringComparison.OrdinalIgnoreCase))
+                return "Sale";
+            if (table.Equals(PurchaseSales, StringComparison.OrdinalIgnoreCase))
+                return "Purchase";
+            if (table.Equals(Customers, StringComparison.OrdinalIgnoreCase))
+                return "Customer";
+            if (table.Equals(Vendors, StringComparison.OrdinalIgnoreCase))
+                return "Vendor";
+            if (table.Equals(ItemCodes, StringComparison.OrdinalIgnoreCase))
+                return "Inventory";
+            return table.Replace('_', ' ');
+        }
+
+        private static string[] PendingFieldOrder(string table)
+        {
+            if (table.Equals(ItemCodes, StringComparison.OrdinalIgnoreCase))
+                return new[]
+                {
+                    "Code", "Description", "Species", "COO", "Pack Size", "Scientific Name",
+                    ItemConditionColumn, "Farmed / Wild", "Proc Country", MinimumProfitColumn
+                };
+            if (table.Equals(Customers, StringComparison.OrdinalIgnoreCase))
+                return new[]
+                {
+                    "Code", "Name", "Company", "Phone", "Email", "Contact Name", "Terms",
+                    "Credit Limit", "Current Balance", "Established", "Address",
+                    RoutingNumber, AccountNumber, "Description", "Notes"
+                };
+            if (table.Equals(Vendors, StringComparison.OrdinalIgnoreCase))
+                return new[]
+                {
+                    "Code", "Name", "Company", "Phone", "Contact Name", "Type", "Terms",
+                    "Current Balance", "Finalized", RoutingNumber, AccountNumber, "Description", "Notes"
+                };
+            if (table.Equals(PurchaseSales, StringComparison.OrdinalIgnoreCase))
+                return new[]
+                {
+                    "PO #", "Vendor Code", "Vendor", "Item Code", "Description", "COO",
+                    SaleByDateColumn, "Pack Size", "CS", "Volume", "Price Paid / LB", "Location",
+                    "Agreement Date", "Ship Date", "Arrival Date", "Status",
+                    FreightCompanyColumn, FreightTermsColumn
+                };
+            if (table.Equals(Sales, StringComparison.OrdinalIgnoreCase))
+                return new[]
+                {
+                    "SO #", "PO #", "Invoice #", "Customer Code", "Customer", "Item Code", "Description",
+                    "COO", "Pack Size", "CS", "Volume", "Sell Price / LB", "Amount", "Ship Date", "Status",
+                    FreightCompanyColumn, FreightTermsColumn, PaymentTermColumn,
+                    "Overhead / LB", "Freight / LB", "Other / LB"
+                };
+            return Array.Empty<string>();
+        }
+
+        private static bool SkipReviewDetailField(string key)
+        {
+            return key.Equals(RecordStatus, StringComparison.OrdinalIgnoreCase) ||
+                   key.Contains("Json", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string FormatReviewValue(string table, string key, string value)
+        {
+            value = (value ?? "").Trim();
+            if (value.Length == 0)
+                return "";
+            if (key.Equals(AccountNumber, StringComparison.OrdinalIgnoreCase))
+                return MaskAccountNumber(value);
+            if (key.Contains("Date", StringComparison.OrdinalIgnoreCase) &&
+                NumericDateBox.TryParseCell(value, out var date))
+                return date.ToString("MM/dd/yyyy");
+            if (table.Equals(ItemCodes, StringComparison.OrdinalIgnoreCase) &&
+                key.Equals(ItemConditionColumn, StringComparison.OrdinalIgnoreCase))
+                return NormalizeItemCondition(value);
+            return value;
+        }
+
+        /// <summary>Line heading for one pending member on a multi-line Review popup.</summary>
+        public static string PendingReviewLineTitle(Dictionary<string, string> pending)
+        {
+            var body = PendingBody(pending);
+            string item = GetRecord(body, "Item Code").Trim();
+            string description = GetRecord(body, "Description").Trim();
+            if (item.Length > 0 && description.Length > 0)
+                return item + "  ·  " + description;
+            if (item.Length > 0)
+                return item;
+            if (description.Length > 0)
+                return description;
+            string code = GetRecord(body, "Code").Trim();
+            return code.Length > 0 ? code : GetRecord(pending, "Summary");
+        }
+
         /// <summary>Sample order row for details, from Before/After json on the pending request.</summary>
         public static Dictionary<string, string> PendingOrderSample(IReadOnlyList<Dictionary<string, string>> members)
         {
@@ -3110,15 +3714,23 @@ namespace CastRightCatchInvManagement
         {
             string requestedAt = GetRecord(pending, "Requested At");
             string by = GetRecord(pending, "Requested By");
+            string table = GetRecord(pending, "Table");
+            string action = GetRecord(pending, "Action");
+            string matchJson = GetRecord(pending, "Match Json");
             string summary = GetRecord(pending, "Summary");
             bool ok = false;
-            foreach (var (id, map) in SqliteInventory.ReadWithIds(PendingChanges))
+            foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(PendingChanges))
             {
                 // This pending row is not the one just reviewed, or it is already decided: only the matching pending row should be marked.
-                if (!GetRecord(map, "Summary").Equals(summary, StringComparison.OrdinalIgnoreCase) ||
+                if (!GetRecord(map, "Status").Equals("pending", StringComparison.OrdinalIgnoreCase) ||
                     !GetRecord(map, "Requested By").Equals(by, StringComparison.OrdinalIgnoreCase) ||
                     !GetRecord(map, "Requested At").Equals(requestedAt, StringComparison.OrdinalIgnoreCase) ||
-                    !GetRecord(map, "Status").Equals("pending", StringComparison.OrdinalIgnoreCase))
+                    !GetRecord(map, "Table").Equals(table, StringComparison.OrdinalIgnoreCase) ||
+                    !GetRecord(map, "Action").Equals(action, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (matchJson.Length > 0 &&
+                    !GetRecord(map, "Match Json").Equals(matchJson, StringComparison.Ordinal) &&
+                    !GetRecord(map, "Summary").Equals(summary, StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 map["Status"] = status;
@@ -3161,9 +3773,13 @@ namespace CastRightCatchInvManagement
         private static bool ReplaceMatchingRowRaw(
             string baseName,
             Func<Dictionary<string, string>, bool> match,
-            Dictionary<string, string> values)
+            Dictionary<string, string> values,
+            bool unrestricted = false)
         {
-            foreach (var (id, map) in SqliteInventory.ReadWithIds(baseName))
+            var rows = unrestricted
+                ? SqliteInventory.ReadWithIdsUnrestricted(baseName)
+                : SqliteInventory.ReadWithIds(baseName);
+            foreach (var (id, map) in rows)
             {
                 // This row is not the one to replace: keep scanning.
                 if (!match(map))
@@ -3309,6 +3925,28 @@ namespace CastRightCatchInvManagement
                 // Column is Description: show Species for purchase lines.
                 if (name.Equals("Description", StringComparison.OrdinalIgnoreCase))
                     return "Species";
+                // Sale By Date is the product expiration typed on the PO line.
+                if (name.Equals(SaleByDateColumn, StringComparison.OrdinalIgnoreCase))
+                    return "Expiration Date";
+            }
+
+            // Item catalog: Fresh / Frozen is Product Condition (Fresh, Frozen, PF).
+            if (baseName == ItemCodes &&
+                name.Equals(ItemConditionColumn, StringComparison.OrdinalIgnoreCase))
+                return "Product Condition";
+
+            // Customers and vendors: Name is the company, Company is the DBA.
+            if (baseName == Customers || baseName == Vendors)
+            {
+                // Older files stored a single Amount; customers show it as Credit Limit.
+                if (baseName == Customers &&
+                    name.Equals("Amount", StringComparison.OrdinalIgnoreCase))
+                    return "Credit Limit";
+                // Vendor Amount is the same payable as Current Balance.
+                if (baseName == Vendors &&
+                    name.Equals("Amount", StringComparison.OrdinalIgnoreCase))
+                    return "Current Balance";
+                return DisplayPartyColumn(name);
             }
 
             // Not the sales table: Lot # / Customer PO aliases only apply to sales.
@@ -3320,6 +3958,16 @@ namespace CastRightCatchInvManagement
                 return "Lot #";
             if (name.Equals("Invoice #", StringComparison.OrdinalIgnoreCase))
                 return "Customer PO";
+            return name;
+        }
+
+        /// <summary>Customer/vendor file header → on-screen label (Name is Company, Company is DBA).</summary>
+        public static string DisplayPartyColumn(string name)
+        {
+            if (name.Equals("Name", StringComparison.OrdinalIgnoreCase))
+                return "Company";
+            if (name.Equals("Company", StringComparison.OrdinalIgnoreCase))
+                return "DBA";
             return name;
         }
 
@@ -3351,6 +3999,7 @@ namespace CastRightCatchInvManagement
                     "Name",
                     "Company",
                     "Phone",
+                    "Credit Limit",
                     "Current Balance"
                 },
                 Vendors => new[]
@@ -3447,34 +4096,31 @@ namespace CastRightCatchInvManagement
         public static void ResetGridColumns(DataGridView grid)
         {
             string? baseName = grid.Tag is ColumnSearch search ? search.FileBaseName : null;
-            // No saved default layout (or apply failed): fall back to summary-column visibility.
+            // No saved default layout (or apply failed): fall back to summary-column visibility and order.
             if (!GridLayout.ApplyDefault(grid))
             {
-                GridLayout.BeginUpdate();
-                try
+                var summary = new List<string>();
+                foreach (DataGridViewColumn col in grid.Columns)
                 {
-                    foreach (DataGridViewColumn col in grid.Columns)
-                    {
-                        // Add-column button: that column must stay visible.
-                        if (Theme.IsAddColumn(col))
-                        {
-                            col.Visible = true;
-                            continue;
-                        }
+                    // Add-column button: that column is not part of the summary set.
+                    if (Theme.IsAddColumn(col))
+                        continue;
 
-                        col.Visible = IsSummaryColumn(baseName ?? "", col.HeaderText);
-                        // Record Status column and the user is allowed to see it: waiting rows would be invisible without this column.
-                        if (IsRecordStatusColumn(col) &&
-                            (string.IsNullOrWhiteSpace(baseName) ||
-                             !DataAccess.IsColumnHidden(baseName, RecordStatus)))
-                            col.Visible = true;
+                    bool show = IsSummaryColumn(baseName ?? "", col.HeaderText);
+                    // Record Status column and the user is allowed to see it: waiting rows would be invisible without this column.
+                    if (IsRecordStatusColumn(col) &&
+                        (string.IsNullOrWhiteSpace(baseName) ||
+                         !DataAccess.IsColumnHidden(baseName, RecordStatus)))
+                        show = true;
+                    if (show)
+                    {
+                        string key = col.Tag as string ?? col.Name;
+                        if (key.Length > 0)
+                            summary.Add(key);
                     }
                 }
-                finally
-                {
-                    GridLayout.EndUpdate();
-                }
 
+                GridLayout.ApplyNames(grid, summary);
                 GridLayout.Save(grid);
             }
 
@@ -3492,6 +4138,15 @@ namespace CastRightCatchInvManagement
                     if (DataAccess.IsColumnHidden(baseName, key) ||
                         DataAccess.IsColumnHidden(baseName, col.HeaderText))
                         col.Visible = false;
+                    // Vendor/customer Amount is the legacy name for Current Balance / Credit Limit.
+                    if (IsLegacyPartyAmountColumn(baseName, key))
+                        col.Visible = false;
+                    // Item shelf life moved to the purchase-line expiration date.
+                    if (IsRetiredItemShelfLifeColumn(baseName, key))
+                        col.Visible = false;
+                    // Warehouse list is JSON in Shipping Address; edit it on New Customer.
+                    if (IsWarehouseListColumn(baseName, key))
+                        col.Visible = false;
                 }
             }
 
@@ -3508,8 +4163,8 @@ namespace CastRightCatchInvManagement
             {
                 PurchaseSales => new[] { "PO #", "Record Status", "Status", "Ship Date", "Order Date" },
                 Sales => new[] { "SO #", "Record Status", "Status", "Ship Date", "Lot #" },
-                Customers => new[] { "Record Status", "Name", "Company", "Phone", "Current Balance" },
-                Vendors => new[] { "Record Status", "Name", "Company", "Phone", "Current Balance" },
+                Customers => new[] { "Record Status", "Company", "DBA", "Phone", "Credit Limit", "Current Balance" },
+                Vendors => new[] { "Record Status", "Company", "DBA", "Phone", "Current Balance" },
                 Invoices => new[] { "SO #", "PO #", "Record Status", "Type", "Customer", "Vendor", "Ship Date", "Due Date", "Status", "Paid" },
                 BankTransactions => new[] { "Date", "Record Status", "Amount", "Account", "Description", "Invoice #" },
                 _ => null
@@ -3522,7 +4177,29 @@ namespace CastRightCatchInvManagement
                 name.Equals(displayHeader, StringComparison.OrdinalIgnoreCase));
         }
 
-        /// <summary>True when the column is Record Status, which must stay visible for waiting rows.</summary>
+        /// <summary>True for the leftover Amount column on customers (Credit Limit) or vendors (Current Balance).</summary>
+        private static bool IsLegacyPartyAmountColumn(string? baseName, string fileName)
+        {
+            if (!fileName.Equals("Amount", StringComparison.OrdinalIgnoreCase))
+                return false;
+            return baseName == Vendors || baseName == Customers;
+        }
+
+        /// <summary>True for the leftover item-catalog shelf-life column; expiration is on the purchase line.</summary>
+        internal static bool IsRetiredItemShelfLifeColumn(string? baseName, string fileName)
+        {
+            return baseName == ItemCodes &&
+                   fileName.Equals(ShelfLifeMonthsColumn, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>True for the customer warehouse JSON stored in Shipping Address.</summary>
+        internal static bool IsWarehouseListColumn(string? baseName, string fileName)
+        {
+            return baseName == Customers &&
+                   fileName.Equals(ShippingAddressColumn, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>True when the column is Record Status.</summary>
         private static bool IsRecordStatusColumn(DataGridViewColumn col)
         {
             string key = col.Tag as string ?? col.Name;
@@ -3654,6 +4331,8 @@ namespace CastRightCatchInvManagement
                 EnsureItemColumns();
             if (baseName == PurchaseSales)
                 EnsurePurchaseColumns();
+            if (baseName == Sales)
+                EnsureSalesColumns();
 
             var data = new GridFillData();
             // No local folder, no live server session, or table/db missing: ApplyGridFill shows the empty-store hint.
@@ -3666,18 +4345,46 @@ namespace CastRightCatchInvManagement
             data.Header = SqliteInventory.Headers(baseName);
             data.Order = ColumnDisplayOrder(baseName, data.Header);
             var records = VisibleRecords(baseName);
+            Dictionary<string, decimal>? vendorOwed = null;
+            // Vendor grid: Current Balance is lots plus bank payments, not the stored Amount cell.
+            if (baseName == Vendors)
+                vendorOwed = VendorCurrentBalances(records);
             data.Rows = new List<(object[] Cells, string Status)>(records.Count);
             // record is one visible table row turned into grid cells plus Record Status.
             foreach (var record in records)
             {
                 token.ThrowIfCancellationRequested();
                 var cells = new object[data.Order.Length];
+                string? owedText = null;
+                if (vendorOwed != null)
+                {
+                    string code = GetRecord(record, "Code").Trim();
+                    if (code.Length > 0 && vendorOwed.TryGetValue(code, out decimal owed))
+                        owedText = MoneyFormat.Plain(owed);
+                }
+
                 for (int n = 0; n < data.Order.Length; n++)
                 {
                     int c = data.Order[n];
-                    string value = GetRecord(record, data.Header[c]);
+                    string header = data.Header[c];
+                    string value = GetRecord(record, header);
+                    // Overlay computed payable onto Current Balance and the legacy Amount column.
+                    if (owedText != null &&
+                        (header.Equals("Current Balance", StringComparison.OrdinalIgnoreCase) ||
+                         header.Equals("Amount", StringComparison.OrdinalIgnoreCase)))
+                        value = owedText;
+                    // Older customer files stored the credit amount in Amount.
+                    if (baseName == Customers &&
+                        header.Equals("Credit Limit", StringComparison.OrdinalIgnoreCase) &&
+                        value.Trim().Length == 0)
+                        value = GetRecord(record, "Amount");
+                    // Item catalog: show PF for previously-frozen rows.
+                    if (baseName == ItemCodes &&
+                        header.Equals(ItemConditionColumn, StringComparison.OrdinalIgnoreCase) &&
+                        value.Trim().Length > 0)
+                        value = NormalizeItemCondition(value);
                     // This cell is Record Status: blank older rows should display Live, not empty.
-                    if (data.Header[c].Trim().Equals(RecordStatus, StringComparison.OrdinalIgnoreCase))
+                    if (header.Trim().Equals(RecordStatus, StringComparison.OrdinalIgnoreCase))
                         value = string.IsNullOrWhiteSpace(value) ? RecordLive : value.Trim();
                     cells[n] = value;
                 }
@@ -3691,9 +4398,9 @@ namespace CastRightCatchInvManagement
         /// <summary>Apply prepared columns and rows on the UI thread.</summary>
         private static void ApplyGridFill(DataGridView grid, string baseName, GridFillData data)
         {
+            GridLayout.BeginUpdate();
             grid.Columns.Clear();
             grid.Rows.Clear();
-            GridLayout.BeginUpdate();
             try
             {
                 // Prepare found no folder/table: show the Settings hint instead of an empty grid that looks like no data.
@@ -3734,9 +4441,15 @@ namespace CastRightCatchInvManagement
                         continue;
                     }
 
-                    // Record Status column: force visible so waiting-row colors have a status cell to show.
-                    if (IsRecordStatusColumn(col))
-                        col.Visible = true;
+                    // Vendor/customer Amount is the legacy name for Current Balance / Credit Limit.
+                    if (IsLegacyPartyAmountColumn(baseName, key))
+                        col.Visible = false;
+                    // Item shelf life moved to the purchase-line expiration date.
+                    if (IsRetiredItemShelfLifeColumn(baseName, key))
+                        col.Visible = false;
+                    // Warehouse list is JSON in Shipping Address; edit it on New Customer.
+                    if (IsWarehouseListColumn(baseName, key))
+                        col.Visible = false;
                 }
 
                 // row is one prepared grid line: cell values in display order plus Record Status for coloring.
@@ -3799,18 +4512,6 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
-            var sourceLines = File.ReadAllLines(sourcePath)
-                .Where(line => !string.IsNullOrWhiteSpace(line))
-                .ToList();
-
-            // File has no non-blank lines: no header to compare.
-            if (sourceLines.Count == 0)
-            {
-                message = "The selected file is empty.";
-                return false;
-            }
-
-            string[] expectedHeader = GetExpectedHeader(baseName).Split(',');
             var sourceRows = CsvIO.Read(sourcePath);
             // CsvIO parsed zero rows: empty after CSV parse (quotes/blank).
             if (sourceRows.Count == 0)
@@ -3819,7 +4520,10 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
-            var incomingHeader = sourceRows[0];
+            string[] expectedHeader = GetExpectedHeader(baseName).Split(',');
+            var incomingHeader = sourceRows[0]
+                .Select(h => h.Trim().Trim('\uFEFF'))
+                .ToArray();
             bool exact = NormalizeHeader(string.Join(",", incomingHeader)) ==
                          NormalizeHeader(GetExpectedHeader(baseName));
             // Header is not exact, and it is not a compatible customer/vendor subset: importing mismatched columns would write values under the wrong headers.
@@ -3830,7 +4534,7 @@ namespace CastRightCatchInvManagement
                 message =
                     "The file headings do not match this page.\n\n" +
                     "Expected:\n" + GetExpectedHeader(baseName) + "\n\n" +
-                    "Found:\n" + sourceLines[0];
+                    "Found:\n" + CsvIO.Join(incomingHeader);
                 return false;
             }
 
@@ -3850,17 +4554,60 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
+            bool keyed = baseName == Customers || baseName == Vendors;
+            var existingCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (keyed)
+            {
+                foreach (var record in ReadAllRecords(baseName))
+                {
+                    string code = GetRecord(record, "Code").Trim();
+                    if (code.Length > 0)
+                        existingCodes.Add(code);
+                }
+            }
+
             var batch = new List<Dictionary<string, string>>();
+            int skipped = 0;
             for (int i = 1; i < sourceRows.Count; i++)
             {
                 var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 for (int c = 0; c < incomingHeader.Length; c++)
-                    values[incomingHeader[c].Trim()] = c < sourceRows[i].Length ? sourceRows[i][c] : "";
+                    values[incomingHeader[c].Trim().Trim('\uFEFF')] = c < sourceRows[i].Length ? sourceRows[i][c] : "";
+                if (keyed)
+                {
+                    string code = GetRecord(values, "Code").Trim();
+                    if (code.Length == 0 || existingCodes.Contains(code))
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    existingCodes.Add(code);
+                    values[RecordStatus] = GetRecord(values, RecordStatus).Trim().Length > 0
+                        ? GetRecord(values, RecordStatus).Trim()
+                        : RecordLive;
+                    if (baseName == Customers)
+                        values["Credit Limit"] = MoneyFormat.Store(GetRecord(values, "Credit Limit"));
+                    if (baseName == Vendors)
+                        values["Amount"] = MoneyFormat.Store(GetRecord(values, "Amount"));
+                    values["Current Balance"] = MoneyFormat.Store(GetRecord(values, "Current Balance"));
+                }
+
                 batch.Add(values);
             }
 
+            if (batch.Count == 0)
+            {
+                message = skipped > 0
+                    ? $"No new rows imported. {skipped} already had that code."
+                    : "Headings matched, but there were no data rows to import.";
+                return skipped > 0;
+            }
+
             int imported = SqliteInventory.InsertMany(baseName, batch);
-            message = $"{imported} row(s) imported into {SqliteInventory.FileName} ({baseName}).";
+            message = skipped > 0
+                ? $"{imported} row(s) imported into {baseName}. {skipped} skipped because that code already exists."
+                : $"{imported} row(s) imported into {baseName}.";
             NotifyDataChanged();
             return true;
         }

@@ -154,6 +154,26 @@ internal sealed partial class InventoryStore
         }
     }
 
+    /// <summary>Deletes a row by id; negative ids address archive. False when the id is invalid or missing.</summary>
+    public bool DeleteById(string table, long id)
+    {
+        RequireTable(table);
+        lock (_gate)
+        {
+            bool archive = id < 0;
+            long rawId = archive ? -id : id;
+            // Zero/negative after unwrapping is not a real primary key.
+            if (rawId <= 0)
+                return false;
+
+            using var db = Open(archive);
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = $"DELETE FROM {Quote(table)} WHERE id = $id;";
+            cmd.AddParam("$id", rawId);
+            return cmd.Exec(_engine) > 0;
+        }
+    }
+
     /// <summary>Adds missing TEXT columns on live, and on archive when viewing old process tables.</summary>
     public void EnsureColumns(string table, IEnumerable<string> columns, bool viewOld)
     {

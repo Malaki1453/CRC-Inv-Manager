@@ -1,6 +1,6 @@
 namespace CastRightCatchInvManagement
 {
-    /// <summary>New/edit vendor page: identity, type, amount, and banking.</summary>
+    /// <summary>New/edit vendor page: identity, type, current balance, and banking.</summary>
     public partial class AddVendor : Form, INavigationPage
     {
         private TextBox _code = null!;
@@ -10,7 +10,6 @@ namespace CastRightCatchInvManagement
         private TextBox _contact = null!;
         private TextBox _terms = null!;
         private ComboBox _type = null!;
-        private TextBox _amount = null!;
         private TextBox _balance = null!;
         private TextBox _routing = null!;
         private TextBox _account = null!;
@@ -131,26 +130,23 @@ namespace CastRightCatchInvManagement
             footer.Controls.Add(_another);
             footer.Controls.Add(clear);
 
-            var identity = Card("Identity", 220);
+            var identity = Card("Identity", 168);
             _code = AddField(identity, "CODE", 20, 48, 140);
-            _name = AddField(identity, "NAME", 180, 48, 220);
-            _company = AddField(identity, "COMPANY", 420, 48, 220);
+            _name = AddField(identity, "COMPANY", 180, 48, 220);
+            _company = AddField(identity, "DBA", 420, 48, 220);
             _phone = AddField(identity, "PHONE", 660, 48, 160);
             _contact = AddField(identity, "CONTACT NAME", 20, 108, 220);
             _terms = AddField(identity, "TERMS", 260, 108, 140);
             _type = AddCombo(identity, "TYPE", 420, 108, 180);
-            _amount = AddField(identity, "AMOUNT", 620, 108, 140);
-            _balance = AddField(identity, "CURRENT BALANCE", 20, 168, 160);
+            _balance = AddField(identity, "CURRENT BALANCE", 620, 108, 160);
             _code.PlaceholderText = "V-1001";
-            _name.PlaceholderText = "Vendor name";
-            _company.PlaceholderText = "Company";
+            _name.PlaceholderText = "Company name";
+            _company.PlaceholderText = "DBA";
             _phone.PlaceholderText = "(253) 000-0000";
             _contact.PlaceholderText = "Who we talk to";
             _terms.PlaceholderText = "NET 15";
-            _amount.PlaceholderText = "0.00";
-            _balance.PlaceholderText = "0.00";
-            MoneyFormat.BindInput(_amount);
-            MoneyFormat.BindInput(_balance);
+            _balance.PlaceholderText = "From lots and bank";
+            Theme.StyleComputedField(_balance);
 
             var banking = Card("Banking", 110);
             _routing = AddField(banking, "ROUTING NUMBER", 20, 48, 280);
@@ -208,8 +204,7 @@ namespace CastRightCatchInvManagement
             _phone.Text = "";
             _contact.Text = "";
             _terms.Text = "";
-            _amount.Text = "";
-            _balance.Text = "";
+            _balance.Text = MoneyFormat.Display(0m);
             _routing.Text = "";
             _account.Text = "";
             _notes.Text = "";
@@ -226,13 +221,15 @@ namespace CastRightCatchInvManagement
             ShowWaitNote(DataFiles.StatusOf(record));
             _code.Text = _originalCode;
             _name.Text = DataFiles.GetRecord(record, "Name");
-            _company.Text = DataFiles.GetRecordAny(record, "Company", "Name");
+            _company.Text = DataFiles.GetRecord(record, "Company");
             _phone.Text = DataFiles.GetRecord(record, "Phone");
             _contact.Text = DataFiles.GetRecord(record, "Contact Name");
             _terms.Text = DataFiles.GetRecord(record, "Terms");
-            _amount.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Amount"));
-            _balance.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance"));
-            SelectCombo(_type, DataFiles.GetRecord(record, "Type"));
+            _balance.Text = MoneyFormat.Display(DataFiles.VendorCurrentBalance(record));
+            string type = DataFiles.GetRecord(record, "Type");
+            if (VendorTypes.IsFreightName(type))
+                type = VendorTypes.Freight;
+            SelectCombo(_type, type);
             _notes.Text = DataFiles.GetRecordAny(record, "Description", "Notes");
             _routing.Text = DataFiles.GetRecord(record, DataFiles.RoutingNumber);
             _storedAccount = DataFiles.DigitsOnly(DataFiles.GetRecord(record, DataFiles.AccountNumber));
@@ -269,7 +266,7 @@ namespace CastRightCatchInvManagement
             string name = _name.Text.Trim();
             if (code.Length == 0 || name.Length == 0)
             {
-                MessageBox.Show("Enter a code and a name.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Enter a code and a company.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
 
@@ -298,13 +295,12 @@ namespace CastRightCatchInvManagement
                 ["Contact Name"] = _contact.Text.Trim(),
                 ["Terms"] = _terms.Text.Trim(),
                 ["Type"] = type,
-                ["Amount"] = MoneyFormat.Store(_amount.Text),
-                ["Current Balance"] = MoneyFormat.Store(_balance.Text),
                 ["Notes"] = _notes.Text.Trim(),
                 ["Description"] = _notes.Text.Trim(),
                 [DataFiles.RoutingNumber] = DataFiles.DigitsOnly(_routing.Text),
                 [DataFiles.AccountNumber] = DataFiles.ResolveAccountNumber(_account.Text, _storedAccount)
             };
+            DataFiles.ApplyVendorCurrentBalance(fields, code, name, _company.Text.Trim());
 
             try
             {

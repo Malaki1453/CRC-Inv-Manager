@@ -38,6 +38,8 @@ public static class ServerOps
     public const string TableInsertMany = "table.insertMany";
     /// <summary>Update a row by id if the caller may write it.</summary>
     public const string TableUpdate = "table.update";
+    /// <summary>Delete a row by id if the caller may write it.</summary>
+    public const string TableDelete = "table.delete";
     /// <summary>Add missing TEXT columns on live (and archive when viewing old).</summary>
     public const string TableEnsureColumns = "table.ensureColumns";
     /// <summary>Count rows in live, plus archive when viewing old process tables.</summary>

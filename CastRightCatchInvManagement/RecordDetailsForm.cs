@@ -86,8 +86,8 @@ namespace CastRightCatchInvManagement
             {
                 _itemCode = DataFiles.GetRecord(record, "Code").Trim();
                 _itemDescription = DataFiles.GetRecordAny(record, "Description", "Species");
-                _itemFrozen = DataFiles.GetRecord(record, "Fresh / Frozen")
-                    .Contains("Frozen", StringComparison.OrdinalIgnoreCase);
+                _itemFrozen = DataFiles.ItemConditionIsFrozen(
+                    DataFiles.GetRecord(record, DataFiles.ItemConditionColumn));
             }
             var lines = purchase
                 ? DataFiles.FindPurchasesByPo(DataFiles.GetRecord(record, "PO #"), includeHidden)
@@ -267,7 +267,8 @@ namespace CastRightCatchInvManagement
                 ReadOnly = false
             };
             _lotsGrid.Columns.Add(overrideCol);
-            AddCol(_lotsGrid, _itemFrozen ? "Anniversary date" : "Purchased date", 120);
+            AddCol(_lotsGrid, "Purchased date", 110);
+            AddCol(_lotsGrid, "Expiration date", 110);
             foreach (DataGridViewColumn col in _lotsGrid.Columns)
             {
                 if (col.Name != "OverrideMinProfit")
@@ -300,13 +301,22 @@ namespace CastRightCatchInvManagement
             CenterSpinner();
 
             var fields = new List<KeyValuePair<string, string>>();
-            foreach (var key in new[] { "Code", "Description", "Species", "COO", "Pack Size", "Scientific Name" })
+            foreach (var key in new[]
+                     {
+                         "Code", "Description", "Species", "COO", "Pack Size", "Scientific Name",
+                         DataFiles.ItemConditionColumn
+                     })
             {
                 string value = DataFiles.GetRecord(item, key).Trim();
+                if (key.Equals(DataFiles.ItemConditionColumn, StringComparison.OrdinalIgnoreCase))
+                    value = DataFiles.NormalizeItemCondition(value);
                 // Skip empty item fields so the header card only shows what is filled.
                 if (value.Length == 0)
                     continue;
-                fields.Add(new KeyValuePair<string, string>(key, value));
+                string label = key.Equals(DataFiles.ItemConditionColumn, StringComparison.OrdinalIgnoreCase)
+                    ? "Product Condition"
+                    : key;
+                fields.Add(new KeyValuePair<string, string>(label, value));
             }
 
             decimal minProfit = DataFiles.ItemMinimumProfit(DataFiles.GetRecord(item, "Code"));
@@ -481,7 +491,7 @@ namespace CastRightCatchInvManagement
                             vendor,
                             volume,
                             PurchaseDate(purchase),
-                            LotSaleBy(purchase),
+                            LotExpiration(purchase),
                             DataFiles.GetRecord(purchase, "Price Paid / LB"),
                             DataFiles.IsYes(DataFiles.GetRecord(purchase, DataFiles.OverrideMinimumProfitColumn)));
                     }
@@ -548,8 +558,8 @@ namespace CastRightCatchInvManagement
             return DateTime.TryParse(raw, out var date) ? date.ToString("MM/dd/yyyy") : raw;
         }
 
-        /// <summary>Stored sale-by, or purchased date plus the frozen item's shelf life.</summary>
-        private string LotSaleBy(Dictionary<string, string> purchase)
+        /// <summary>Expiration typed on the purchase line, or the older computed sale-by for frozen lots.</summary>
+        private string LotExpiration(Dictionary<string, string> purchase)
         {
             string stored = DataFiles.GetRecord(purchase, DataFiles.SaleByDateColumn).Trim();
             if (stored.Length > 0)
@@ -718,9 +728,8 @@ namespace CastRightCatchInvManagement
                 Lbs(remain),
                 snap.PricePerLb.Length > 0 ? MoneyFormat.Display(snap.PricePerLb) : "—",
                 snap.OverrideMinProfit,
-                _itemFrozen
-                    ? (snap.SaleByDate.Length > 0 ? snap.SaleByDate : "—")
-                    : (snap.PurchasedDate.Length > 0 ? snap.PurchasedDate : "—")
+                snap.PurchasedDate.Length > 0 ? snap.PurchasedDate : "—",
+                snap.SaleByDate.Length > 0 ? snap.SaleByDate : "—"
             };
             // Update the existing grid row when this lot (normalized PO `key`) was already drawn.
             if (_lotRows.TryGetValue(key, out int index) && index < _lotsGrid.Rows.Count)
@@ -851,6 +860,7 @@ namespace CastRightCatchInvManagement
                         ? MoneyFormat.Display(pair.Value.PricePerLb)
                         : "—",
                     false,
+                    "",
                     "");
                 var row = _lotsGrid.Rows[index];
                 // Tag "sale:<normalized PO>" marks this as an expand line so clicks do not toggle another lot.
@@ -1125,6 +1135,8 @@ namespace CastRightCatchInvManagement
                 AddCol(grid, "Item Code", 90);
                 AddCol(grid, "Description", 180, fill: 180);
                 AddCol(grid, "COO", 50);
+                AddCol(grid, DataFiles.SaleByDateColumn, 90);
+                grid.Columns[DataFiles.SaleByDateColumn].HeaderText = "Expiration Date";
                 AddCol(grid, "Pack Size", 70);
                 AddCol(grid, "CS", 50);
                 AddCol(grid, "Volume", 70);
@@ -1158,6 +1170,10 @@ namespace CastRightCatchInvManagement
                     string value = key.Equals("Lot #", StringComparison.OrdinalIgnoreCase)
                         ? DataFiles.SaleLot(line)
                         : DataFiles.GetRecord(line, key);
+                    if (purchase &&
+                        key.Equals(DataFiles.SaleByDateColumn, StringComparison.OrdinalIgnoreCase) &&
+                        NumericDateBox.TryParseCell(value, out var expiration))
+                        value = expiration.ToString("MM/dd/yyyy");
                     values.Add(string.IsNullOrWhiteSpace(value) ? "—" : value);
                 }
 
@@ -1208,15 +1224,16 @@ namespace CastRightCatchInvManagement
                     "PO #", "Location", "Status",
                     "Agreement Date", "Expected Ship Date", "Ship Date",
                     "Arrival Date", "Vendor Due Date",
-                    "Forwarder", "Logistics", DataFiles.FreightCompanyColumn,
+                    "Forwarder", "Logistics", DataFiles.FreightCompanyColumn, DataFiles.FreightTermsColumn,
                     "Overhead / LB", "Freight / LB", "Forwarder / LB", "Other / LB",
                     DataFiles.RecordStatus
                 }
                 : new[]
                 {
                     "PO #", "SO #", "Status",
-                    "Ship Date", "Due Date", "Invoice #",
-                    "Paid", DataFiles.FreightCompanyColumn,
+                    "Ship Date", "Due Date", DataFiles.PaymentTermColumn, "Invoice #",
+                    "Paid", DataFiles.FreightCompanyColumn, DataFiles.FreightTermsColumn,
+                    "Overhead / LB", "Freight / LB", "Other / LB",
                     DataFiles.RecordStatus
                 };
 
@@ -1267,10 +1284,27 @@ namespace CastRightCatchInvManagement
                     "Email", "Current Balance"
                 };
 
+            string vendorBalance = "";
+            if (purchase)
+            {
+                string vendorCode = DataFiles.GetRecord(party, "Code").Trim();
+                if (vendorCode.Length == 0)
+                    vendorCode = code;
+                string vendorName = DataFiles.PartyCompanyName(party);
+                if (vendorName.Length == 0)
+                    vendorName = name;
+                vendorBalance = MoneyFormat.Display(DataFiles.VendorCurrentBalance(
+                    vendorCode,
+                    vendorName,
+                    DataFiles.PartyDba(party),
+                    party.Count > 0 ? party : null));
+            }
             var list = new List<KeyValuePair<string, string>>();
             foreach (var key in keys)
             {
-                string value = DataFiles.GetRecord(party, key);
+                string value = key.Equals("Current Balance", StringComparison.OrdinalIgnoreCase) && purchase
+                    ? vendorBalance
+                    : DataFiles.GetRecord(party, key);
                 // Party table may be missing; fall back to the order row for code, name, and terms.
                 if (value.Length == 0)
                 {
@@ -1284,7 +1318,7 @@ namespace CastRightCatchInvManagement
                         value = "";
                 }
 
-                list.Add(new KeyValuePair<string, string>(key, value));
+                list.Add(new KeyValuePair<string, string>(DataFiles.DisplayPartyColumn(key), value));
             }
 
             return list;
@@ -1303,15 +1337,12 @@ namespace CastRightCatchInvManagement
             foreach (var record in DataFiles.VisibleRecords(table))
             {
                 string recCode = DataFiles.GetRecord(record, "Code").Trim();
-                string recName = DataFiles.GetRecordAny(record, "Name", "Company").Trim();
                 // Codes are unique; return immediately on a code hit.
                 if (code.Length > 0 &&
                     recCode.Equals(code, StringComparison.OrdinalIgnoreCase))
                     return record;
                 // Keep the first name match in case no code matches.
-                if (byName == null &&
-                    name.Length > 0 &&
-                    recName.Equals(name, StringComparison.OrdinalIgnoreCase))
+                if (byName == null && DataFiles.PartyNameEquals(record, name))
                     byName = record;
             }
 
@@ -1519,7 +1550,7 @@ namespace CastRightCatchInvManagement
                 ? new[]
                 {
                     DataFiles.RecordStatus, "Code", "Name", "Company", "Phone", "Contact Name", "Type", "Terms",
-                    "Amount", "Current Balance", "Finalized",
+                    "Current Balance", "Finalized",
                     DataFiles.RoutingNumber, DataFiles.AccountNumber, "Description", "Notes"
                 }
                 : Array.Empty<string>();
@@ -1535,13 +1566,44 @@ namespace CastRightCatchInvManagement
                     DataFiles.StatusOf(record)));
             }
 
+            bool partyCard = prefer.Length > 0;
+            bool vendorCard = title.Equals("Vendor", StringComparison.OrdinalIgnoreCase);
             foreach (var key in prefer)
             {
                 // Preferred keys that are missing or already listed are skipped.
-                if (used.Contains(key) || !TryGet(record, key, out var value))
+                if (used.Contains(key))
+                    continue;
+                // Vendor Current Balance is lots plus bank payments, even when the stored cell is blank.
+                if (vendorCard && key.Equals("Current Balance", StringComparison.OrdinalIgnoreCase))
+                {
+                    used.Add(key);
+                    list.Add(new KeyValuePair<string, string>(
+                        key,
+                        MoneyFormat.Display(DataFiles.VendorCurrentBalance(record))));
+                    continue;
+                }
+
+                // Older customer files stored the credit amount in Amount.
+                if (title.Equals("Customer", StringComparison.OrdinalIgnoreCase) &&
+                    key.Equals("Credit Limit", StringComparison.OrdinalIgnoreCase))
+                {
+                    TryGet(record, "Credit Limit", out var credit);
+                    if (string.IsNullOrWhiteSpace(credit))
+                        TryGet(record, "Amount", out credit);
+                    used.Add(key);
+                    used.Add("Amount");
+                    list.Add(new KeyValuePair<string, string>(
+                        key,
+                        DisplayField(key, credit ?? "")));
+                    continue;
+                }
+
+                if (!TryGet(record, key, out var value))
                     continue;
                 used.Add(key);
-                list.Add(new KeyValuePair<string, string>(key, DisplayField(key, value)));
+                list.Add(new KeyValuePair<string, string>(
+                    partyCard ? DataFiles.DisplayPartyColumn(key) : key,
+                    DisplayField(key, value)));
             }
 
             foreach (var pair in record)
@@ -1550,7 +1612,12 @@ namespace CastRightCatchInvManagement
                 // Skip unnamed or already-listed keys so the card does not repeat columns.
                 if (key.Length == 0 || !used.Add(key))
                     continue;
-                list.Add(new KeyValuePair<string, string>(key, DisplayField(key, pair.Value ?? "")));
+                // Amount on a party card is Credit Limit (customer) or Current Balance (vendor).
+                if (partyCard && key.Equals("Amount", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                list.Add(new KeyValuePair<string, string>(
+                    partyCard ? DataFiles.DisplayPartyColumn(key) : key,
+                    DisplayField(key, pair.Value ?? "")));
             }
 
             return list;

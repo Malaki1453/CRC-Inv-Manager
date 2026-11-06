@@ -1,6 +1,6 @@
 namespace CastRightCatchInvManagement
 {
-    /// <summary>New Customer page: identity, billing/shipping addresses, and banking.</summary>
+    /// <summary>New Customer page: identity, billing address, warehouses, and banking.</summary>
     public partial class AddCustomer : Form, INavigationPage
     {
         private TextBox _code = null!;
@@ -14,9 +14,8 @@ namespace CastRightCatchInvManagement
         private TextBox _balance = null!;
         private TextBox _established = null!;
         private TextBox _billing = null!;
-        private CheckBox _shipDifferent = null!;
-        private TextBox _shipping = null!;
-        private Panel _shippingHost = null!;
+        private WarehouseListEditor _warehouses = null!;
+        private CardPanel _addressCard = null!;
         private TextBox _routing = null!;
         private TextBox _account = null!;
         private TextBox _notes = null!;
@@ -156,13 +155,13 @@ namespace CastRightCatchInvManagement
             ResetForm();
         }
 
-        /// <summary>Code, name, company, contact, and credit fields.</summary>
+        /// <summary>Code, company, DBA, contact, and credit fields.</summary>
         private CardPanel BuildIdentity()
         {
             var card = Card("Identity", 220);
             _code = AddField(card, "CODE", 20, 48, 140);
-            _name = AddField(card, "NAME", 180, 48, 220);
-            _company = AddField(card, "COMPANY", 420, 48, 220);
+            _name = AddField(card, "COMPANY", 180, 48, 220);
+            _company = AddField(card, "DBA", 420, 48, 220);
             _phone = AddField(card, "PHONE", 660, 48, 160);
             _contact = AddField(card, "CONTACT NAME", 20, 108, 220);
             _email = AddField(card, "EMAIL", 260, 108, 220);
@@ -171,8 +170,8 @@ namespace CastRightCatchInvManagement
             _balance = AddField(card, "CURRENT BALANCE", 20, 168, 160);
             _established = AddField(card, "ESTABLISHED", 200, 168, 160);
             _code.PlaceholderText = "C-1001";
-            _name.PlaceholderText = "Customer name";
-            _company.PlaceholderText = "Company";
+            _name.PlaceholderText = "Company name";
+            _company.PlaceholderText = "DBA";
             _phone.PlaceholderText = "(253) 000-0000";
             _contact.PlaceholderText = "Who we talk to";
             _email.PlaceholderText = "name@company.com";
@@ -184,33 +183,36 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
-        /// <summary>Billing address plus an optional separate shipping address.</summary>
+        /// <summary>Billing address plus a list of warehouse ship-to addresses.</summary>
         private CardPanel BuildAddresses()
         {
-            var card = Card("Addresses", 250);
-            _billing = AddMultiline(card, "BILLING ADDRESS", 20, 48, 820, 72);
-            _shipDifferent = new CheckBox
-            {
-                Text = "Shipping address is different",
-                AutoSize = true,
-                Location = new Point(20, 132),
-                ForeColor = Theme.Ink,
-                Font = Theme.Body
-            };
-            _shipDifferent.CheckedChanged += (_, _) => SyncShipping();
-            card.Controls.Add(_shipDifferent);
-
-            _shippingHost = new Panel
-            {
-                Location = new Point(12, 158),
-                Size = new Size(840, 84),
-                Visible = false
-            };
-            _shipping = AddMultiline(_shippingHost, "SHIPPING ADDRESS", 8, 0, 820, 72);
-            card.Controls.Add(_shippingHost);
+            _addressCard = Card("Addresses", 360);
+            _billing = AddMultiline(_addressCard, "BILLING ADDRESS", 20, 48, 820, 72);
             _billing.PlaceholderText = "Street, city, state, ZIP";
-            _shipping.PlaceholderText = "Street, city, state, ZIP";
-            return card;
+            var warehousesLabel = new Label
+            {
+                Text = "WAREHOUSES",
+                Location = new Point(20, 136)
+            };
+            Theme.StyleFieldLabel(warehousesLabel);
+            _warehouses = new WarehouseListEditor
+            {
+                Location = new Point(20, 152),
+                Width = 820
+            };
+            _warehouses.Changed += (_, _) => FitAddressCard();
+            _addressCard.Controls.Add(warehousesLabel);
+            _addressCard.Controls.Add(_warehouses);
+            FitAddressCard();
+            return _addressCard;
+        }
+
+        /// <summary>Grow the address card so every warehouse row stays visible.</summary>
+        private void FitAddressCard()
+        {
+            if (_addressCard == null || _warehouses == null)
+                return;
+            _addressCard.Height = Math.Max(220, _warehouses.Bottom + 16);
         }
 
         /// <summary>Routing and account numbers, same as the customer edit dialog.</summary>
@@ -238,12 +240,6 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
-        /// <summary>Show shipping fields only when the box is checked.</summary>
-        private void SyncShipping()
-        {
-            _shippingHost.Visible = _shipDifferent.Checked;
-        }
-
         /// <summary>Blank the form and assign the next customer code.</summary>
         public void ResetForm()
         {
@@ -265,12 +261,10 @@ namespace CastRightCatchInvManagement
             _balance.Text = "";
             _established.Text = "";
             _billing.Text = "";
-            _shipping.Text = "";
-            _shipDifferent.Checked = false;
+            _warehouses.Set(Array.Empty<DataFiles.CustomerWarehouse>());
             _routing.Text = "";
             _account.Text = "";
             _notes.Text = "";
-            SyncShipping();
         }
 
         /// <summary>Fill the editors from a customers row.</summary>
@@ -289,19 +283,18 @@ namespace CastRightCatchInvManagement
             _contact.Text = DataFiles.GetRecord(record, "Contact Name");
             _email.Text = DataFiles.GetRecord(record, "Email");
             _terms.Text = DataFiles.GetRecord(record, "Terms");
-            _credit.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Credit Limit"));
+            string credit = DataFiles.GetRecord(record, "Credit Limit");
+            if (credit.Trim().Length == 0)
+                credit = DataFiles.GetRecord(record, "Amount");
+            _credit.Text = MoneyFormat.Display(credit);
             _balance.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance"));
             _established.Text = DataFiles.GetRecord(record, "Established");
             _billing.Text = DataFiles.CustomerBillingAddress(record);
-            string shipping = DataFiles.GetRecord(record, DataFiles.ShippingAddressColumn).Trim();
-            _shipping.Text = shipping;
-            _shipDifferent.Checked = shipping.Length > 0 &&
-                !shipping.Equals(_billing.Text.Trim(), StringComparison.OrdinalIgnoreCase);
+            _warehouses.Set(DataFiles.CustomerWarehouses(record));
             _notes.Text = DataFiles.GetRecordAny(record, "Description", "Notes");
             _routing.Text = DataFiles.GetRecord(record, DataFiles.RoutingNumber);
             _storedAccount = DataFiles.DigitsOnly(DataFiles.GetRecord(record, DataFiles.AccountNumber));
             _account.Text = DataFiles.MaskAccountNumber(_storedAccount);
-            SyncShipping();
         }
 
         /// <summary>Gold bar when this record is still waiting in Review.</summary>
@@ -334,7 +327,7 @@ namespace CastRightCatchInvManagement
             string name = _name.Text.Trim();
             if (code.Length == 0 || name.Length == 0)
             {
-                MessageBox.Show("Enter a code and a name.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Enter a code and a company.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
 
@@ -347,9 +340,7 @@ namespace CastRightCatchInvManagement
             }
 
             string billing = _billing.Text.Trim();
-            string shipping = _shipDifferent.Checked ? _shipping.Text.Trim() : "";
-            if (shipping.Equals(billing, StringComparison.OrdinalIgnoreCase))
-                shipping = "";
+            string shipping = DataFiles.FormatCustomerWarehouses(_warehouses.Collect());
 
             var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -449,12 +440,13 @@ namespace CastRightCatchInvManagement
             var box = new TextBox
             {
                 Multiline = true,
-                ScrollBars = ScrollBars.Vertical,
+                ScrollBars = ScrollBars.None,
                 AcceptsReturn = true,
                 Location = new Point(x, y + 16),
                 Size = new Size(width, height)
             };
             Theme.StyleField(box);
+            Theme.BindAutoVerticalScroll(box);
             parent.Controls.Add(label);
             parent.Controls.Add(box);
             return box;

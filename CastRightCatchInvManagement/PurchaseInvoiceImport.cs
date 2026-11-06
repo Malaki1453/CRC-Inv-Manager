@@ -215,10 +215,11 @@ namespace CastRightCatchInvManagement
             foreach (var record in DataFiles.VisibleRecords(table))
             {
                 string code = DataFiles.GetRecord(record, "Code").Trim();
-                string name = DataFiles.GetRecord(record, "Name").Trim();
-                string company = DataFiles.GetRecord(record, "Company").Trim();
+                string name = DataFiles.PartyCompanyName(record);
+                string company = DataFiles.PartyDba(record);
+                string document = DataFiles.PartyDocumentName(record);
                 // Matching ourselves would flip incoming/outgoing detection.
-                if (IsOurCompany(name) || IsOurCompany(company))
+                if (IsOurCompany(name) || IsOurCompany(company) || IsOurCompany(document))
                     continue;
                 int score = 0;
                 // A unique party code in the PDF is stronger than a partial name hit.
@@ -226,13 +227,14 @@ namespace CastRightCatchInvManagement
                     score = Math.Max(score, 90 + Math.Min(10, code.Length));
                 score = Math.Max(score, NameScore(hay, name));
                 score = Math.Max(score, NameScore(hay, company));
+                score = Math.Max(score, NameScore(hay, document));
                 // Keep the first best score; later ties do not replace it.
                 if (score <= bestScore)
                     continue;
                 bestScore = score;
                 best = new LookupSuggest.Hit(
                     code,
-                    name.Length > 0 ? name : company,
+                    document.Length > 0 ? document : name,
                     DataFiles.GetRecord(record, "Terms"));
             }
 

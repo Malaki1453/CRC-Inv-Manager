@@ -30,7 +30,8 @@ namespace CastRightCatchInvManagement
         public const string SettingKey = "vendor_types";
         public const string Forwarder = "Forwarder";
         public const string Logistics = "Logistics";
-        public const string Freight = "Freight Co";
+        public const string Freight = "Trucking/Logistics";
+        public const string LegacyFreight = "Freight Co";
         public const string SlotPurchaseForwarder = "purchase.forwarder";
         public const string SlotPurchaseLogistics = "purchase.logistics";
         public const string SlotPurchaseFreight = "purchase.freight";
@@ -85,7 +86,7 @@ namespace CastRightCatchInvManagement
             if (filter == null || filter.Types.Count == 0)
                 return false;
             string type = DataFiles.GetRecord(record, "Type");
-            return filter.Types.Any(item => item.Equals(type, StringComparison.OrdinalIgnoreCase));
+            return filter.Types.Any(item => TypeNamesMatch(item, type));
         }
 
         /// <summary>The named type-group bound to a form field, or null if the slot is unset.</summary>
@@ -151,7 +152,17 @@ namespace CastRightCatchInvManagement
                 }
 
                 var loaded = JsonSerializer.Deserialize<VendorTypeCatalog>(json, JsonOptions);
-                return loaded == null ? Seed() : Normalize(loaded);
+                if (loaded == null)
+                    return Seed();
+                bool migrateFreight =
+                    loaded.Types.Any(name => name.Equals(LegacyFreight, StringComparison.OrdinalIgnoreCase));
+                migrateFreight |= loaded.Filters.Any(filter =>
+                    filter.Types.Any(type => type.Equals(LegacyFreight, StringComparison.OrdinalIgnoreCase)));
+                var catalog = Normalize(loaded);
+                // Persist the rename so Freight Co does not come back on the next load.
+                if (migrateFreight)
+                    Write(catalog);
+                return catalog;
             }
             // Corrupt settings must not block vendor forms.
             catch
@@ -170,7 +181,7 @@ namespace CastRightCatchInvManagement
                 {
                     new VendorTypeFilter { Id = "forwarder", Name = Forwarder, Types = { Forwarder } },
                     new VendorTypeFilter { Id = "logistics", Name = Logistics, Types = { Logistics } },
-                    new VendorTypeFilter { Id = "freight", Name = Freight, Types = { Freight } }
+                    new VendorTypeFilter { Id = "freight", Name = LegacyFreight, Types = { Freight } }
                 }
             };
             foreach (var slot in Slots)
@@ -178,12 +189,26 @@ namespace CastRightCatchInvManagement
             return catalog;
         }
 
+        /// <summary>True when two Type names are the same, including Freight Co → Trucking/Logistics.</summary>
+        public static bool TypeNamesMatch(string left, string right)
+        {
+            if (left.Equals(right, StringComparison.OrdinalIgnoreCase))
+                return true;
+            return IsFreightName(left) && IsFreightName(right);
+        }
+
+        /// <summary>True for Trucking/Logistics or the old Freight Co name.</summary>
+        public static bool IsFreightName(string? name) =>
+            (name ?? "").Equals(Freight, StringComparison.OrdinalIgnoreCase) ||
+            (name ?? "").Equals(LegacyFreight, StringComparison.OrdinalIgnoreCase);
+
         /// <summary>Fill missing built-in filters and repair empty slot assignments.</summary>
         private static VendorTypeCatalog Normalize(VendorTypeCatalog catalog)
         {
             catalog.Types = DistinctNames(catalog.Types);
             catalog.Filters ??= new List<VendorTypeFilter>();
             catalog.Slots ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            MigrateFreightCo(catalog);
 
             // Keep the original Forwarder filter even if it was deleted from JSON.
             if (!catalog.Filters.Any(filter => filter.Id.Equals("forwarder", StringComparison.OrdinalIgnoreCase)))
@@ -192,9 +217,7 @@ namespace CastRightCatchInvManagement
             if (!catalog.Filters.Any(filter => filter.Id.Equals("logistics", StringComparison.OrdinalIgnoreCase)))
                 catalog.Filters.Add(new VendorTypeFilter { Id = "logistics", Name = Logistics, Types = { Logistics } });
             if (!catalog.Filters.Any(filter => filter.Id.Equals("freight", StringComparison.OrdinalIgnoreCase)))
-                catalog.Filters.Add(new VendorTypeFilter { Id = "freight", Name = Freight, Types = { Freight } });
-            if (!ContainsType(catalog.Types, Freight))
-                catalog.Types.Add(Freight);
+                catalog.Filters.Add(new VendorTypeFilter { Id = "freight", Name = LegacyFreight, Types = { Freight } });
 
             foreach (var filter in catalog.Filters)
             {
@@ -213,6 +236,28 @@ namespace CastRightCatchInvManagement
             }
 
             return catalog;
+        }
+
+        /// <summary>Rename stored Freight Co types and filters to Trucking/Logistics.</summary>
+        private static void MigrateFreightCo(VendorTypeCatalog catalog)
+        {
+            for (int i = 0; i < catalog.Types.Count; i++)
+            {
+                if (catalog.Types[i].Equals(LegacyFreight, StringComparison.OrdinalIgnoreCase))
+                    catalog.Types[i] = Freight;
+            }
+
+            catalog.Types = DistinctNames(catalog.Types);
+            foreach (var filter in catalog.Filters)
+            {
+                for (int i = 0; i < filter.Types.Count; i++)
+                {
+                    if (filter.Types[i].Equals(LegacyFreight, StringComparison.OrdinalIgnoreCase))
+                        filter.Types[i] = Freight;
+                }
+
+                filter.Types = DistinctNames(filter.Types);
+            }
         }
 
         /// <summary>Write the catalog to shared settings and refresh the in-memory cache.</summary>

@@ -600,18 +600,24 @@ namespace CastRightCatchInvManagement
             return cmd.ExecuteNonQuery() > 0;
         }
 
-        /// <summary>Delete one row by id (live or archive). Remote still uses the local delete path today.</summary>
+        /// <summary>Delete one row by id (live or archive). Remote uses table.delete on the host.</summary>
         public static bool DeleteById(string table, long id)
         {
-            // DataLink.IsRemote is true, but there is no table.delete op; fall through to local delete.
             if (DataLink.IsRemote)
-            {
-                // Remote updates go through table.update; delete uses a blank-row replace locally first.
-            }
+                return DataLink.Call<bool>(ServerOps.TableDelete, DataLink.Table(table, id: id));
 
             EnsureCreated();
-            DeleteByIds(table, new List<long> { id });
-            return true;
+            bool archive = IsArchiveRowId(id);
+            long rawId = DecodeRowId(id);
+            // Combined-view id did not decode to a real SQLite row id; nothing to delete.
+            if (rawId <= 0)
+                return false;
+
+            using var db = Open(archive);
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = $"DELETE FROM {Quote(table)} WHERE id = $id;";
+            cmd.Parameters.AddWithValue("$id", rawId);
+            return cmd.ExecuteNonQuery() > 0;
         }
 
         /// <summary>Add missing TEXT columns on live, and on archive when Old view is combining both.</summary>

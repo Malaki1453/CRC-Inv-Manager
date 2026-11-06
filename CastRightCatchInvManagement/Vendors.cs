@@ -19,6 +19,8 @@ namespace CastRightCatchInvManagement
                 dataGridView1,
                 "Add Vendor",
                 (_, _) => AddVendor.OpenNew());
+            UiStyle.AddDataPageAction(this, "Import", (_, _) => ImportVendors());
+            UiStyle.AddIdleSearchAction(this, "Import list", (_, _) => ImportVendors());
             UiStyle.BindRowEdit(
                 dataGridView1,
                 AddVendor.OpenEdit,
@@ -26,6 +28,29 @@ namespace CastRightCatchInvManagement
                 "Edit Vendor");
             DataFiles.DataChanged += LoadTable;
             LoadTable();
+        }
+
+        /// <summary>Load a vendor CSV into the live table. Duplicate codes are skipped.</summary>
+        private void ImportVendors()
+        {
+            using var dialog = new OpenFileDialog
+            {
+                Title = "Import vendors",
+                Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+                CheckFileExists = true
+            };
+            string testData = Path.GetFullPath(Path.Combine(
+                AppContext.BaseDirectory, "..", "..", "..", "..", "test data"));
+            if (Directory.Exists(testData))
+                dialog.InitialDirectory = testData;
+
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+                return;
+
+            if (DataFiles.TryImportCsv(dialog.FileName, out string message))
+                ToastAlert.Success(this, message);
+            else
+                ToastAlert.Error(this, message);
         }
 
         /// <summary>Called when this page is shown. Reloads the vendor grid.</summary>

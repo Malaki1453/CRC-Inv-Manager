@@ -24,6 +24,7 @@ namespace CastRightCatchInvManagement
         public static readonly Color SuccessFill = Color.FromArgb(230, 245, 234);
         public static readonly Color GridAlt = Color.FromArgb(250, 247, 241);
         public static readonly Color GridLine = Color.FromArgb(232, 224, 210);
+        public static readonly Color FieldBorder = Color.FromArgb(173, 173, 173);
         public static readonly Color HeaderBack = Navy;
         public static readonly Color HeaderText = Cream;
         public static readonly Color HeaderArrowIdle = Color.FromArgb(170, 196, 176, 130);
@@ -127,13 +128,72 @@ namespace CastRightCatchInvManagement
             box.ForeColor = Ink;
         }
 
-        /// <summary>Flat paper combo used on data forms.</summary>
+        private static readonly HashSet<TextBox> AutoScrollFields = new();
+
+        /// <summary>Show a vertical scrollbar only while the text is taller than the box.</summary>
+        public static void BindAutoVerticalScroll(TextBox box)
+        {
+            if (!AutoScrollFields.Add(box))
+                return;
+            box.Multiline = true;
+            box.Disposed += (_, _) => AutoScrollFields.Remove(box);
+            box.TextChanged += (_, _) => SyncAutoVerticalScroll(box);
+            box.SizeChanged += (_, _) => SyncAutoVerticalScroll(box);
+            box.FontChanged += (_, _) => SyncAutoVerticalScroll(box);
+            box.HandleCreated += (_, _) => SyncAutoVerticalScroll(box);
+            SyncAutoVerticalScroll(box);
+        }
+
+        /// <summary>Measure as if there is no scrollbar so showing one does not wrap more and flicker.</summary>
+        private static void SyncAutoVerticalScroll(TextBox box)
+        {
+            if (!box.IsHandleCreated)
+                return;
+
+            int fullWidth = box.ClientSize.Width;
+            if (box.ScrollBars == ScrollBars.Vertical)
+                fullWidth += SystemInformation.VerticalScrollBarWidth;
+            fullWidth = Math.Max(1, fullWidth);
+
+            string text = box.Text;
+            if (text.Length == 0)
+            {
+                if (box.ScrollBars != ScrollBars.None)
+                    box.ScrollBars = ScrollBars.None;
+                return;
+            }
+
+            if (!text.EndsWith('\n'))
+                text += "\n";
+            int needed = TextRenderer.MeasureText(
+                text,
+                box.Font,
+                new Size(fullWidth, int.MaxValue),
+                TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl).Height;
+            var want = needed > box.ClientSize.Height ? ScrollBars.Vertical : ScrollBars.None;
+            if (box.ScrollBars != want)
+                box.ScrollBars = want;
+        }
+
+        /// <summary>Read-only money box filled from lots or bank lines, not typed.</summary>
+        public static void StyleComputedField(TextBox box)
+        {
+            StyleField(box);
+            box.ReadOnly = true;
+            box.TabStop = false;
+            box.BackColor = Cream;
+            box.Cursor = Cursors.Default;
+        }
+
+        /// <summary>Paper combo with a text-field rectangle; click opens the list.</summary>
         public static void StyleCombo(ComboBox box)
         {
             box.FlatStyle = FlatStyle.Flat;
             box.Font = Body;
             box.BackColor = Paper;
             box.ForeColor = Ink;
+            box.IntegralHeight = false;
+            ComboChrome.Attach(box);
         }
 
         /// <summary>Small muted caption above a field.</summary>

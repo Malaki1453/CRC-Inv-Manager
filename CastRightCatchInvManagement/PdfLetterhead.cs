@@ -1,23 +1,31 @@
 namespace CastRightCatchInvManagement
 {
     /// <summary>
-    /// Compact letterhead for CRC PDFs: boat lockup, contact, gold divider, faint seal.
-    /// Tighter than the print letterhead so the document body keeps the page.
+    /// Compact letterhead for CRC PDFs: full-width top bar with the boat lockup on the left.
     /// </summary>
     internal static class PdfLetterhead
     {
+        /// <summary>Top-right email on invoice PDFs.</summary>
+        public const string InvoiceEmail = "ar@castrightcatch.com";
+        /// <summary>Top-right email on sales-order PDFs.</summary>
+        public const string SalesOrderEmail = "sales@castrightcatch.com";
+        /// <summary>Top-right email on purchase-order PDFs.</summary>
+        public const string PurchaseEmail = "purchases@castrightcatch.com";
+        /// <summary>Top-right email on sale PDFs.</summary>
+        public const string SaleEmail = "sales@castrightcatch.com";
+
         public const float Left = 36;
         public const float Right = 576;
 
         /// <summary>Paint brand lockup and watermark, or a short top margin when branding is off.</summary>
-        public static float Draw(PdfDraw g, bool brand = true)
+        public static float Draw(PdfDraw g, bool brand = true, string? email = null)
         {
             // Internal drafts skip the letterhead so the body starts higher.
             if (!brand)
                 return 28;
 
             DrawWatermark(g);
-            return DrawBrand(g);
+            return DrawBrand(g, email);
         }
 
         /// <summary>Navy title strip used under the letterhead on invoices and similar PDFs.</summary>
@@ -39,72 +47,52 @@ namespace CastRightCatchInvManagement
             g.Image(seal, (PdfDraw.PageW - size) / 2f, 214, size, size, opacity: 0.11f);
         }
 
-        /// <summary>Boat lockup on the left, CRC seal on the top right, contact under the lockup.</summary>
-        private static float DrawBrand(PdfDraw g)
+        /// <summary>Full-bleed cream bar across the top, boat lockup on the left, contact on the right.</summary>
+        private static float DrawBrand(PdfDraw g, string? email)
         {
-            const float top = 20;
-            const float logoH = 44;
-            const float sealSize = 58;
-            float used = logoH;
+            const float bannerH = 84;
+            const float pad = 14;
+            const float logoH = 66;
+            g.Fill(0, 0, PdfDraw.PageW, bannerH, Theme.Cream);
+            g.Fill(0, bannerH - 3, PdfDraw.PageW, 3, Theme.Gold);
+
             var lockup = PdfImages.Lockup();
             // Prefer the boat lockup when the brand PNG is available.
             if (lockup != null)
             {
                 float w = logoH * lockup.Width / (float)lockup.Height;
-                // Cap width so the seal on the right still has room.
-                if (w > 310)
-                {
-                    w = 310;
-                    used = w * lockup.Height / (float)lockup.Width;
-                }
-
-                g.Image(lockup, Left, top, w, used);
+                g.Image(lockup, pad, (bannerH - 3 - logoH) / 2f, w, logoH);
             }
             // Wordmark fallback when the lockup image is missing from the build.
             else
             {
-                g.Text(Left, top + 18, "CAST RIGHT", 16, PdfFace.SerifBold, Theme.Navy);
-                g.Text(Left + 4, top + 34, "Catch Co.", 10, PdfFace.SerifItalic, Theme.Navy);
-                g.Fill(Left + 78, top + 30, 18, 1.2f, Theme.Gold);
-                g.Fill(Left + 128, top + 30, 18, 1.2f, Theme.Gold);
+                g.Text(pad, 32, "CAST RIGHT", 16, PdfFace.SerifBold, Theme.Navy);
+                g.Text(pad + 4, 50, "Catch Co.", 10, PdfFace.SerifItalic, Theme.Navy);
             }
 
-            var seal = PdfImages.Seal();
-            // Circular CRC mark sits in the top-right, matching the purchase-order header.
-            if (seal != null)
-                g.Image(seal, Right - sealSize, top, sealSize, sealSize);
-
-            float contactBottom = DrawContact(g, top + used + 6);
-            float lineY = Math.Max(top + Math.Max(used, sealSize), contactBottom) + 8;
-            g.Line(Left, lineY, 292, lineY, Theme.Navy, 1.1f);
-            g.Diamond(306, lineY, 3.4f, Theme.Gold);
-            g.Line(320, lineY, Right, lineY, Theme.Navy, 1.1f);
-            return lineY + 10;
+            DrawContact(g, bannerH, email);
+            return bannerH + 10;
         }
 
-        /// <summary>Phone, email, and address under the boat lockup so the seal keeps the top right.</summary>
-        private static float DrawContact(PdfDraw g, float y)
+        /// <summary>Phone, email, and address on the right of the top bar, sharing one right edge.</summary>
+        private static void DrawContact(PdfDraw g, float bannerH, string? email)
         {
             string phone = First(AppState.Phone, "(253) 540-2631");
-            string email = First(AppState.CompanyEmail, "jwatts@castrightcatch.com");
+            string mail = First(email, AppState.CompanyEmail, "jwatts@castrightcatch.com");
             string address = First(AppState.Address, "PO Box 1064, Orting, WA 98360");
-            const float x = 44;
             var lines = new List<string>();
-            // Skip empty contact rows so the diamond list stays tight.
+            // Skip empty contact rows so the list stays tight.
             if (phone.Length > 0) lines.Add(phone);
-            // Same for email: a blank setting would print an empty diamond line.
-            if (email.Length > 0) lines.Add(email);
+            if (mail.Length > 0) lines.Add(mail);
             lines.AddRange(SplitAddress(address));
 
-            float row = y;
+            float block = lines.Count * 11;
+            float row = Math.Max(16, (bannerH - 3 - block) / 2f);
             foreach (string line in lines)
             {
-                g.Diamond(x - 8, row, 2.1f, Theme.Gold);
-                g.Text(x, row + 3, line, 7.5f, false, Theme.Navy);
+                g.TextRight(Right, row + 3, line, 7.5f, false, Theme.Navy);
                 row += 11;
             }
-
-            return row;
         }
 
         /// <summary>Split "street, city" onto two lines when both sides have text.</summary>

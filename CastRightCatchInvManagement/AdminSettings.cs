@@ -59,6 +59,7 @@ namespace CastRightCatchInvManagement
         private ComboBox _slotSalesFreight = null!;
         private TextBox _defaultMinProfit = null!;
         private bool _loadingVendorLookup;
+        private ListBox _productConditions = null!;
 
         /// <summary>Register this page and build User, Groups, Pages, and Admin tabs.</summary>
         public AdminSettings()
@@ -88,6 +89,7 @@ namespace CastRightCatchInvManagement
                 LoadBankFeed();
                 LoadSession();
                 LoadVendorTypes();
+                LoadProductConditions();
                 // Leaving the tab would lose unsaved SMTP edits.
                 if (_smtpDirty)
                     SaveMail();
@@ -961,7 +963,7 @@ namespace CastRightCatchInvManagement
                 Height = 40,
                 Font = Theme.Body,
                 ForeColor = Theme.Muted,
-                Text = "Stay signed in, login email (SMTP), vendor types, and the live bank feed are administrator-only. They apply to everyone."
+                Text = "Stay signed in, login email (SMTP), vendor types, product conditions, and the live bank feed are administrator-only. They apply to everyone."
             };
             var session = new CardPanel { Dock = DockStyle.Top, Height = 168 };
             LayoutSessionCard(session);
@@ -969,6 +971,8 @@ namespace CastRightCatchInvManagement
             LayoutMinProfitCard(minProfit);
             var types = new CardPanel { Dock = DockStyle.Top, Height = 430 };
             LayoutVendorTypesCard(types);
+            var conditions = new CardPanel { Dock = DockStyle.Top, Height = 270 };
+            LayoutProductConditionsCard(conditions);
             var mail = new CardPanel { Dock = DockStyle.Top, Height = 280 };
             LayoutMailCard(mail);
             _bankCard = new CardPanel { Dock = DockStyle.Top, Height = 210 };
@@ -982,6 +986,9 @@ namespace CastRightCatchInvManagement
             host.Controls.Add(spacerMail);
             host.Controls.Add(types);
             host.Controls.Add(spacerTypes);
+            var spacerConditions = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
+            host.Controls.Add(conditions);
+            host.Controls.Add(spacerConditions);
             var spacerMin = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
             host.Controls.Add(minProfit);
             host.Controls.Add(spacerMin);
@@ -1013,6 +1020,155 @@ namespace CastRightCatchInvManagement
                 using var gold = new SolidBrush(Theme.Gold);
                 e.Graphics.FillRectangle(gold, e.Bounds.X, e.Bounds.Bottom - 3, e.Bounds.Width, 3);
             }
+        }
+
+        /// <summary>Product Condition names used on New Item (Fresh, Frozen, PF, plus extras).</summary>
+        private void LayoutProductConditionsCard(CardPanel card)
+        {
+            var heading = new Label
+            {
+                Text = "Product conditions",
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 14),
+                AutoSize = true
+            };
+            var hint = new Label
+            {
+                Text = "These names fill Product Condition on New Item. Fresh, Frozen, and PF (previously frozen) stay in the list. Expiration date is entered on each purchase line.",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 42),
+                Size = new Size(700, 32)
+            };
+
+            var lbl = new Label { Text = "CONDITIONS", Location = new Point(24, 76) };
+            Theme.StyleFieldLabel(lbl);
+            _productConditions = new ListBox
+            {
+                Location = new Point(24, 94),
+                Size = new Size(280, 120),
+                Font = Theme.Body,
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            var buttons = ActionRow(24, 222, 280, AddProductCondition, RenameProductCondition, DeleteProductCondition);
+
+            card.Controls.Add(heading);
+            card.Controls.Add(hint);
+            card.Controls.Add(lbl);
+            card.Controls.Add(_productConditions);
+            foreach (var button in buttons)
+                card.Controls.Add(button);
+            LoadProductConditions();
+        }
+
+        /// <summary>Fill the condition list from shared settings.</summary>
+        private void LoadProductConditions()
+        {
+            if (_productConditions == null)
+                return;
+            string? keep = _productConditions.SelectedItem as string;
+            ProductConditions.Reload();
+            _productConditions.Items.Clear();
+            foreach (string name in ProductConditions.Load())
+                _productConditions.Items.Add(name);
+            if (keep != null)
+            {
+                for (int i = 0; i < _productConditions.Items.Count; i++)
+                {
+                    if (_productConditions.Items[i] is string item &&
+                        item.Equals(keep, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _productConditions.SelectedIndex = i;
+                        return;
+                    }
+                }
+            }
+
+            if (_productConditions.Items.Count > 0)
+                _productConditions.SelectedIndex = 0;
+        }
+
+        /// <summary>Prompt for a new Product Condition name used on New Item.</summary>
+        private void AddProductCondition()
+        {
+            string? name = PromptText("New product condition", "CONDITION NAME");
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+            var names = ProductConditions.Load();
+            if (names.Any(item => item.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            {
+                MessageBox.Show("That condition already exists.", "Product conditions",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            names.Add(name.Trim());
+            ProductConditions.Save(names);
+            LoadProductConditions();
+            _productConditions.SelectedIndex = _productConditions.Items.Count - 1;
+        }
+
+        /// <summary>Rename a custom condition. Fresh, Frozen, and PF stay as they are.</summary>
+        private void RenameProductCondition()
+        {
+            if (_productConditions.SelectedItem is not string current || current.Length == 0)
+            {
+                MessageBox.Show("Select a condition to rename.", "Product conditions",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (ProductConditions.IsBuiltIn(current))
+            {
+                MessageBox.Show("Fresh, Frozen, and PF cannot be renamed.", "Product conditions",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            string? name = PromptText("Rename product condition", "CONDITION NAME", current, "Save");
+            if (string.IsNullOrWhiteSpace(name) || name.Equals(current, StringComparison.OrdinalIgnoreCase))
+                return;
+            var names = ProductConditions.Load();
+            if (names.Any(item => item.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            {
+                MessageBox.Show("That condition already exists.", "Product conditions",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            for (int i = 0; i < names.Count; i++)
+            {
+                if (names[i].Equals(current, StringComparison.OrdinalIgnoreCase))
+                    names[i] = name.Trim();
+            }
+
+            ProductConditions.Save(names);
+            LoadProductConditions();
+        }
+
+        /// <summary>Remove a custom condition. Fresh, Frozen, and PF stay in the list.</summary>
+        private void DeleteProductCondition()
+        {
+            if (_productConditions.SelectedItem is not string current || current.Length == 0)
+            {
+                MessageBox.Show("Select a condition to delete.", "Product conditions",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (ProductConditions.IsBuiltIn(current))
+            {
+                MessageBox.Show("Fresh, Frozen, and PF cannot be removed.", "Product conditions",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var names = ProductConditions.Load()
+                .Where(item => !item.Equals(current, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            ProductConditions.Save(names);
+            LoadProductConditions();
         }
 
         /// <summary>Type list, named filters, and purchase-slot combos.</summary>

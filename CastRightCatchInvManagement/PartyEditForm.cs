@@ -154,23 +154,23 @@ namespace CastRightCatchInvManagement
             _established = new TextBox { Visible = false };
 
             CardPanel identity;
-            // Vendor layout omits email/address and uses Type/amount.
+            // Vendor layout omits email/address and uses Type plus computed current balance.
             if (vendor)
             {
-                identity = Section("Identity", 266, 5, out var grid);
+                identity = Section("Identity", 180, 4, out var grid);
                 _code = PutField(grid, 0, 0, "CODE");
-                _name = PutField(grid, 1, 0, "NAME");
-                _company = PutField(grid, 2, 0, "COMPANY");
+                _name = PutField(grid, 1, 0, "COMPANY");
+                _company = PutField(grid, 2, 0, "DBA");
                 _phone = PutField(grid, 3, 0, "PHONE");
-                _balance = PutField(grid, 4, 0, "CURRENT BALANCE");
                 _terms = PutField(grid, 0, 1, "TERMS");
                 _type = PutCombo(grid, 1, 1, "TYPE");
                 _contact = PutField(grid, 2, 1, "CONTACT NAME");
-                _established = PutField(grid, 3, 1, "AMOUNT");
+                _balance = PutField(grid, 3, 1, "CURRENT BALANCE");
                 _extra = new TextBox { Visible = false };
-                SetRowHeights(grid, 56, 56, 56, 56, 56);
+                SetRowHeights(grid, 56, 56);
                 _contact.PlaceholderText = "Who we talk to";
-                _established.PlaceholderText = "0.00";
+                _balance.PlaceholderText = "From lots and bank";
+                Theme.StyleComputedField(_balance);
                 FillVendorTypes(_type, record == null ? "" : DataFiles.GetRecord(record, "Type"));
             }
             // Customer identity uses email, billing/shipping address, and credit instead of Type/amount.
@@ -178,8 +178,8 @@ namespace CastRightCatchInvManagement
             {
                 identity = Section("Identity", 420, 4, out var grid);
                 _code = PutField(grid, 0, 0, "CODE");
-                _name = PutField(grid, 1, 0, "NAME");
-                _company = PutField(grid, 2, 0, "COMPANY");
+                _name = PutField(grid, 1, 0, "COMPANY");
+                _company = PutField(grid, 2, 0, "DBA");
                 _phone = PutField(grid, 3, 0, "PHONE");
                 _contact = PutField(grid, 0, 1, "CONTACT NAME");
                 _email = PutField(grid, 1, 1, "EMAIL");
@@ -201,16 +201,16 @@ namespace CastRightCatchInvManagement
             }
 
             _code.PlaceholderText = vendor ? "V-1001" : "C-1001";
-            _name.PlaceholderText = vendor ? "Vendor name" : "Customer name";
-            _company.PlaceholderText = "Company";
+            _name.PlaceholderText = "Company name";
+            _company.PlaceholderText = "DBA";
             _phone.PlaceholderText = "(253) 000-0000";
             _terms.PlaceholderText = "NET 15";
-            _balance.PlaceholderText = "0.00";
-            MoneyFormat.BindInput(_balance);
-            if (_vendor)
-                MoneyFormat.BindInput(_established);
-            else
+            _balance.PlaceholderText = _vendor ? "From lots and bank" : "0.00";
+            if (!_vendor)
+            {
+                MoneyFormat.BindInput(_balance);
                 MoneyFormat.BindInput(_extra);
+            }
             identity.Dock = DockStyle.Top;
 
             var banking = Section("Banking", 108, 2, out var bankGrid);
@@ -246,21 +246,24 @@ namespace CastRightCatchInvManagement
             {
                 _code.Text = DataFiles.GetRecord(record, "Code");
                 _name.Text = DataFiles.GetRecord(record, "Name");
-                _company.Text = First(record, "Company", "Name");
+                _company.Text = DataFiles.GetRecord(record, "Company");
                 _phone.Text = DataFiles.GetRecord(record, "Phone");
-                _balance.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance"));
                 _terms.Text = DataFiles.GetRecord(record, "Terms");
                 _notes.Text = First(record, "Description", "Notes");
-                // Vendor layout omits email/address and uses Type/amount.
+                // Vendor layout omits email/address and uses Type plus computed current balance.
                 if (vendor)
                 {
                     _contact.Text = DataFiles.GetRecord(record, "Contact Name");
-                    _established.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Amount"));
+                    _balance.Text = MoneyFormat.Display(DataFiles.VendorCurrentBalance(record));
                 }
                 // Prefill customer-only fields from the existing row.
                 else
                 {
-                    _extra.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Credit Limit"));
+                    string credit = DataFiles.GetRecord(record, "Credit Limit");
+                    if (credit.Trim().Length == 0)
+                        credit = DataFiles.GetRecord(record, "Amount");
+                    _extra.Text = MoneyFormat.Display(credit);
+                    _balance.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance"));
                     _contact.Text = DataFiles.GetRecord(record, "Contact Name");
                     _email.Text = DataFiles.GetRecord(record, "Email");
                     _address.Text = DataFiles.CustomerBillingAddress(record);
@@ -274,6 +277,10 @@ namespace CastRightCatchInvManagement
                 _routing.Text = DataFiles.GetRecord(record, DataFiles.RoutingNumber);
                 _storedAccount = DataFiles.DigitsOnly(DataFiles.GetRecord(record, DataFiles.AccountNumber));
                 _account.Text = DataFiles.MaskAccountNumber(_storedAccount);
+            }
+            else if (vendor)
+            {
+                _balance.Text = MoneyFormat.Display(0m);
             }
 
             UpdateSubtitle();
@@ -356,7 +363,7 @@ namespace CastRightCatchInvManagement
             // Code and name are required identity.
             if (code.Length == 0 || name.Length == 0)
             {
-                MessageBox.Show("Enter a code and a name.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Enter a code and a company.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
 
@@ -376,7 +383,6 @@ namespace CastRightCatchInvManagement
                 ["Name"] = name,
                 ["Company"] = _company.Text.Trim(),
                 ["Phone"] = _phone.Text.Trim(),
-                ["Current Balance"] = MoneyFormat.Store(_balance.Text),
                 ["Notes"] = _notes.Text.Trim(),
                 ["Description"] = _notes.Text.Trim(),
                 ["Terms"] = _terms.Text.Trim(),
@@ -384,7 +390,7 @@ namespace CastRightCatchInvManagement
                 [DataFiles.AccountNumber] = DataFiles.ResolveAccountNumber(_account.Text, _storedAccount)
             };
 
-            // Vendors store Type/amount; customers store email/address/credit.
+            // Vendors store Type and computed current balance; customers store email/address/credit.
             if (_vendor)
             {
                 string type = (_type.SelectedItem as string ?? _type.Text).Trim();
@@ -397,12 +403,13 @@ namespace CastRightCatchInvManagement
 
                 fields["Type"] = type;
                 fields["Contact Name"] = _contact.Text.Trim();
-                fields["Amount"] = MoneyFormat.Store(_established.Text);
+                DataFiles.ApplyVendorCurrentBalance(fields, code, name, _company.Text.Trim());
             }
             // Persist customer credit, email, and address instead of Type/amount.
             else
             {
                 fields["Credit Limit"] = MoneyFormat.Store(_extra.Text);
+                fields["Current Balance"] = MoneyFormat.Store(_balance.Text);
                 fields["Contact Name"] = _contact.Text.Trim();
                 fields["Email"] = _email.Text.Trim();
                 string billing = _address.Text.Trim();
@@ -490,8 +497,8 @@ namespace CastRightCatchInvManagement
             TextBox notes)
         {
             string code = record == null ? "" : DataFiles.GetRecord(record, "Code");
-            string name = record == null ? "" : DataFiles.GetRecord(record, "Name");
-            string company = record == null ? "" : DataFiles.GetRecord(record, "Company");
+            string name = record == null ? "" : DataFiles.PartyDocumentName(record);
+            string company = record == null ? "" : DataFiles.PartyDba(record);
 
             var card = new CardPanel
             {

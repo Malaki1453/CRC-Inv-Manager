@@ -257,6 +257,13 @@ namespace CastRightCatchInvManagement
             return null;
         }
 
+        /// <summary>Outline button under the idle search hint on a table page.</summary>
+        public static void AddIdleSearchAction(Form form, string text, EventHandler click)
+        {
+            var stage = FindDataSearch(form);
+            stage?.AddIdleAction(text, click);
+        }
+
         /// <summary>Find the shared DataToolbar inside a page's card, if ApplyDataPage ran.</summary>
         private static Panel? FindDataToolbar(Form form)
         {
@@ -487,7 +494,8 @@ namespace CastRightCatchInvManagement
                 {
                     string key = c.Tag as string ?? c.Name;
                     return !DataAccess.IsColumnHidden(table, key) &&
-                           !DataAccess.IsColumnHidden(table, c.HeaderText);
+                           !DataAccess.IsColumnHidden(table, c.HeaderText) &&
+                           !DataFiles.IsRetiredItemShelfLifeColumn(table, key);
                 })
                 .OrderBy(c => c.DisplayIndex)
                 .ToList();

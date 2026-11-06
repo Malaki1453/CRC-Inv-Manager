@@ -67,8 +67,6 @@ namespace CastRightCatchInvManagement
             _boxes.Clear();
             _dates.Clear();
             _openColumn = -1;
-            _sortColumn = -1;
-            _sortDirection = ListSortDirection.Ascending;
             _grid.ColumnHeadersHeight = HeaderHeight;
             HasDateColumns = false;
 
@@ -98,6 +96,7 @@ namespace CastRightCatchInvManagement
 
             LayoutBoxes();
             Apply();
+            SortByFirstColumnAscending();
             Theme.FitAllColumns(_grid);
             RefreshJump();
             _grid.Refresh();
@@ -524,6 +523,24 @@ namespace CastRightCatchInvManagement
             }
         }
 
+        /// <summary>Leftmost data column, ascending, with the gold sort arrow on that header.</summary>
+        private void SortByFirstColumnAscending()
+        {
+            int first = -1;
+            int bestDisplay = int.MaxValue;
+            foreach (DataGridViewColumn col in _grid.Columns)
+            {
+                if (!col.Visible || Theme.IsAddColumn(col) || col.DisplayIndex >= bestDisplay)
+                    continue;
+                bestDisplay = col.DisplayIndex;
+                first = col.Index;
+            }
+
+            if (first < 0)
+                return;
+            SortBy(first, ListSortDirection.Ascending);
+        }
+
         /// <summary>Toggle asc/desc on the same column; a new column starts ascending.</summary>
         private void ToggleSort(int columnIndex)
         {
@@ -534,16 +551,24 @@ namespace CastRightCatchInvManagement
                     ? ListSortDirection.Descending
                     : ListSortDirection.Ascending;
             }
-            // A different column starts a new sort, always ascending first.
+            // A different column starts a new sort, ascending to match the default first-column sort.
             else
             {
                 _sortColumn = columnIndex;
                 _sortDirection = ListSortDirection.Ascending;
             }
 
+            SortBy(_sortColumn, _sortDirection);
+        }
+
+        /// <summary>Sort rows and mark the header arrow for this column and direction.</summary>
+        private void SortBy(int columnIndex, ListSortDirection direction)
+        {
+            _sortColumn = columnIndex;
+            _sortDirection = direction;
             try
             {
-                _grid.Sort(new FileSystemRowComparer(_grid, columnIndex, _sortDirection));
+                _grid.Sort(new FileSystemRowComparer(_grid, columnIndex, direction));
             }
             // Sort throws when the grid is still binding or has no comparable rows yet.
             catch
@@ -618,7 +643,7 @@ namespace CastRightCatchInvManagement
                 Theme.HeaderText,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
-            Theme.PaintHeaderArrow(g, arrowBounds, sorted || filtered, sorted && ascending);
+            Theme.PaintHeaderArrow(g, arrowBounds, sorted || filtered, !sorted || ascending);
         }
 
         /// <summary>True when a header filter is open or any column still has filter text/dates.</summary>

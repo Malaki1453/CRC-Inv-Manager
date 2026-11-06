@@ -24,9 +24,9 @@ namespace CastRightCatchInvManagement
         {
             value = (value ?? "").Trim();
             return value.Length > 0 &&
-                   (Name.Equals(value, StringComparison.OrdinalIgnoreCase) ||
+                   (DataFiles.PartyLabelMatches(Name, value) ||
                     Code.Equals(value, StringComparison.OrdinalIgnoreCase) ||
-                    Display.Equals(value, StringComparison.OrdinalIgnoreCase));
+                    DataFiles.PartyLabelMatches(Display, value));
         }
 
         /// <summary>Selected vendor display text, or the free-typed combo text.</summary>
@@ -51,7 +51,7 @@ namespace CastRightCatchInvManagement
                 {
                     var vendor = new VendorChoice(
                         DataFiles.GetRecord(record, "Code"),
-                        DataFiles.GetRecordAny(record, "Name", "Company"),
+                        DataFiles.PartyDocumentName(record),
                         DataFiles.GetRecord(record, "Terms"));
                     // Skip blank rows so the dropdown never shows empty items.
                     if (vendor.Display.Length == 0)

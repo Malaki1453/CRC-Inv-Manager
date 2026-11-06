@@ -5,13 +5,20 @@ namespace CastRightCatchInvManagement
     /// <summary>Remembers which grid columns are shown, hidden, and in what order.</summary>
     internal static class GridLayout
     {
-        private static bool _applying;
+        private static int _applying;
 
         /// <summary>Pause persistence while columns are being applied so display-index events do not rewrite prefs.</summary>
-        public static void BeginUpdate() => _applying = true;
+        public static void BeginUpdate() => _applying++;
 
         /// <summary>Resume saving column layout after a bulk apply.</summary>
-        public static void EndUpdate() => _applying = false;
+        public static void EndUpdate()
+        {
+            if (_applying > 0)
+                _applying--;
+        }
+
+        /// <summary>True while FillGrid or ApplyNames is rearranging columns.</summary>
+        private static bool Applying => _applying > 0;
 
         /// <summary>Restore this user's last visible columns and order for the table, if any.</summary>
         public static void Apply(DataGridView grid, string baseName)
@@ -50,7 +57,7 @@ namespace CastRightCatchInvManagement
         public static bool SaveDefault(DataGridView grid)
         {
             // Ignore events fired while ApplyNames is rearranging columns.
-            if (_applying)
+            if (Applying)
                 return false;
             // Need a ColumnSearch tag, table name, and a local folder or live server session to write the default layout.
             if (grid.Tag is not ColumnSearch search ||
@@ -85,7 +92,7 @@ namespace CastRightCatchInvManagement
         public static void Save(DataGridView grid)
         {
             // Ignore events fired while ApplyNames is rearranging columns.
-            if (_applying)
+            if (Applying)
                 return;
             // Need a ColumnSearch tag, table name, and a local folder or live server session to persist the current layout.
             if (grid.Tag is not ColumnSearch search ||
@@ -94,6 +101,9 @@ namespace CastRightCatchInvManagement
                 return;
 
             var names = VisibleNames(grid);
+            // Clearing the grid for a refresh must not wipe the saved layout.
+            if (names.Count == 0)
+                return;
             try
             {
                 SqliteInventory.WritePrefs(new Dictionary<string, string>
@@ -108,39 +118,58 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Show only the named columns, in that order, leaving the add-column button last.</summary>
-        private static void ApplyNames(DataGridView grid, List<string> names)
+        public static void ApplyNames(DataGridView grid, List<string> names)
         {
-            _applying = true;
+            BeginUpdate();
+            bool allowOrder = grid.AllowUserToOrderColumns;
+            grid.SuspendLayout();
             try
             {
+                grid.AllowUserToOrderColumns = false;
                 var wanted = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
-                foreach (DataGridViewColumn col in grid.Columns)
-                {
-                    // The trailing "+" column is not part of saved layouts.
-                    if (Theme.IsAddColumn(col))
-                        continue;
-                    col.Visible = wanted.Contains(Key(col)) || wanted.Contains(col.HeaderText);
-                }
+                var ordered = new List<DataGridViewColumn>();
+                var used = new HashSet<DataGridViewColumn>();
 
-                int index = 0;
                 foreach (var name in names)
                 {
                     var col = Find(grid, name);
                     // Saved names may refer to columns that this table no longer has.
-                    if (col == null)
+                    if (col == null || !used.Add(col))
                         continue;
                     col.Visible = true;
-                    col.DisplayIndex = index++;
+                    ordered.Add(col);
                 }
 
-                var add = grid.Columns.Cast<DataGridViewColumn>().FirstOrDefault(Theme.IsAddColumn);
-                // Keep the add-column button at the far right after restoring order.
+                DataGridViewColumn? add = null;
+                foreach (DataGridViewColumn col in grid.Columns)
+                {
+                    if (Theme.IsAddColumn(col))
+                    {
+                        add = col;
+                        continue;
+                    }
+
+                    if (used.Contains(col))
+                        continue;
+                    col.Visible = wanted.Contains(Key(col)) || wanted.Contains(col.HeaderText);
+                    ordered.Add(col);
+                }
+
                 if (add != null)
-                    add.DisplayIndex = grid.Columns.Count - 1;
+                {
+                    add.Visible = true;
+                    ordered.Add(add);
+                }
+
+                // DisplayIndex is a permutation of every column, including hidden ones.
+                for (int i = 0; i < ordered.Count; i++)
+                    ordered[i].DisplayIndex = i;
             }
             finally
             {
-                _applying = false;
+                grid.AllowUserToOrderColumns = allowOrder;
+                grid.ResumeLayout(true);
+                EndUpdate();
             }
         }
 

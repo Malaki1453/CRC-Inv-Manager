@@ -15,11 +15,14 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _coo;
         private readonly TextBox _unitSize;
         private readonly TextBox _cases;
-        private readonly Label _volume;
+        private readonly TextBox _volume;
         private readonly TextBox _price;
         private readonly Label _amount;
         private readonly Button _remove;
         private bool _filling;
+        private decimal _overhead;
+        private decimal _freight;
+        private decimal _other;
         private LookupSuggest? _itemSuggest;
         private LookupSuggest? _descSuggest;
         private LookupSuggest? _lotSuggest;
@@ -28,6 +31,8 @@ namespace CastRightCatchInvManagement
 
         public event EventHandler? Changed;
         public event EventHandler? RemoveRequested;
+        /// <summary>Raised after this line is capped to the lot; leftover cases/pounds go on a new line.</summary>
+        public event EventHandler<LotOverflowEventArgs>? LotOverflow;
         /// <summary>Current sales-order number so lot remaining can ignore this SO's saved rows.</summary>
         public Func<string>? CurrentSoNumber { get; set; }
         /// <summary>Volume on other lines of this ticket that use the same item and lot.</summary>
@@ -53,7 +58,7 @@ namespace CastRightCatchInvManagement
             _coo = MakeBox();
             _unitSize = MakeBox();
             _cases = MakeBox();
-            _volume = MakeTotal();
+            _volume = MakeBox();
             _price = MakeBox();
             MoneyFormat.BindInput(_price);
             _amount = MakeTotal();
@@ -84,7 +89,14 @@ namespace CastRightCatchInvManagement
             _cases.TextChanged += (_, _) => RecalcVolume();
             _item.Leave += (_, _) => FillPackFromCatalog();
             _price.Leave += (_, _) => RefreshWarnings();
-            _lot.Leave += (_, _) => RefreshWarnings();
+            _lot.Leave += (_, _) =>
+            {
+                RefreshWarnings();
+                CheckLotOverflow();
+            };
+            _unitSize.Leave += (_, _) => CheckLotOverflow();
+            _cases.Leave += (_, _) => CheckLotOverflow();
+            _volume.Leave += (_, _) => CheckLotOverflow();
             foreach (var box in Fields())
                 box.TextChanged += (_, _) => OnFieldChanged();
 
@@ -98,6 +110,18 @@ namespace CastRightCatchInvManagement
 
         /// <summary>Put the caret on Item Code so the user can type the next product.</summary>
         public void FocusItem() => _item.Focus();
+
+        /// <summary>Apply header per-lb costs to this line and refresh amount.</summary>
+        public void SetSharedCosts(decimal overhead, decimal freight, decimal other)
+        {
+            _overhead = overhead;
+            _freight = freight;
+            _other = other;
+            RecalcAmount();
+        }
+
+        /// <summary>Put the caret on Lot # so the leftover line can pick the next purchase PO.</summary>
+        public void FocusLot() => _lot.Focus();
 
         /// <summary>Bind item-code and description lookups so picking a hit fills the rest of the line.</summary>
         public void AttachLookups(Func<IReadOnlyList<LookupSuggest.Hit>> items)
@@ -141,6 +165,7 @@ namespace CastRightCatchInvManagement
             }
 
             Changed?.Invoke(this, EventArgs.Empty);
+            CheckLotOverflow();
         }
 
         /// <summary>Fill pack size from the item catalog when the line does not already have one.</summary>
@@ -155,6 +180,7 @@ namespace CastRightCatchInvManagement
             _unitSize.Text = pack;
             _filling = false;
             RecalcVolume();
+            CheckLotOverflow();
         }
 
         /// <summary>Remember the customer PO this line came from.</summary>
@@ -188,6 +214,7 @@ namespace CastRightCatchInvManagement
             RecalcVolume();
             _poHitsItem = "\0";
             Changed?.Invoke(this, EventArgs.Empty);
+            CheckLotOverflow();
         }
 
         /// <summary>Load this line from a sales-table row, including its customer PO.</summary>
@@ -256,7 +283,8 @@ namespace CastRightCatchInvManagement
                 _filling = false;
             }
 
-            RecalcVolume();
+            RecalcAmount();
+            RefreshWarnings();
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
@@ -366,7 +394,7 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
-        /// <summary>Volume is pack size × cases and is not typed by the user.</summary>
+        /// <summary>Pack size × cases fills volume; the user can still type a different actual weight.</summary>
         private void RecalcVolume()
         {
             if (_filling)
@@ -381,10 +409,11 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
-        /// <summary>Amount is volume times sell price / lb.</summary>
+        /// <summary>Amount is volume times sell price plus header per-lb costs.</summary>
         private void RecalcAmount()
         {
-            decimal amount = ParseNumber(_volume.Text) * ParseNumber(_price.Text);
+            decimal perLb = ParseNumber(_price.Text) + _overhead + _freight + _other;
+            decimal amount = ParseNumber(_volume.Text) * perLb;
             _amount.Text = MoneyFormat.Display(amount);
         }
 
@@ -413,6 +442,7 @@ namespace CastRightCatchInvManagement
             yield return _coo;
             yield return _unitSize;
             yield return _cases;
+            yield return _volume;
             yield return _price;
         }
 
@@ -441,6 +471,102 @@ namespace CastRightCatchInvManagement
 
         /// <summary>Parse a money or quantity cell, treating blank or junk as zero.</summary>
         public static decimal ParseNumber(string? text) => PurchaseLineRow.ParseNumber(text);
+
+        /// <summary>Cases text with up to three decimals and no trailing zeros.</summary>
+        internal static string FormatQty(decimal n)
+        {
+            if (n <= 0)
+                return "";
+            return n.ToString("0.###", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// When pounds on this lot exceed what is left, keep the remaining here and raise
+        /// <see cref="LotOverflow"/> with the leftover cases and pounds.
+        /// </summary>
+        private void CheckLotOverflow()
+        {
+            if (_filling)
+                return;
+            if (ItemCode.Length == 0 || LotNumber.Length == 0)
+                return;
+
+            decimal want = VolumeValue;
+            if (want <= 0)
+                return;
+
+            string so = CurrentSoNumber?.Invoke() ?? "";
+            decimal left = DataFiles.LotRemaining(LotNumber, ItemCode, so) - (SiblingVolume?.Invoke() ?? 0);
+            // An empty or fully sold lot stays on this line so the red warning can show.
+            if (left <= 0.0005m || want <= left + 0.0005m)
+                return;
+
+            decimal leftoverVol = want - left;
+            decimal wantCs = ParseNumber(_cases.Text);
+            decimal pack = ParseNumber(_unitSize.Text);
+            decimal keepCs;
+            if (pack > 0)
+                keepCs = left / pack;
+            else if (want > 0 && wantCs > 0)
+                keepCs = wantCs * left / want;
+            else
+                keepCs = 0;
+            if (keepCs > wantCs && wantCs > 0)
+                keepCs = wantCs;
+            decimal leftoverCs = wantCs - keepCs;
+            if (leftoverCs < 0)
+                leftoverCs = 0;
+
+            _filling = true;
+            try
+            {
+                _cases.Text = FormatQty(keepCs);
+                _volume.Text = MoneyFormat.Plain(left);
+            }
+            finally
+            {
+                _filling = false;
+            }
+
+            RecalcAmount();
+            RefreshWarnings();
+            Changed?.Invoke(this, EventArgs.Empty);
+            LotOverflow?.Invoke(this, new LotOverflowEventArgs(leftoverCs, leftoverVol));
+        }
+
+        /// <summary>Add leftover cases and pounds from a lot split onto this line.</summary>
+        public void AddQuantity(decimal cases, decimal volume)
+        {
+            _filling = true;
+            try
+            {
+                decimal cs = ParseNumber(_cases.Text) + cases;
+                decimal vol = ParseNumber(_volume.Text) + volume;
+                _cases.Text = FormatQty(cs);
+                _volume.Text = vol > 0 ? MoneyFormat.Plain(vol) : "";
+            }
+            finally
+            {
+                _filling = false;
+            }
+
+            RecalcAmount();
+            RefreshWarnings();
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>Leftover cases and pounds after a sales line is capped to what its lot has left.</summary>
+    internal sealed class LotOverflowEventArgs : EventArgs
+    {
+        public LotOverflowEventArgs(decimal cases, decimal volume)
+        {
+            Cases = cases;
+            Volume = volume;
+        }
+
+        public decimal Cases { get; }
+        public decimal Volume { get; }
     }
 
     /// <summary>Column rectangles for a sales-order product line at a given width.</summary>
@@ -519,6 +645,7 @@ namespace CastRightCatchInvManagement
         public string CustomerCode { get; set; } = "";
         public string CustomerName { get; set; } = "";
         public string Address { get; set; } = "";
+        public string BillingAddress { get; set; } = "";
         public string CustomerPhone { get; set; } = "";
         public string Contact { get; set; } = "";
         public string Email { get; set; } = "";
@@ -526,7 +653,9 @@ namespace CastRightCatchInvManagement
         public string Warehouse { get; set; } = "";
         public string CustomerPo { get; set; } = "";
         public string Status { get; set; } = "";
+        public string PaymentTerms { get; set; } = "";
         public string FreightCompany { get; set; } = "";
+        public string FreightTerms { get; set; } = "";
         public List<SalesOrderLine> Lines { get; set; } = new();
 
         public decimal TotalCases => Lines.Sum(line => InvoiceLineRow.ParseNumber(line.Cases));

@@ -111,7 +111,7 @@ namespace CastRightCatchInvManagement
             float y = PageH - yTop;
             // Center within a cell when invoices pass a column width.
             if (center && width > 0)
-                x += (width - Estimate(text, size)) / 2f;
+                x += (width - Estimate(text, size, face == PdfFace.SansBold)) / 2f;
 
             Rgb(color);
             _s.Append(" rg BT /");
@@ -127,11 +127,80 @@ namespace CastRightCatchInvManagement
             _s.Append(") Tj ET\n");
         }
 
-        /// <summary>Right-align text by subtracting the estimated width from the right edge.</summary>
+        /// <summary>Right-align text by subtracting the Helvetica width from the right edge.</summary>
         public void TextRight(float right, float yTop, string? text, float size, bool bold, Color color)
         {
             text ??= "";
-            Text(right - Estimate(text, size), yTop, text, size, bold, color);
+            Text(right - Estimate(text, size, bold), yTop, text, size, bold, color);
+        }
+
+        /// <summary>Split text on existing line breaks, then wrap to maxWidth using Helvetica widths.</summary>
+        public static List<string> WrapLines(string? text, float size, bool bold, float maxWidth)
+        {
+            var lines = new List<string>();
+            foreach (var paragraph in (text ?? "").Replace("\r", "").Split('\n'))
+            {
+                string rest = paragraph.TrimEnd();
+                if (rest.Length == 0)
+                {
+                    lines.Add("");
+                    continue;
+                }
+
+                while (rest.Length > 0)
+                {
+                    if (Estimate(rest, size, bold) <= maxWidth)
+                    {
+                        lines.Add(rest);
+                        break;
+                    }
+
+                    int take = FitLength(rest, size, bold, maxWidth);
+                    int space = rest.LastIndexOf(' ', take);
+                    if (space > 0)
+                        take = space;
+                    lines.Add(rest[..take].TrimEnd());
+                    rest = rest[take..].TrimStart();
+                }
+            }
+
+            if (lines.Count == 0)
+                lines.Add("");
+            return lines;
+        }
+
+        /// <summary>Draw wrapped text. Returns the y after the last line (one line even when empty).</summary>
+        public float TextFlow(
+            float x,
+            float yTop,
+            string? text,
+            float size,
+            bool bold,
+            Color color,
+            float maxWidth,
+            float lineHeight)
+        {
+            var lines = WrapLines(text, size, bold, maxWidth);
+            for (int i = 0; i < lines.Count; i++)
+                Text(x, yTop + i * lineHeight, lines[i], size, bold, color);
+            return yTop + Math.Max(1, lines.Count) * lineHeight;
+        }
+
+        /// <summary>Largest prefix of text whose Helvetica width is still within maxWidth.</summary>
+        private static int FitLength(string text, float size, bool bold, float maxWidth)
+        {
+            int lo = 1;
+            int hi = text.Length;
+            while (lo < hi)
+            {
+                int mid = (lo + hi + 1) / 2;
+                if (Estimate(text[..mid], size, bold) <= maxWidth)
+                    lo = mid;
+                else
+                    hi = mid - 1;
+            }
+
+            return Math.Max(1, lo);
         }
 
         /// <summary>Place a prepared image; optional opacity uses an ExtGState for watermarks.</summary>
@@ -272,8 +341,41 @@ namespace CastRightCatchInvManagement
             _ => "F1"
         };
 
-        /// <summary>Rough Helvetica width used only for centering and right-align.</summary>
-        private static float Estimate(string text, float size) => text.Length * size * 0.5f;
+        /// <summary>Adobe Helvetica AFM widths in 1/1000 em for ASCII 32–126.</summary>
+        private static readonly ushort[] HelveticaW =
+        {
+            278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,
+            556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,
+            1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,
+            667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,
+            333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,
+            556,556,333,500,278,556,500,722,500,500,500,334,260,334,584
+        };
+
+        /// <summary>Adobe Helvetica-Bold AFM widths in 1/1000 em for ASCII 32–126.</summary>
+        private static readonly ushort[] HelveticaBoldW =
+        {
+            278,333,474,556,556,889,722,238,333,333,389,584,278,333,278,278,
+            556,556,556,556,556,556,556,556,556,556,333,333,584,584,584,611,
+            975,722,722,722,722,667,611,778,722,278,556,722,611,833,722,778,
+            667,778,722,667,611,722,667,944,667,667,611,333,278,333,584,556,
+            333,556,611,556,611,556,333,611,611,278,278,556,278,889,611,611,
+            611,611,389,556,333,611,556,778,556,556,500,389,280,389,584
+        };
+
+        /// <summary>True Helvetica advance so right-aligned lines share one right edge.</summary>
+        private static float Estimate(string text, float size, bool bold = false)
+        {
+            var table = bold ? HelveticaBoldW : HelveticaW;
+            int units = 0;
+            foreach (char c in text)
+            {
+                int i = c - 32;
+                units += (uint)i < (uint)table.Length ? table[i] : 500;
+            }
+
+            return units * size / 1000f;
+        }
 
         /// <summary>Invariant number for PDF operators (no locale commas).</summary>
         internal static string F(float n) => n.ToString("0.###", CultureInfo.InvariantCulture);
@@ -368,9 +470,9 @@ namespace CastRightCatchInvManagement
         private static PdfSoftImage? _lockup;
         private static PdfSoftImage? _seal;
 
-        /// <summary>Boat lockup with gray background knocked out, prepared once.</summary>
+        /// <summary>Boat lockup composited on cream so the PNG's clear backdrop matches the banner.</summary>
         public static PdfSoftImage? Lockup() =>
-            _lockup ??= Prepare(BrandAssets.BoatLogo, knockoutGray: true);
+            _lockup ??= Prepare(BrandAssets.BoatLogo, matte: Theme.Cream);
 
         /// <summary>Seal watermark with dark background knocked out, prepared once.</summary>
         public static PdfSoftImage? Seal() =>
@@ -382,7 +484,8 @@ namespace CastRightCatchInvManagement
             bool knockoutDark = false,
             bool knockoutGray = false,
             float fade = 0f,
-            bool keepAlpha = false)
+            bool keepAlpha = false,
+            Color? matte = null)
         {
             // Missing brand files should omit the image rather than throw.
             if (source == null)
@@ -406,6 +509,9 @@ namespace CastRightCatchInvManagement
                 var alpha = new byte[bmp.Width * bmp.Height];
                 var rgb = new byte[bmp.Width * bmp.Height * 3];
                 bool anyAlpha = false;
+                int matteR = matte?.R ?? 255;
+                int matteG = matte?.G ?? 255;
+                int matteB = matte?.B ?? 255;
                 for (int y = 0; y < bmp.Height; y++)
                 {
                     for (int x = 0; x < bmp.Width; x++)
@@ -419,11 +525,32 @@ namespace CastRightCatchInvManagement
                         if (knockoutDark && r <= 36 && g <= 36 && b <= 36)
                             a = 0;
                         // Gray studio backdrop around the boat lockup should not print.
-                        if (knockoutGray && Math.Abs(r - g) < 14 && Math.Abs(g - b) < 14 && r is >= 70 and <= 210)
+                        if (knockoutGray && Math.Abs(r - g) < 16 && Math.Abs(g - b) < 16 && r is >= 48 and <= 180)
                             a = 0;
-                        // Near-transparent pixels become white so JPEG-like fringes disappear.
-                        if (a < 16)
+                        // Crop against coverage before flattening so cream padding is not part of the box.
+                        int srcA = a;
+                        if (matte.HasValue)
                         {
+                            // Clear pixels keep leftover studio RGB; use the banner color instead of blending that gray.
+                            if (srcA < 16)
+                            {
+                                r = matteR;
+                                g = matteG;
+                                b = matteB;
+                            }
+                            else
+                            {
+                                float t = srcA / 255f;
+                                r = (int)Math.Round(r * t + matteR * (1f - t));
+                                g = (int)Math.Round(g * t + matteG * (1f - t));
+                                b = (int)Math.Round(b * t + matteB * (1f - t));
+                            }
+                            if (!keepAlpha)
+                                a = 255;
+                        }
+                        else if (srcA < 16)
+                        {
+                            // Near-transparent pixels become white so JPEG-like fringes disappear.
                             a = 0;
                             r = 255;
                             g = 255;
@@ -446,7 +573,7 @@ namespace CastRightCatchInvManagement
                         if (a < 250)
                             anyAlpha = true;
                         // Transparent pixels are not part of the crop box.
-                        if (a < 16)
+                        if (srcA < 16)
                             continue;
                         // Grow the crop box to every opaque pixel.
                         if (x < minX) minX = x;

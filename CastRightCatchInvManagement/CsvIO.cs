@@ -9,17 +9,61 @@ namespace CastRightCatchInvManagement
         /// <summary>Read a CSV into rows of fields, skipping blank lines.</summary>
         public static List<string[]> Read(string path)
         {
-            var rows = new List<string[]>();
             // Missing leftover CSVs are normal after a database has already been created.
             if (!File.Exists(path))
-                return rows;
+                return new List<string[]>();
+            return Parse(File.ReadAllText(path));
+        }
 
-            foreach (var line in File.ReadAllLines(path))
+        /// <summary>Parse CSV text, keeping commas and line breaks that sit inside quotes.</summary>
+        public static List<string[]> Parse(string text)
+        {
+            var rows = new List<string[]>();
+            var row = new List<string>();
+            var field = new StringBuilder();
+            bool quoted = false;
+            for (int i = 0; i < text.Length; i++)
             {
-                // Blank lines are not inventory rows.
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
-                rows.Add(ParseLine(line).ToArray());
+                char c = text[i];
+                if (quoted)
+                {
+                    if (c == '"')
+                    {
+                        if (i + 1 < text.Length && text[i + 1] == '"')
+                        {
+                            field.Append('"');
+                            i++;
+                        }
+                        else
+                            quoted = false;
+                    }
+                    else
+                        field.Append(c);
+                }
+                else if (c == '"')
+                    quoted = true;
+                else if (c == ',')
+                {
+                    row.Add(field.ToString());
+                    field.Clear();
+                }
+                else if (c == '\n')
+                {
+                    row.Add(field.ToString());
+                    field.Clear();
+                    if (row.Any(value => value.Trim().Length > 0))
+                        rows.Add(row.ToArray());
+                    row.Clear();
+                }
+                else if (c != '\r')
+                    field.Append(c);
+            }
+
+            if (field.Length > 0 || row.Count > 0)
+            {
+                row.Add(field.ToString());
+                if (row.Any(value => value.Trim().Length > 0))
+                    rows.Add(row.ToArray());
             }
 
             return rows;

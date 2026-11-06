@@ -38,6 +38,7 @@ namespace CastRightCatchInvManagement
         private readonly bool _codeFirst;
         private readonly Action<Hit> _picked;
         private readonly int _minListWidth;
+        private readonly bool _showWhenEmpty;
         private readonly List<Hit> _hits = new();
         private bool _applying;
         private bool _placed;
@@ -48,13 +49,15 @@ namespace CastRightCatchInvManagement
             Func<IReadOnlyList<Hit>> source,
             bool codeFirst,
             Action<Hit> picked,
-            int minListWidth = 240)
+            int minListWidth = 240,
+            bool showWhenEmpty = false)
         {
             _box = box;
             _source = source;
             _codeFirst = codeFirst;
             _picked = picked;
             _minListWidth = Math.Max(120, minListWidth);
+            _showWhenEmpty = showWhenEmpty;
             _list = new ListBox
             {
                 Visible = false,
@@ -67,6 +70,12 @@ namespace CastRightCatchInvManagement
                 Height = 8
             };
             _box.TextChanged += (_, _) => Filter();
+            _box.GotFocus += (_, _) =>
+            {
+                // Warehouse Ship To should list choices as soon as the box is focused.
+                if (_showWhenEmpty)
+                    Filter();
+            };
             _box.PreviewKeyDown += OnPreviewKeyDown;
             _box.KeyDown += OnKeyDown;
             _box.Leave += (_, _) =>
@@ -107,19 +116,25 @@ namespace CastRightCatchInvManagement
                 return;
 
             string needle = _box.Text.Trim();
-            // An empty box should not show every vendor/customer.
-            if (needle.Length == 0)
+            var source = _source();
+            // A filled warehouse address should still open the full list; typing then filters.
+            bool showAll = _showWhenEmpty &&
+                (needle.Length == 0 ||
+                 source.Any(hit => hit.Extra.Equals(needle, StringComparison.OrdinalIgnoreCase)));
+            // An empty box should not show every vendor/customer, except short lists like warehouses.
+            if (needle.Length == 0 && !showAll)
             {
                 Hide();
                 return;
             }
 
             _hits.Clear();
-            foreach (var hit in _source())
+            foreach (var hit in source)
             {
-                // needle is the typed box text; keep hits whose code, name, or extra search tokens contain it.
-                if (hit.Matches(needle))
-                    _hits.Add(hit);
+                // showAll lists every warehouse; otherwise match code, name, or extra search tokens.
+                if (!showAll && !hit.Matches(needle))
+                    continue;
+                _hits.Add(hit);
                 // Cap the list so typing a short letter does not flood the form.
                 if (_hits.Count >= 12)
                     break;

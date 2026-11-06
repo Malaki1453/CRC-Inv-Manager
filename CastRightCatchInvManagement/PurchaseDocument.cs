@@ -31,19 +31,17 @@ namespace CastRightCatchInvManagement
         {
             var first = rows[0];
             var g = new PdfDraw();
-            float y = PdfLetterhead.Draw(g);
+            float y = PdfLetterhead.Draw(g, email: PdfLetterhead.PurchaseEmail);
             PdfLetterhead.TitleBar(g, y, "PURCHASE ORDER");
             y += 28;
-            g.Text(36, y, "Vendor:", 8, true, Theme.Navy);
-            g.Text(110, y, DataFiles.GetRecord(first, "Vendor"), 9, false, Theme.Ink);
-            g.Text(330, y, "Vendor Code:", 8, true, Theme.Navy);
-            g.Text(420, y, DataFiles.GetRecord(first, "Vendor Code"), 9, false, Theme.Ink);
+            y = PdfFieldFlow.Pair(
+                g, y,
+                "Vendor:", DataFiles.GetRecord(first, "Vendor"),
+                "Vendor Code:", DataFiles.GetRecord(first, "Vendor Code"),
+                9);
+            y = PdfFieldFlow.Left(g, y, "Location:", DataFiles.GetRecord(first, "Location"), 8, 460);
 
-            y += 14;
-            g.Text(36, y, "Location:", 8, true, Theme.Navy);
-            g.Text(110, y, DataFiles.GetRecord(first, "Location"), 8, false, Theme.Ink);
-
-            y += 22;
+            y += 10;
             g.Fill(36, y, 540, 16, Theme.Navy);
             g.Text(42, y + 11, "PO #", 6.5f, true, Theme.Cream);
             g.Text(150, y + 11, "AGREEMENT", 6.5f, true, Theme.Cream);
@@ -60,12 +58,12 @@ namespace CastRightCatchInvManagement
             g.Text(450, y + 13, DataFiles.GetRecord(first, "Status"), 8, false, Theme.Ink);
 
             y += 26;
-            g.Text(36, y, "Forwarder:", 8, true, Theme.Navy);
-            g.Text(110, y, DataFiles.GetRecord(first, "Forwarder"), 8, false, Theme.Ink);
-            g.Text(330, y, "Logistics:", 8, true, Theme.Navy);
-            g.Text(400, y, DataFiles.GetRecord(first, "Logistics"), 8, false, Theme.Ink);
+            y = PdfFieldFlow.Pair(
+                g, y,
+                "Forwarder:", DataFiles.GetRecord(first, "Forwarder"),
+                "Logistics:", DataFiles.GetRecord(first, "Logistics"));
 
-            y += 18;
+            y += 6;
             g.Fill(36, y, 540, 16, Theme.Navy);
             g.Text(42, y + 11, "ITEM", 6.5f, true, Theme.Cream);
             g.Text(114, y + 11, "DESCRIPTION", 6.5f, true, Theme.Cream);

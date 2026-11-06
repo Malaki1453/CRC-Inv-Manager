@@ -31,19 +31,17 @@ namespace CastRightCatchInvManagement
         {
             var first = rows[0];
             var g = new PdfDraw();
-            float y = PdfLetterhead.Draw(g);
-            PdfLetterhead.TitleBar(g, y, "SALE");
+            float y = PdfLetterhead.Draw(g, email: PdfLetterhead.SaleEmail);
+            PdfLetterhead.TitleBar(g, y, "CUSTOMER");
             y += 28;
-            g.Text(36, y, "Customer:", 8, true, Theme.Navy);
-            g.Text(110, y, DataFiles.GetRecord(first, "Customer"), 9, false, Theme.Ink);
-            g.Text(330, y, "Customer Code:", 8, true, Theme.Navy);
-            g.Text(430, y, DataFiles.GetRecord(first, "Customer Code"), 9, false, Theme.Ink);
+            y = PdfFieldFlow.Pair(
+                g, y,
+                "Customer:", DataFiles.GetRecord(first, "Customer"),
+                "Customer Code:", DataFiles.GetRecord(first, "Customer Code"),
+                9);
+            y = PdfFieldFlow.Left(g, y, "Status:", DataFiles.GetRecord(first, "Status"));
 
-            y += 14;
-            g.Text(36, y, "Status:", 8, true, Theme.Navy);
-            g.Text(110, y, DataFiles.GetRecord(first, "Status"), 8, false, Theme.Ink);
-
-            y += 22;
+            y += 10;
             g.Fill(36, y, 540, 16, Theme.Navy);
             g.Text(42, y + 11, "CUSTOMER PO", 6.5f, true, Theme.Cream);
             g.Text(186, y + 11, "SO #", 6.5f, true, Theme.Cream);

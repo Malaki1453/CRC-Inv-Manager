@@ -50,6 +50,8 @@ internal sealed class ServerDispatch
             ServerOps.TableInsertMany => InsertMany(payload, session),
             // Update by id if the caller may write the row.
             ServerOps.TableUpdate => Update(payload, session),
+            // Delete by id if the caller may write the row.
+            ServerOps.TableDelete => Delete(payload, session),
             // Add missing TEXT columns if the caller may write the table.
             ServerOps.TableEnsureColumns => EnsureColumns(payload, session),
             // Live (+ archive when viewing old) row count after the same filter as table.read.
@@ -348,6 +350,16 @@ internal sealed class ServerDispatch
         var values = request.Values ?? new Dictionary<string, string>();
         RequireRowAccess(request.Table, values, session);
         return _store.UpdateById(request.Table, request.Id, values);
+    }
+
+    /// <summary>Deletes a row by id after the access filter allows the write.</summary>
+    private bool Delete(JsonElement payload, ClientSession session)
+    {
+        var request = Read<TableRequest>(payload);
+        var existing = _store.ReadWithIds(request.Table, request.ViewOld)
+            .FirstOrDefault(row => row.Id == request.Id);
+        RequireRowAccess(request.Table, existing.Fields ?? new Dictionary<string, string>(), session);
+        return _store.DeleteById(request.Table, request.Id);
     }
 
     /// <summary>Throws when the signed-in user may not write this table/row.</summary>

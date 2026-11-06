@@ -26,9 +26,9 @@ namespace CastRightCatchInvManagement
         /// <summary>Build identity, notes, and history tabs for this customer or vendor.</summary>
         private CustomerHistoryForm(Dictionary<string, string> customer, bool vendor)
         {
-            string name = First(customer, "Name", "Company");
+            string name = DataFiles.PartyDocumentName(customer);
             string code = DataFiles.GetRecord(customer, "Code");
-            string company = First(customer, "Company", "Name");
+            string company = DataFiles.PartyDba(customer);
             string notes = DataFiles.GetRecordAny(customer, "Description", "Notes");
             string contact = DataFiles.GetRecord(customer, "Contact Name");
 
@@ -73,8 +73,9 @@ namespace CastRightCatchInvManagement
                 TextAlign = ContentAlignment.BottomLeft
             };
             var subtitleParts = new List<string>();
-            // Company is extra context only when it differs from the display name.
-            if (company.Length > 0 && !company.Equals(name, StringComparison.OrdinalIgnoreCase))
+            // DBA is extra context only when the title does not already include it.
+            if (company.Length > 0 &&
+                name.IndexOf(company, StringComparison.OrdinalIgnoreCase) < 0)
                 subtitleParts.Add(company);
             // Code helps staff find the same row in the lookup grid.
             if (code.Length > 0)
@@ -163,7 +164,7 @@ namespace CastRightCatchInvManagement
         {
             var card = new CardPanel
             {
-                Height = vendor ? 266 : 340,
+                Height = vendor ? 200 : 340,
                 Padding = new Padding(12, 10, 12, 10)
             };
             var heading = new Label
@@ -177,7 +178,7 @@ namespace CastRightCatchInvManagement
             var grid = new TableLayoutPanel
             {
                 ColumnCount = 4,
-                RowCount = vendor ? 3 : 4,
+                RowCount = vendor ? 2 : 4,
                 Location = new Point(12, 40),
                 Dock = DockStyle.None
             };
@@ -185,21 +186,19 @@ namespace CastRightCatchInvManagement
                 grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
 
             PutReadout(grid, 0, 0, "CODE", DataFiles.GetRecord(record, "Code"));
-            PutReadout(grid, 1, 0, "NAME", DataFiles.GetRecord(record, "Name"));
-            PutReadout(grid, 2, 0, "COMPANY", First(record, "Company", "Name"));
+            PutReadout(grid, 1, 0, "COMPANY", DataFiles.PartyCompanyName(record));
+            PutReadout(grid, 2, 0, "DBA", DataFiles.PartyDba(record));
             PutReadout(grid, 3, 0, "PHONE", DataFiles.GetRecord(record, "Phone"));
 
-            // Vendor identity has type/terms/amount instead of email/address.
+            // Vendor identity has type/terms/current balance instead of email/address.
             if (vendor)
             {
                 PutReadout(grid, 0, 1, "TERMS", DataFiles.GetRecord(record, "Terms"));
                 PutReadout(grid, 1, 1, "TYPE", DataFiles.GetRecord(record, "Type"));
                 PutReadout(grid, 2, 1, "CONTACT NAME", DataFiles.GetRecord(record, "Contact Name"));
-                PutReadout(grid, 3, 1, "AMOUNT", MoneyFormat.Display(DataFiles.GetRecord(record, "Amount")));
-                PutReadout(grid, 0, 2, "CURRENT BALANCE", MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance")));
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 20));
+                PutReadout(grid, 3, 1, "CURRENT BALANCE", MoneyFormat.Display(DataFiles.VendorCurrentBalance(record)));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             }
             // Customer identity includes credit, established date, and a full-width address.
             else
@@ -207,11 +206,14 @@ namespace CastRightCatchInvManagement
                 PutReadout(grid, 0, 1, "CONTACT NAME", DataFiles.GetRecord(record, "Contact Name"));
                 PutReadout(grid, 1, 1, "EMAIL", DataFiles.GetRecord(record, "Email"));
                 PutReadout(grid, 2, 1, "TERMS", DataFiles.GetRecord(record, "Terms"));
-                PutReadout(grid, 3, 1, "CREDIT LIMIT", MoneyFormat.Display(DataFiles.GetRecord(record, "Credit Limit")));
+                string credit = DataFiles.GetRecord(record, "Credit Limit");
+                if (credit.Trim().Length == 0)
+                    credit = DataFiles.GetRecord(record, "Amount");
+                PutReadout(grid, 3, 1, "CREDIT LIMIT", MoneyFormat.Display(credit));
                 PutReadout(grid, 0, 2, "CURRENT BALANCE", MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance")));
                 PutReadout(grid, 1, 2, "ESTABLISHED", DataFiles.GetRecord(record, "Established"));
                 PutReadout(grid, 0, 3, "BILLING ADDRESS", DataFiles.CustomerBillingAddress(record), colSpan: 2);
-                PutReadout(grid, 2, 3, "SHIPPING ADDRESS", DataFiles.CustomerShippingAddress(record), colSpan: 2);
+                PutReadout(grid, 2, 3, "WAREHOUSES", DataFiles.CustomerWarehouseDisplay(record), colSpan: 2);
                 grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
                 grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
                 grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
@@ -268,19 +270,5 @@ namespace CastRightCatchInvManagement
         /// <summary>Show an em dash when the field was never filled in.</summary>
         private static string Display(string value) =>
             string.IsNullOrWhiteSpace(value) ? "—" : value.Trim();
-
-        /// <summary>First non-blank field among the given keys (Name vs Company).</summary>
-        private static string First(Dictionary<string, string> record, params string[] keys)
-        {
-            foreach (var key in keys)
-            {
-                string value = DataFiles.GetRecord(record, key).Trim();
-                // Prefer the first populated identity field rather than concatenating.
-                if (value.Length > 0)
-                    return value;
-            }
-
-            return "";
-        }
     }
 }

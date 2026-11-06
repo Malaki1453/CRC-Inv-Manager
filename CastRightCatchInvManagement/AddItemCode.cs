@@ -12,8 +12,6 @@ namespace CastRightCatchInvManagement
         private ComboBox _fresh = null!;
         private TextBox _proc = null!;
         private TextBox _pack = null!;
-        private TextBox _shelfLife = null!;
-        private Label _shelfLabel = null!;
         private TextBox _minProfit = null!;
         private string _loadedMinProfit = "";
         private Button _save = null!;
@@ -117,7 +115,7 @@ namespace CastRightCatchInvManagement
             footer.Controls.Add(another);
             footer.Controls.Add(clear);
 
-            var card = new CardPanel { Dock = DockStyle.Top, Height = 340 };
+            var card = new CardPanel { Dock = DockStyle.Top, Height = 280 };
             var heading = new Label
             {
                 Text = "Item",
@@ -134,26 +132,14 @@ namespace CastRightCatchInvManagement
             _proc = AddField(card, "PROC COUNTRY", 200, 108, 180);
             _pack = AddField(card, "PACK SIZE", 400, 108, 140);
             _farmed = AddCombo(card, "FARMED / WILD", 560, 108, 140, "Farmed", "Wild");
-            _fresh = AddCombo(card, "FRESH / FROZEN", 720, 108, 140, "Fresh", "Frozen");
+            _fresh = AddCombo(card, "PRODUCT CONDITION", 710, 108, 160);
             _scientific = AddField(card, "SCIENTIFIC NAME", 20, 168, 400);
-            _shelfLabel = new Label { Text = "SHELF LIFE (MONTHS)", Location = new Point(440, 168) };
-            Theme.StyleFieldLabel(_shelfLabel);
-            _shelfLife = new TextBox
-            {
-                Location = new Point(440, 184),
-                Size = new Size(140, 26),
-                PlaceholderText = "12"
-            };
-            Theme.StyleField(_shelfLife);
-            card.Controls.Add(_shelfLabel);
-            card.Controls.Add(_shelfLife);
-            _minProfit = AddField(card, "MINIMUM PROFIT / LB  ·  ADMIN", 20, 228, 200);
+            _minProfit = AddField(card, "MINIMUM PROFIT / LB  ·  ADMIN", 440, 168, 220);
             _minProfit.PlaceholderText = "0.00";
             MoneyFormat.BindInput(_minProfit);
             _minProfit.ReadOnly = !AppState.IsAdmin;
             if (_minProfit.ReadOnly)
                 _minProfit.BackColor = Theme.Cream;
-            _fresh.SelectedIndexChanged += (_, _) => SyncFrozenFields();
             _code.PlaceholderText = "Item code";
             _description.PlaceholderText = "Product name";
             _species.PlaceholderText = "Species";
@@ -183,11 +169,9 @@ namespace CastRightCatchInvManagement
             _proc.Text = "";
             _pack.Text = "";
             _farmed.SelectedIndex = -1;
-            _fresh.SelectedIndex = -1;
-            _shelfLife.Text = "";
+            FillConditions("");
             _loadedMinProfit = "";
             _minProfit.Text = DataFiles.DefaultMinimumProfitText();
-            SyncFrozenFields();
         }
 
         /// <summary>Fill the editors from an inventory row.</summary>
@@ -205,13 +189,11 @@ namespace CastRightCatchInvManagement
             _proc.Text = DataFiles.GetRecord(record, "Proc Country");
             _pack.Text = DataFiles.GetRecord(record, "Pack Size");
             SelectCombo(_farmed, DataFiles.GetRecord(record, "Farmed / Wild"));
-            SelectCombo(_fresh, DataFiles.GetRecord(record, "Fresh / Frozen"));
-            _shelfLife.Text = DataFiles.GetRecord(record, DataFiles.ShelfLifeMonthsColumn);
+            FillConditions(DataFiles.GetRecord(record, DataFiles.ItemConditionColumn));
             _loadedMinProfit = DataFiles.GetRecord(record, DataFiles.MinimumProfitColumn);
             _minProfit.Text = _loadedMinProfit.Trim().Length > 0
                 ? MoneyFormat.Display(_loadedMinProfit)
                 : DataFiles.DefaultMinimumProfitText();
-            SyncFrozenFields();
         }
 
         /// <summary>Insert or update the item. Returns false when validation or the write fails.</summary>
@@ -249,8 +231,7 @@ namespace CastRightCatchInvManagement
                 ["Proc Country"] = _proc.Text.Trim(),
                 ["Pack Size"] = _pack.Text.Trim(),
                 ["Farmed / Wild"] = ComboText(_farmed),
-                ["Fresh / Frozen"] = ComboText(_fresh),
-                [DataFiles.ShelfLifeMonthsColumn] = FrozenSelected() ? _shelfLife.Text.Trim() : "",
+                [DataFiles.ItemConditionColumn] = ComboText(_fresh),
                 [DataFiles.MinimumProfitColumn] = StoredMinimumProfit()
             };
 
@@ -300,18 +281,16 @@ namespace CastRightCatchInvManagement
             return MoneyFormat.Store(DataFiles.DefaultMinimumProfitText());
         }
 
-        /// <summary>Shelf life applies to frozen items only.</summary>
-        private void SyncFrozenFields()
+        /// <summary>Reload Product Condition from Admin settings, then restore the current pick.</summary>
+        private void FillConditions(string selected)
         {
-            bool frozen = FrozenSelected();
-            _shelfLabel.Visible = frozen;
-            _shelfLife.Visible = frozen;
-            if (frozen && string.IsNullOrWhiteSpace(_shelfLife.Text))
-                _shelfLife.Text = "12";
+            ProductConditions.Reload();
+            string keep = DataFiles.NormalizeItemCondition(selected);
+            _fresh.Items.Clear();
+            foreach (string name in ProductConditions.Load())
+                _fresh.Items.Add(name);
+            SelectCombo(_fresh, keep);
         }
-
-        private bool FrozenSelected() =>
-            ComboText(_fresh).Equals("Frozen", StringComparison.OrdinalIgnoreCase);
 
         private static void SelectCombo(ComboBox box, string value)
         {

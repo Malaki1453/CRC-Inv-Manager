@@ -41,7 +41,7 @@ namespace CastRightCatchInvManagement
             string orderNo = received ? draft.PoNumber : draft.SoNumber;
             string partyCode = received ? draft.VendorCode : draft.CustomerCode;
 
-            float y = PdfLetterhead.Draw(g, brand: !received);
+            float y = PdfLetterhead.Draw(g, brand: !received, email: PdfLetterhead.InvoiceEmail);
             // Received invoices print the vendor as issuer instead of our letterhead.
             if (received)
             {
@@ -88,10 +88,9 @@ namespace CastRightCatchInvManagement
             g.Text(36, y, "Sold To:", 8, true, Theme.Navy);
             g.Text(306, y, "Ship To:", 8, true, Theme.Navy);
             y += 12;
-            DrawBlock(g, 36, y, draft.SoldTo);
-            DrawBlock(g, 306, y, draft.ShipTo);
-
-            y += 48;
+            float soldH = PdfFieldFlow.Block(g, 36, y, draft.SoldTo, 258);
+            float shipH = PdfFieldFlow.Block(g, 306, y, draft.ShipTo, 258);
+            y += Math.Max(soldH, shipH) + 10;
             g.Fill(36, y, 540, 16, Theme.Navy);
             g.Text(42, y + 11, "PO #", 6.5f, true, Theme.Cream);
             g.Text(108, y + 11, "PRODUCT", 6.5f, true, Theme.Cream);
@@ -181,14 +180,6 @@ namespace CastRightCatchInvManagement
             if (value != 0)
                 g.TextRight(572, y + 12, FormatMoney(value), 8, false, Theme.Ink);
             g.Line(422, y + 16, 576, y + 16);
-        }
-
-        /// <summary>Print up to three Sold To / Ship To lines.</summary>
-        private static void DrawBlock(PdfDraw g, float x, float y, string text)
-        {
-            var lines = (text ?? "").Replace("\r", "").Split('\n');
-            for (int i = 0; i < Math.Min(3, lines.Length); i++)
-                g.Text(x, y + i * 11, PdfItemText.Clip(lines[i], 46), 8, false, Theme.Ink);
         }
 
         /// <summary>Format a money amount with two decimal places.</summary>

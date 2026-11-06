@@ -3,7 +3,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 namespace CastRightCatchInvManagement
 {
-    /// <summary>Dedicated PDF window (WebView2). Send, save, or edit the source document.</summary>
+    /// <summary>Dedicated PDF window (WebView2). Send the file, or edit the source document.</summary>
     internal sealed class PdfViewForm : Form
     {
         private static readonly Dictionary<string, PdfViewForm> OpenDocs =
@@ -19,7 +19,6 @@ namespace CastRightCatchInvManagement
         private readonly Panel _fallback;
         private readonly Label _title;
         private readonly Label _subtitle;
-        private readonly Button _save;
         private readonly Button _send;
         private readonly Button _edit;
         private string _path;
@@ -75,7 +74,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Stable id: stored kind+key when present, otherwise the full file path.</summary>
         private static string DocumentId(string path, string? kind, string? key)
         {
-            // Database-backed PDFs keep one window even if the temp path changes after Save.
+            // Database-backed PDFs keep one window even if the temp path changes.
             if (!string.IsNullOrWhiteSpace(kind) && !string.IsNullOrWhiteSpace(key))
                 return kind.Trim() + ":" + key.Trim();
             return Path.GetFullPath(path);
@@ -153,16 +152,11 @@ namespace CastRightCatchInvManagement
             Theme.StyleGoldButton(_send);
             _send.Click += (_, _) => SendPdf();
 
-            _save = ToolButton("Save to database", 158);
-            Theme.StyleNavyButton(_save);
-            _save.Click += (_, _) => SaveToDatabase();
-
             _edit = ToolButton("Edit", 150);
             Theme.StyleNavyButton(_edit);
             _edit.Click += (_, _) => EditSource();
 
             toolbar.Controls.Add(_send);
-            toolbar.Controls.Add(_save);
             toolbar.Controls.Add(_edit);
 
             _web = new WebView2
@@ -250,11 +244,11 @@ namespace CastRightCatchInvManagement
         /// <summary>Hide unused actions without leaving a gap in the flow strip.</summary>
         private void LayoutToolbar()
         {
-            foreach (var button in new[] { _send, _save, _edit })
+            foreach (var button in new[] { _send, _edit })
                 button.Margin = button.Visible ? new Padding(0, 0, 8, 0) : Padding.Empty;
         }
 
-        /// <summary>Title, subtitle, and Edit/Save labels based on stored PDF kind.</summary>
+        /// <summary>Title, subtitle, and Edit label based on stored PDF kind.</summary>
         private void ApplyChrome(string? title)
         {
             string heading = string.IsNullOrWhiteSpace(title)
@@ -264,17 +258,14 @@ namespace CastRightCatchInvManagement
             Text = heading;
 
             bool stored = !string.IsNullOrWhiteSpace(_kind) && !string.IsNullOrWhiteSpace(_key);
-            _save.Visible = stored;
-            _save.Enabled = stored;
 
             // Issued/received invoices open Create Invoice for edits.
             if (_kind == DataFiles.PdfKindInvoice)
             {
                 _edit.Text = "Edit invoice";
                 _edit.Visible = true;
-                _save.Text = "Save to database";
                 _subtitle.Text = stored
-                    ? "Mark up in this window, then Save to database. Edit invoice opens Create Invoice and closes this window."
+                    ? "Edit invoice opens Create Invoice and closes this window."
                     : "Send this PDF, or edit the source document.";
             }
             // Sales-order PDFs edit on Create Sales Order, not New Sale.
@@ -282,9 +273,8 @@ namespace CastRightCatchInvManagement
             {
                 _edit.Text = "Edit sales order";
                 _edit.Visible = true;
-                _save.Text = "Save to database";
                 _subtitle.Text = stored
-                    ? "Mark up in this window, then Save to database. Edit sales order opens Create Sales Order and closes this window."
+                    ? "Edit sales order opens Create Sales Order and closes this window."
                     : "Send this PDF, or edit the source document.";
             }
             // Both CRC purchase PDFs and stored vendor invoices edit on New Purchase.
@@ -293,11 +283,10 @@ namespace CastRightCatchInvManagement
             {
                 _edit.Text = "Edit purchase";
                 _edit.Visible = true;
-                _save.Text = "Save to database";
                 _subtitle.Text = stored
                     ? _kind == DataFiles.PdfKindPurchaseInvoice
-                        ? "Vendor invoice stored with this PO. Mark up, then Save to database. Edit purchase opens New Purchase and closes this window."
-                        : "Mark up in this window, then Save to database. Edit purchase opens New Purchase and closes this window."
+                        ? "Vendor invoice stored with this PO. Edit purchase opens New Purchase and closes this window."
+                        : "Edit purchase opens New Purchase and closes this window."
                     : "Send this PDF, or edit the source document.";
             }
             // Sale PDFs are per-PO product lines, edited as a sales order.
@@ -305,17 +294,15 @@ namespace CastRightCatchInvManagement
             {
                 _edit.Text = "Edit sale";
                 _edit.Visible = true;
-                _save.Text = "Save to database";
                 _subtitle.Text = stored
-                    ? "Mark up in this window, then Save to database. Edit sale opens New Sale and closes this window."
+                    ? "Edit sale opens New Sale and closes this window."
                     : "Send this PDF, or edit the source document.";
             }
             // Ad-hoc files have no source form to jump to.
             else
             {
                 _edit.Visible = false;
-                _save.Text = "Save to database";
-                _subtitle.Text = "Send this PDF, or save it to the database.";
+                _subtitle.Text = "Send this PDF.";
             }
 
             LayoutToolbar();
@@ -362,33 +349,6 @@ namespace CastRightCatchInvManagement
             // The fallback label is looked up by name so markup can stay in the constructor.
             if (_fallback.Controls["fallbackText"] is Label label)
                 label.Text = message;
-        }
-
-        /// <summary>Write the current file bytes back into the stored PDF for this kind/key.</summary>
-        private void SaveToDatabase()
-        {
-            // Ad-hoc files are not in crc_inventory; use Save as instead.
-            if (string.IsNullOrWhiteSpace(_kind) || string.IsNullOrWhiteSpace(_key))
-                return;
-            // Markup tools can leave a missing temp path after a failed replace.
-            if (!File.Exists(_path))
-            {
-                ToastAlert.Error(this, "The PDF file is missing.");
-                return;
-            }
-
-            try
-            {
-                byte[] bytes = File.ReadAllBytes(_path);
-                _path = Path.GetFullPath(DataFiles.SaveStoredPdf(_kind, _key, Path.GetFileName(_path), bytes));
-                NavigatePdf();
-                ToastAlert.Success(this, "Saved to the database.");
-            }
-            // Disk/DB write failures should keep the viewer on the last good file.
-            catch (Exception ex)
-            {
-                ToastAlert.Error(this, ex.Message);
-            }
         }
 
         /// <summary>Open the send form so this PDF can be emailed to a list of addresses.</summary>

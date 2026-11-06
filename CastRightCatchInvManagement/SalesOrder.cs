@@ -24,7 +24,15 @@ namespace CastRightCatchInvManagement
         private TextBox _soNo = null!;
         private DateTimePicker _orderDate = null!;
         private TextBox _freightCo = null!;
-        private DateTimePicker _due = null!;
+        private ComboBox _freightTerms = null!;
+        private TextBox _overhead = null!;
+        private TextBox _freight = null!;
+        private TextBox _other = null!;
+        private Panel _overheadHost = null!;
+        private Panel _freightLbHost = null!;
+        private Panel _otherHost = null!;
+        private DateTimePicker _paymentTerm = null!;
+        private string _customerTerms = "";
         private ComboBox _status = null!;
         private Panel _lineHost = null!;
         private Label _modeLabel = null!;
@@ -36,8 +44,16 @@ namespace CastRightCatchInvManagement
         private List<LookupSuggest.Hit> _itemHits = new();
         private List<LookupSuggest.Hit> _freightHits = new();
         private LookupSuggest? _freightSuggest;
+        private LookupSuggest? _shipSuggest;
+        private CheckBox _saveAddress = null!;
+        private CheckBox _shippingDifferent = null!;
+        private TextBox _billing = null!;
+        private Panel _shipHost = null!;
+        private CardPanel _headerCard = null!;
+        private bool _syncingAddresses;
         private readonly HashSet<string> _loadedItems = new(StringComparer.OrdinalIgnoreCase);
         private bool _busyAdding;
+        private bool _splittingLot;
         private bool _fillingPo;
         private bool _editing;
         private string _editPo = "";
@@ -188,7 +204,8 @@ namespace CastRightCatchInvManagement
         /// <summary>Sales-order header: customer, dates, freight, and ship-to.</summary>
         private CardPanel BuildHeader()
         {
-            var card = new CardPanel { Height = 268, Padding = new Padding(16, 10, 16, 10) };
+            _headerCard = new CardPanel { Height = 338, Padding = new Padding(16, 10, 16, 10) };
+            var card = _headerCard;
 
             _modeLabel = new Label
             {
@@ -207,28 +224,100 @@ namespace CastRightCatchInvManagement
 
             _orderDate = AddDate(card, "ORDER DATE", 20, 86, 130);
             _releaseDate = AddDate(card, "SHIP DATE", 164, 86, 130);
-            _due = AddDate(card, "DUE DATE", 308, 86, 130);
+            _paymentTerm = AddDate(card, "PAYMENT TERM", 308, 86, 130);
+            _orderDate.ValueChanged += (_, _) => ApplyPaymentDue();
             _status = AddCombo(card, "STATUS", 452, 86, 130);
             _status.DropDownStyle = ComboBoxStyle.DropDownList;
             SelectStatus(_status, "Open");
 
             _warehouse = AddField(card, "WAREHOUSE", 20, 136, 150);
-            _freightCo = AddField(card, "FREIGHT CO", 184, 136, 160);
-            _contact = AddField(card, "CONTACT", 358, 136, 150);
+            _freightCo = AddField(card, "FREIGHT CO", 184, 136, 140);
+            _freightTerms = AddCombo(card, "FREIGHT TERMS", 338, 136, 130);
+            _freightTerms.DropDownStyle = ComboBoxStyle.DropDownList;
+            SelectFreightTerms(_freightTerms, "");
+            _contact = AddField(card, "CONTACT", 482, 136, 150);
 
             _email = AddField(card, "EMAIL", 20, 186, 200);
             _contactPhone = AddField(card, "PHONE", 234, 186, 140);
 
-            _address = AddMultiline(card, "SHIP TO", 388, 186, 360, 48);
-            _address.PlaceholderText = "Not found, please input manually";
+            _billing = AddMultiline(card, "BILLING ADDRESS", 388, 186, 360, 48);
+            _billing.PlaceholderText = "Street, city, state, ZIP";
+            _shippingDifferent = new CheckBox
+            {
+                Text = "Shipping is different from billing",
+                AutoSize = true,
+                Location = new Point(388, 252),
+                Font = Theme.Small,
+                ForeColor = Theme.Ink
+            };
+            _shipHost = new Panel
+            {
+                Location = new Point(388, 274),
+                Size = new Size(360, 64),
+                Visible = false,
+                BackColor = Theme.Cream
+            };
+            _address = AddMultiline(_shipHost, "SHIP TO", 0, 0, 360, 48);
+            _address.PlaceholderText = "Type a warehouse or enter an address";
+            _saveAddress = new CheckBox
+            {
+                Text = "Save shipping address on customer",
+                AutoSize = true,
+                Location = new Point(388, 256),
+                Font = Theme.Small,
+                ForeColor = Theme.Ink,
+                Visible = false,
+                Checked = false
+            };
+            card.Controls.Add(_shippingDifferent);
+            card.Controls.Add(_shipHost);
+            card.Controls.Add(_saveAddress);
+            _shippingDifferent.CheckedChanged += (_, _) =>
+            {
+                if (_syncingAddresses)
+                    return;
+                if (_shippingDifferent.Checked && _address.Text.Trim().Length == 0)
+                {
+                    var match = CurrentCustomerChoice();
+                    if (match != null && match.Warehouses.Count > 0)
+                        _address.Text = match.Warehouses[0].Address;
+                }
+
+                RelayoutAddressBlock();
+                SyncSaveAddressOffer();
+            };
+            _address.TextChanged += (_, _) => SyncSaveAddressOffer();
+            _customer.TextChanged += (_, _) => SyncSaveAddressOffer();
+            _customerCode.TextChanged += (_, _) => SyncSaveAddressOffer();
+            RelayoutAddressBlock();
+
+            _other = AddCostField(card, "OTHER / LB", 20, 242, 110, out _otherHost);
+            _freight = AddCostField(card, "FREIGHT / LB", 154, 242, 120, out _freightLbHost);
+            _overhead = AddCostField(card, "OVERHEAD / LB", 288, 242, 120, out _overheadHost);
 
             _customerCodeSuggest = new LookupSuggest(_customerCode, () => _customerHits, codeFirst: true, ApplyCustomerHit);
             _customerNameSuggest = new LookupSuggest(_customer, () => _customerHits, codeFirst: false, ApplyCustomerHit);
+            _shipSuggest = new LookupSuggest(
+                _address,
+                WarehouseHits,
+                codeFirst: true,
+                ApplyWarehouseHit,
+                minListWidth: 360,
+                showWhenEmpty: true);
             _freightSuggest = new LookupSuggest(
                 _freightCo,
                 () => _freightHits,
                 codeFirst: false,
                 hit => _freightCo.Text = hit.Name.Length > 0 ? hit.Name : hit.Code);
+
+            foreach (var box in new[] { _overhead, _freight, _other })
+            {
+                MoneyFormat.BindInput(box);
+                box.TextChanged += (_, _) => RecalcLines();
+            }
+
+            _freightCo.TextChanged += (_, _) => SyncCostFields();
+            SyncCostFields();
 
             _customerPo.Leave += (_, _) => RequestPoFill();
             _customerPo.KeyDown += (_, e) =>
@@ -314,6 +403,18 @@ namespace CastRightCatchInvManagement
         /// <summary>Append a blank product line and give it focus.</summary>
         private SalesOrderLineRow AddLine()
         {
+            var row = CreateLine();
+            _lines.Add(row);
+            _lineHost.Controls.Add(row);
+            LayoutLines();
+            row.FocusItem();
+            UpdateTotals();
+            return row;
+        }
+
+        /// <summary>Wire a product row without adding it to the host yet.</summary>
+        private SalesOrderLineRow CreateLine()
+        {
             var row = new SalesOrderLineRow();
             row.AttachLookups(() => _itemHits);
             row.SetPo(_customerPo.Text.Trim());
@@ -321,12 +422,80 @@ namespace CastRightCatchInvManagement
             row.SiblingVolume = () => SiblingVolume(row);
             row.Changed += (_, _) => UpdateTotals();
             row.RemoveRequested += (_, _) => RemoveLine(row);
-            _lines.Add(row);
-            _lineHost.Controls.Add(row);
-            LayoutLines();
-            row.FocusItem();
-            UpdateTotals();
+            row.LotOverflow += (_, e) => OnLotOverflow(row, e);
+            row.SetSharedCosts(SharedOverhead(), SharedFreight(), SharedOther());
             return row;
+        }
+
+        /// <summary>Queue the leftover cases onto the next line after this lot is capped.</summary>
+        private void OnLotOverflow(SalesOrderLineRow source, LotOverflowEventArgs e)
+        {
+            if (_splittingLot || _busyAdding || IsDisposed)
+                return;
+            if (IsHandleCreated)
+                BeginInvoke(new Action(() => ApplyLotOverflow(source, e)));
+            else
+                ApplyLotOverflow(source, e);
+        }
+
+        /// <summary>
+        /// Put leftover cases on the next empty or same-item line, or insert a new line,
+        /// so the rest can be sold from another lot.
+        /// </summary>
+        private void ApplyLotOverflow(SalesOrderLineRow source, LotOverflowEventArgs e)
+        {
+            if (_splittingLot || IsDisposed || !_lines.Contains(source))
+                return;
+            if (e.Volume <= 0.0005m && e.Cases <= 0.0005m)
+                return;
+
+            _splittingLot = true;
+            try
+            {
+                var leftover = source.GetLine();
+                leftover.LotNumber = "";
+                leftover.Cases = SalesOrderLineRow.FormatQty(e.Cases);
+                leftover.Volume = e.Volume > 0 ? MoneyFormat.Plain(e.Volume) : "";
+                leftover.Amount = "";
+
+                int i = _lines.IndexOf(source);
+                if (i < 0)
+                    return;
+
+                if (i + 1 < _lines.Count)
+                {
+                    var next = _lines[i + 1];
+                    if (!next.HasContent())
+                    {
+                        next.FillFromLine(leftover);
+                        next.FocusLot();
+                        LayoutLines();
+                        UpdateTotals();
+                        return;
+                    }
+
+                    if (next.ItemCode.Equals(source.ItemCode, StringComparison.OrdinalIgnoreCase) &&
+                        next.LotNumber.Length == 0)
+                    {
+                        next.AddQuantity(e.Cases, e.Volume);
+                        LayoutLines();
+                        UpdateTotals();
+                        return;
+                    }
+                }
+
+                var row = CreateLine();
+                _lines.Insert(i + 1, row);
+                _lineHost.Controls.Add(row);
+                row.FillFromLine(leftover);
+                row.FocusLot();
+                LayoutLines();
+                UpdateTotals();
+            }
+            finally
+            {
+                _splittingLot = false;
+            }
         }
 
         /// <summary>Drop a product line, keeping at least one empty row so the ticket can still be typed.</summary>
@@ -450,17 +619,22 @@ namespace CastRightCatchInvManagement
             {
                 var choice = new CustomerChoice(
                     DataFiles.GetRecord(record, "Code"),
-                    DataFiles.GetRecord(record, "Name"),
+                    DataFiles.PartyDocumentName(record),
                     DataFiles.GetRecord(record, "Terms"),
                     DataFiles.GetRecord(record, "Contact Name"),
-                    DataFiles.CustomerShippingAddress(record),
+                    DataFiles.CustomerBillingAddress(record),
+                    DataFiles.CustomerWarehouses(record),
                     DataFiles.GetRecord(record, "Email"),
                     DataFiles.GetRecord(record, "Phone"));
                 // Skip customers that have neither a code nor a name to type.
                 if (choice.Code.Length == 0 && choice.Name.Length == 0)
                     continue;
                 _customerRecords.Add(choice);
-                _customerHits.Add(new LookupSuggest.Hit(choice.Code, choice.Name, choice.Terms));
+                _customerHits.Add(new LookupSuggest.Hit(
+                    choice.Code,
+                    choice.Name,
+                    choice.Terms,
+                    DataFiles.PartyCompanyName(record) + " " + DataFiles.PartyDba(record)));
             }
 
             _itemHits = new List<LookupSuggest.Hit>();
@@ -488,10 +662,14 @@ namespace CastRightCatchInvManagement
                 if (!VendorTypes.MatchesSlot(record, VendorTypes.SlotSalesFreight))
                     continue;
                 string code = DataFiles.GetRecord(record, "Code").Trim();
-                string name = DataFiles.GetRecordAny(record, "Name", "Company").Trim();
+                string name = DataFiles.PartyDocumentName(record);
                 if (code.Length == 0 && name.Length == 0)
                     continue;
-                _freightHits.Add(new LookupSuggest.Hit(code, name, DataFiles.GetRecord(record, "Terms")));
+                _freightHits.Add(new LookupSuggest.Hit(
+                    code,
+                    name,
+                    DataFiles.GetRecord(record, "Terms"),
+                    DataFiles.PartyCompanyName(record) + " " + DataFiles.PartyDba(record)));
             }
 
             foreach (var row in _lines)
@@ -524,6 +702,200 @@ namespace CastRightCatchInvManagement
                    _lines.Any(row => row.HasContent());
         }
 
+        /// <summary>Warehouse and billing addresses for the customer currently on this ticket.</summary>
+        private IReadOnlyList<LookupSuggest.Hit> WarehouseHits()
+        {
+            var hits = new List<LookupSuggest.Hit>();
+            CustomerChoice? match = CurrentCustomerChoice();
+            if (match == null)
+                return hits;
+
+            if (match.Billing.Length > 0)
+            {
+                string first = FirstAddressLine(match.Billing);
+                hits.Add(new LookupSuggest.Hit("Billing", first, match.Billing, match.Billing));
+            }
+
+            foreach (var warehouse in match.Warehouses)
+            {
+                string first = FirstAddressLine(warehouse.Address);
+                string label = warehouse.Name.Length > 0 ? warehouse.Name : first;
+                hits.Add(new LookupSuggest.Hit(
+                    label,
+                    first,
+                    warehouse.Address,
+                    warehouse.Name + " " + warehouse.Address));
+            }
+
+            return hits;
+        }
+
+        /// <summary>Write the picked warehouse (or billing) into Ship To.</summary>
+        private void ApplyWarehouseHit(LookupSuggest.Hit hit)
+        {
+            string address = hit.Extra.Length > 0 ? hit.Extra : hit.DisplayName;
+            _address.Text = address;
+            if (hit.Code.Length > 0 &&
+                !hit.Code.Equals("Billing", StringComparison.OrdinalIgnoreCase))
+                _warehouse.Text = hit.Code;
+            _syncingAddresses = true;
+            bool billingPick = hit.Code.Equals("Billing", StringComparison.OrdinalIgnoreCase) ||
+                AddressesEqual(address, _billing.Text);
+            _shippingDifferent.Checked = !billingPick;
+            _syncingAddresses = false;
+            RelayoutAddressBlock();
+            SyncSaveAddressOffer();
+        }
+
+        /// <summary>First line of an address, used as the suggestion subtitle.</summary>
+        private static string FirstAddressLine(string text)
+        {
+            int breakAt = text.IndexOfAny(['\r', '\n']);
+            return (breakAt < 0 ? text : text[..breakAt]).Trim();
+        }
+
+        /// <summary>Visible customer matching the code or name on this ticket.</summary>
+        private CustomerChoice? CurrentCustomerChoice()
+        {
+            string code = CurrentCustomerCode();
+            string name = CurrentCustomerName();
+            foreach (var record in _customerRecords)
+            {
+                if (code.Length > 0 &&
+                    record.Code.Equals(code, StringComparison.OrdinalIgnoreCase))
+                    return record;
+                if (name.Length > 0 && DataFiles.PartyLabelMatches(record.Name, name))
+                    return record;
+            }
+
+            return null;
+        }
+
+        /// <summary>Show the save-on-customer box only for a new delivery address.</summary>
+        private void SyncSaveAddressOffer()
+        {
+            bool show = ShouldOfferSaveAddress();
+            _saveAddress.Visible = show;
+            if (!show)
+                _saveAddress.Checked = false;
+            RelayoutAddressBlock();
+        }
+
+        /// <summary>Stack Ship To and save-address under billing; grow the header when shipping is open.</summary>
+        private void RelayoutAddressBlock()
+        {
+            int y = 252;
+            _shippingDifferent.Location = new Point(388, y);
+            y = _shippingDifferent.Bottom + 4;
+            _shipHost.Visible = _shippingDifferent.Checked;
+            if (_shippingDifferent.Checked)
+            {
+                _shipHost.Location = new Point(388, y);
+                y = _shipHost.Bottom + 4;
+            }
+
+            _saveAddress.Location = new Point(388, y);
+            int bottom = _shippingDifferent.Bottom;
+            if (_shipHost.Visible)
+                bottom = Math.Max(bottom, _shipHost.Bottom);
+            if (_saveAddress.Visible)
+                bottom = Math.Max(bottom, _saveAddress.Bottom);
+            _headerCard.Height = Math.Max(338, bottom + 16);
+        }
+
+        /// <summary>Billing typed on the ticket.</summary>
+        private string CurrentBillingAddress() => _billing.Text.Trim();
+
+        /// <summary>Ship To when it is different, otherwise the billing address.</summary>
+        private string CurrentShipToAddress()
+        {
+            if (_shippingDifferent.Checked && _address.Text.Trim().Length > 0)
+                return _address.Text.Trim();
+            return CurrentBillingAddress();
+        }
+
+        /// <summary>True when Ship To is not billing and not already a warehouse on this customer.</summary>
+        private bool ShouldOfferSaveAddress()
+        {
+            if (!_shippingDifferent.Checked)
+                return false;
+            if (!DataAccess.CanMutate(DataFiles.Customers))
+                return false;
+            string ship = NormalizeAddress(_address.Text);
+            if (ship.Length == 0)
+                return false;
+            var match = CurrentCustomerChoice();
+            if (match == null)
+                return false;
+            if (AddressesEqual(ship, match.Billing))
+                return false;
+            foreach (var warehouse in match.Warehouses)
+            {
+                if (AddressesEqual(ship, warehouse.Address))
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>Append Ship To as a warehouse on the live customer row.</summary>
+        private MutateResult SaveShipToOnCustomer(string address, string warehouseName)
+        {
+            address = address.Trim();
+            if (address.Length == 0)
+                return MutateResult.Deny("Enter a delivery address.");
+
+            string code = CurrentCustomerCode();
+            string name = CurrentCustomerName();
+            Dictionary<string, string>? found = null;
+            foreach (var record in DataFiles.ReadAllRecords(DataFiles.Customers))
+            {
+                if (code.Length > 0 &&
+                    DataFiles.GetRecord(record, "Code").Equals(code, StringComparison.OrdinalIgnoreCase))
+                {
+                    found = record;
+                    break;
+                }
+
+                if (name.Length > 0 &&
+                    DataFiles.PartyLabelMatches(DataFiles.PartyDocumentName(record), name))
+                {
+                    found = record;
+                    break;
+                }
+            }
+
+            if (found == null)
+                return MutateResult.Deny("Could not find that customer.");
+
+            var warehouses = DataFiles.CustomerWarehouses(found);
+            foreach (var warehouse in warehouses)
+            {
+                if (AddressesEqual(address, warehouse.Address))
+                    return MutateResult.Saved();
+            }
+
+            warehouses.Add(new DataFiles.CustomerWarehouse(warehouseName.Trim(), address));
+            var fields = new Dictionary<string, string>(found, StringComparer.OrdinalIgnoreCase)
+            {
+                [DataFiles.ShippingAddressColumn] = DataFiles.FormatCustomerWarehouses(warehouses)
+            };
+            string matchCode = DataFiles.GetRecord(found, "Code");
+            return DataFiles.MutateUpdate(
+                DataFiles.Customers,
+                record => DataFiles.GetRecord(record, "Code")
+                    .Equals(matchCode, StringComparison.OrdinalIgnoreCase),
+                fields);
+        }
+
+        /// <summary>Trim and unify line breaks so typed and stored addresses compare.</summary>
+        private static string NormalizeAddress(string? text) =>
+            (text ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+
+        /// <summary>True when two addresses are the same ignoring case and line-break style.</summary>
+        private static bool AddressesEqual(string left, string right) =>
+            NormalizeAddress(left).Equals(NormalizeAddress(right), StringComparison.OrdinalIgnoreCase);
+
         /// <summary>Fill customer fields from a lookup pick, using the customer record when found.</summary>
         private void ApplyCustomerHit(LookupSuggest.Hit hit)
         {
@@ -532,7 +904,7 @@ namespace CastRightCatchInvManagement
             {
                 // Match by code first, then by name when the pick has one.
                 if (record.Code.Equals(hit.Code, StringComparison.OrdinalIgnoreCase) ||
-                    (hit.Name.Length > 0 && record.Name.Equals(hit.Name, StringComparison.OrdinalIgnoreCase)))
+                    (hit.Name.Length > 0 && DataFiles.PartyLabelMatches(record.Name, hit.Name)))
                 {
                     match = record;
                     break;
@@ -544,7 +916,7 @@ namespace CastRightCatchInvManagement
                 FillCustomer(match, overwrite: true);
             // Unknown picks still fill code/name/terms from the suggestion itself.
             else
-                FillCustomer(hit.Code, hit.Name, "", "", "", "", overwrite: true);
+                FillCustomer(hit.Code, hit.Name, hit.Extra, "", "", "", "", overwrite: true);
         }
 
         /// <summary>True when the incoming sale is the same customer as this draft, or the draft has none.</summary>
@@ -557,7 +929,7 @@ namespace CastRightCatchInvManagement
                 return prefill.CustomerCode.Equals(code, StringComparison.OrdinalIgnoreCase);
             // Fall back to name when either side has no customer code.
             if (prefill.CustomerName.Length > 0 && name.Length > 0)
-                return prefill.CustomerName.Equals(name, StringComparison.OrdinalIgnoreCase);
+                return DataFiles.PartyLabelMatches(prefill.CustomerName, name);
             return true;
         }
 
@@ -834,23 +1206,35 @@ namespace CastRightCatchInvManagement
             if (!keepCustomer)
             {
                 _address.Text = "";
+                _billing.Text = "";
+                _syncingAddresses = true;
+                _shippingDifferent.Checked = false;
+                _syncingAddresses = false;
+                _saveAddress.Checked = false;
                 _contact.Text = "";
                 _email.Text = "";
                 _contactPhone.Text = "";
                 _warehouse.Text = "";
                 _freightCo.Text = "";
+                SelectFreightTerms(_freightTerms, "");
+                _customerTerms = "";
+                _paymentTerm.Value = DateTime.Today;
             }
 
+            _overhead.Text = "";
+            _freight.Text = "";
+            _other.Text = "";
             _customerPo.Text = po;
             RefreshLookups();
             _soNo.Text = DataFiles.NextSalesOrderNumber();
             _orderDate.Value = DateTime.Today;
             _releaseDate.Value = DateTime.Today;
-            _due.Value = DateTime.Today;
             SelectStatus(_status, "Open");
             SetMode(false);
             AddLine();
+            SyncCostFields();
             UpdateTotals();
+            SyncSaveAddressOffer();
         }
 
         /// <summary>Fill customer, PO, SO, ship date, and freight from the first matching sale.</summary>
@@ -878,7 +1262,7 @@ namespace CastRightCatchInvManagement
                 FillCustomer(match, overwrite: false);
             // Unknown sales still get code/name from the sale row itself.
             else
-                FillCustomer(code, name, "", "", "", "", overwrite: false);
+                FillCustomer(code, name, "", "", "", "", "", overwrite: false);
 
             // Do not overwrite a PO the user already typed.
             if (po.Length > 0 && _customerPo.Text.Trim().Length == 0)
@@ -909,6 +1293,48 @@ namespace CastRightCatchInvManagement
                     _freightCo.Text = freight;
             }
 
+            if (string.IsNullOrWhiteSpace(_freightTerms.Text))
+            {
+                string terms = DataFiles.GetRecord(record, DataFiles.FreightTermsColumn);
+                if (terms.Length > 0)
+                    SelectFreightTerms(_freightTerms, terms);
+            }
+
+            if (_customerTerms.Length == 0)
+                SetPaymentFromSale(record);
+        }
+
+        /// <summary>Due date is order date plus the days in the customer’s Terms.</summary>
+        private void ApplyPaymentDue()
+        {
+            if (_customerTerms.Length == 0)
+                return;
+            _paymentTerm.Value = DataFiles.DueDateFromTerms(_orderDate.Value.Date, _customerTerms);
+        }
+
+        /// <summary>Restore a stored due date, or compute one from Payment Term days.</summary>
+        private void SetPaymentFromSale(Dictionary<string, string> record)
+        {
+            string payment = DataFiles.GetRecord(record, DataFiles.PaymentTermColumn);
+            string due = DataFiles.GetRecord(record, "Due Date");
+            if (DateTime.TryParse(due, out var dueDate))
+            {
+                _customerTerms = payment;
+                _paymentTerm.Value = dueDate.Date;
+                return;
+            }
+
+            if (payment.Length == 0)
+                return;
+            if (DateTime.TryParse(payment, out var asDate))
+            {
+                _customerTerms = "";
+                _paymentTerm.Value = asDate.Date;
+                return;
+            }
+
+            _customerTerms = payment;
+            ApplyPaymentDue();
         }
 
         /// <summary>Fill customer fields from a known customer record.</summary>
@@ -917,22 +1343,26 @@ namespace CastRightCatchInvManagement
             FillCustomer(
                 choice.Code,
                 choice.Name,
+                choice.Terms,
                 choice.Contact,
                 choice.Address,
                 choice.Email,
                 choice.Phone,
-                overwrite);
+                overwrite,
+                choice.Billing);
         }
 
-        /// <summary>Write customer identity and ship-to, optionally overwriting fields the user already typed.</summary>
+        /// <summary>Write customer identity, payment term, and billing, optionally overwriting typed fields.</summary>
         private void FillCustomer(
             string code,
             string name,
+            string terms,
             string contact,
             string address,
             string email,
             string phone,
-            bool overwrite)
+            bool overwrite,
+            string billing = "")
         {
             void Put(TextBox box, string value)
             {
@@ -947,18 +1377,28 @@ namespace CastRightCatchInvManagement
             // Customer code is the lookup key; always write when the sale has one.
             if (code.Length > 0)
                 _customerCode.Text = code;
+            if (terms.Length > 0 && (overwrite || _customerTerms.Length == 0))
+            {
+                _customerTerms = terms;
+                ApplyPaymentDue();
+            }
             Put(_contact, contact);
-            // Lookup should replace a stale ship-to; sale prefill should not.
-            if (overwrite)
-                _address.Text = address;
-            // Prefill from a sale only fills ship-to when it is still blank.
-            else
-                Put(_address, address);
+            Put(_billing, billing.Length > 0 ? billing : address);
             Put(_email, email);
             Put(_contactPhone, phone);
             if (name.Length > 0 && (overwrite || _customer.Text.Trim().Length == 0))
                 _customer.Text = name;
+            // Billing is the default. Ship To stays hidden until they check the box.
+            if (overwrite)
+            {
+                _address.Text = "";
+                _syncingAddresses = true;
+                _shippingDifferent.Checked = false;
+                _syncingAddresses = false;
+            }
+
             RefreshPoSuggestions();
+            SyncSaveAddressOffer();
         }
 
         /// <summary>Snapshot header fields and product lines for save and PDF output.</summary>
@@ -971,7 +1411,8 @@ namespace CastRightCatchInvManagement
                 ReleaseDate = _releaseDate.Value.Date,
                 CustomerCode = _customerCode.Text.Trim(),
                 CustomerName = _customer.Text.Trim(),
-                Address = _address.Text.Trim(),
+                Address = CurrentShipToAddress(),
+                BillingAddress = CurrentBillingAddress(),
                 CustomerPhone = _contactPhone.Text.Trim(),
                 Contact = _contact.Text.Trim(),
                 Email = _email.Text.Trim(),
@@ -979,8 +1420,10 @@ namespace CastRightCatchInvManagement
                 Warehouse = _warehouse.Text.Trim(),
                 CustomerPo = _customerPo.Text.Trim(),
                 Status = _status.Text.Trim(),
-                DueDate = _due.Value.Date,
+                PaymentTerms = _customerTerms,
+                DueDate = _paymentTerm.Value.Date,
                 FreightCompany = _freightCo.Text.Trim(),
+                FreightTerms = _freightTerms.Text.Trim(),
                 Lines = _lines.Select(row =>
                 {
                     var line = row.GetLine();
@@ -1047,6 +1490,8 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            DataFiles.EnsureSalesColumns();
+            RecalcLines();
             var draft = CollectDraft();
             // Customer PO is the sale-row key.
             if (string.IsNullOrWhiteSpace(draft.CustomerPo))
@@ -1208,7 +1653,8 @@ namespace CastRightCatchInvManagement
                     draft.CustomerCode,
                     draft.CustomerName,
                     soNumber,
-                    draft.FreightCompany);
+                    draft.FreightCompany,
+                    draft.FreightTerms);
                 DataFiles.OpenPdf(pdfPath, DataFiles.PdfKindSalesOrder, soNumber);
             }
             // PDF/store failures should not leave the form looking saved.
@@ -1218,9 +1664,21 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            ToastAlert.Success(this, last is { Queued: true }
+            string extra = "";
+            if (_saveAddress.Visible && _saveAddress.Checked)
+            {
+                var stored = SaveShipToOnCustomer(draft.Address, draft.Warehouse);
+                if (stored is { Ok: true, Queued: true })
+                    extra = " New address is waiting for review.";
+                else if (stored is not { Ok: true })
+                    extra = " Address was not saved on the customer.";
+                else
+                    RefreshLookups();
+            }
+
+            ToastAlert.Success(this, (last is { Queued: true }
                 ? last.Value.Message
-                : _editing ? "The sales order was updated." : "The sales order was saved.");
+                : _editing ? "The sales order was updated." : "The sales order was saved.") + extra);
 
             // Add Another starts a new ticket with the same customer on this page.
             if (keepCustomer)
@@ -1256,8 +1714,13 @@ namespace CastRightCatchInvManagement
                 ["Amount"] = line.Amount,
                 ["Ship Date"] = CsvIO.Date(draft.ReleaseDate),
                 ["Due Date"] = CsvIO.Date(draft.DueDate),
+                [DataFiles.PaymentTermColumn] = draft.PaymentTerms,
                 ["Status"] = draft.Status,
-                [DataFiles.FreightCompanyColumn] = draft.FreightCompany
+                [DataFiles.FreightCompanyColumn] = draft.FreightCompany,
+                [DataFiles.FreightTermsColumn] = draft.FreightTerms,
+                ["Overhead / LB"] = MoneyFormat.Store(_overhead.Text),
+                ["Freight / LB"] = MoneyFormat.Store(_freight.Text),
+                ["Other / LB"] = MoneyFormat.Store(_other.Text)
             };
         }
 
@@ -1282,12 +1745,14 @@ namespace CastRightCatchInvManagement
             // Keep the generated SO # when the sale has not been assigned one yet.
             if (so.Length > 0)
                 _soNo.Text = so;
-            string due = DataFiles.GetRecord(rows[0], "Due Date");
-            // Only overwrite the picker when the sale actually has a due date.
-            if (DateTime.TryParse(due, out var dueDate))
-                _due.Value = dueDate;
+            SetPaymentFromSale(rows[0]);
             SelectStatus(_status, DataFiles.GetRecord(rows[0], "Status"));
             _freightCo.Text = DataFiles.GetRecord(rows[0], DataFiles.FreightCompanyColumn);
+            SelectFreightTerms(_freightTerms, DataFiles.GetRecord(rows[0], DataFiles.FreightTermsColumn));
+            _overhead.Text = MoneyFormat.Display(DataFiles.GetRecord(rows[0], "Overhead / LB"));
+            _freight.Text = MoneyFormat.Display(DataFiles.GetRecord(rows[0], "Freight / LB"));
+            _other.Text = MoneyFormat.Display(DataFiles.GetRecord(rows[0], "Other / LB"));
+            SyncCostFields();
 
 
             foreach (var row in rows)
@@ -1301,6 +1766,7 @@ namespace CastRightCatchInvManagement
                     _loadedItems.Add(item);
             }
 
+            RecalcLines();
             SetMode(true);
             UpdateTotals();
         }
@@ -1318,6 +1784,114 @@ namespace CastRightCatchInvManagement
             // Add Another is only for a new ticket, not an in-place edit.
             if (_another != null)
                 _another.Visible = !editing;
+        }
+
+        /// <summary>Show Freight / LB when Freight Co is filled. Other / LB always stays.</summary>
+        private void SyncCostFields()
+        {
+            bool showFreight = _freightCo.Text.Trim().Length > 0;
+            bool showOverhead = HasCost(_overhead.Text);
+
+            if (!showFreight)
+                _freight.Text = "";
+
+            _freightLbHost.Visible = showFreight;
+            _overheadHost.Visible = showOverhead;
+
+            int x = 20;
+            _otherHost.Location = new Point(x, 242);
+            x += _otherHost.Width + 14;
+            if (showFreight)
+            {
+                _freightLbHost.Location = new Point(x, 242);
+                x += _freightLbHost.Width + 14;
+            }
+
+            if (showOverhead)
+                _overheadHost.Location = new Point(x, 242);
+
+            RecalcLines();
+        }
+
+        private static bool HasCost(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+            return MoneyFormat.TryParse(text, out decimal amount) ? amount != 0 : text.Trim().Length > 0;
+        }
+
+        /// <summary>Header overhead / lb applied to every product line.</summary>
+        private decimal SharedOverhead() =>
+            _overheadHost.Visible ? SalesOrderLineRow.ParseNumber(_overhead.Text) : 0;
+        /// <summary>Header freight / lb applied to every product line.</summary>
+        private decimal SharedFreight() =>
+            _freightLbHost.Visible ? SalesOrderLineRow.ParseNumber(_freight.Text) : 0;
+        /// <summary>Header other / lb applied to every product line.</summary>
+        private decimal SharedOther() => SalesOrderLineRow.ParseNumber(_other.Text);
+
+        /// <summary>Push header per-lb costs onto every line and refresh order totals.</summary>
+        private void RecalcLines()
+        {
+            decimal overhead = SharedOverhead();
+            decimal freight = SharedFreight();
+            decimal other = SharedOther();
+            foreach (var row in _lines)
+                row.SetSharedCosts(overhead, freight, other);
+            UpdateTotals();
+        }
+
+        /// <summary>Labeled cost box in a host panel so / lb fields can show or hide together.</summary>
+        private static TextBox AddCostField(
+            Control parent,
+            string caption,
+            int x,
+            int y,
+            int width,
+            out Panel host)
+        {
+            host = new Panel
+            {
+                Location = new Point(x, y),
+                Size = new Size(width, 42)
+            };
+            var label = new Label { Text = caption, Location = new Point(0, 0) };
+            Theme.StyleFieldLabel(label);
+            var box = new TextBox
+            {
+                Location = new Point(0, 16),
+                Size = new Size(width, 26)
+            };
+            Theme.StyleField(box);
+            host.Controls.Add(label);
+            host.Controls.Add(box);
+            parent.Controls.Add(host);
+            return box;
+        }
+
+        /// <summary>Select Collect or Delivered, adding unknown stored values so older rows still display.</summary>
+        private static void SelectFreightTerms(ComboBox box, string? value)
+        {
+            if (box.Items.Count == 0)
+                box.Items.AddRange(new object[] { "Collect", "Delivered" });
+
+            string pick = (value ?? "").Trim();
+            if (pick.Length == 0)
+            {
+                box.SelectedIndex = -1;
+                return;
+            }
+
+            foreach (object item in box.Items)
+            {
+                if (string.Equals(item.ToString(), pick, StringComparison.OrdinalIgnoreCase))
+                {
+                    box.SelectedItem = item;
+                    return;
+                }
+            }
+
+            box.Items.Add(pick);
+            box.SelectedItem = pick;
         }
 
         /// <summary>Select a status, adding unknown values so older rows still display.</summary>
@@ -1436,6 +2010,8 @@ namespace CastRightCatchInvManagement
             public string Name { get; }
             public string Terms { get; }
             public string Contact { get; }
+            public string Billing { get; }
+            public IReadOnlyList<DataFiles.CustomerWarehouse> Warehouses { get; }
             public string Address { get; }
             public string Email { get; }
             public string Phone { get; }
@@ -1446,7 +2022,8 @@ namespace CastRightCatchInvManagement
                 string name,
                 string terms,
                 string contact,
-                string address,
+                string billing,
+                IReadOnlyList<DataFiles.CustomerWarehouse> warehouses,
                 string email,
                 string phone)
             {
@@ -1454,7 +2031,9 @@ namespace CastRightCatchInvManagement
                 Name = name;
                 Terms = terms;
                 Contact = contact;
-                Address = address;
+                Billing = billing;
+                Warehouses = warehouses;
+                Address = warehouses.Count > 0 ? warehouses[0].Address : billing;
                 Email = email;
                 Phone = phone;
             }

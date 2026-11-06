@@ -23,36 +23,23 @@ namespace CastRightCatchInvManagement
         private static PdfDraw Draw(SalesOrderDraft draft)
         {
             var g = new PdfDraw();
-            float y = PdfLetterhead.Draw(g);
-            PdfLetterhead.TitleBar(g, y, "SALES ORDER");
+            float y = PdfLetterhead.Draw(g, email: PdfLetterhead.SalesOrderEmail);
+            PdfLetterhead.TitleBar(g, y, "CUSTOMER");
             y += 28;
 
-            g.Text(36, y, "Customer:", 8, true, Theme.Navy);
-            g.Text(110, y, draft.CustomerName, 9, false, Theme.Ink);
-            g.Text(330, y, "Customer Code:", 8, true, Theme.Navy);
-            g.Text(420, y, draft.CustomerCode, 9, false, Theme.Ink);
+            y = PdfFieldFlow.Pair(g, y, "Customer:", draft.CustomerName, "Customer Code:", draft.CustomerCode, 9);
+            y = PdfFieldFlow.Pair(
+                g, y, "Contact:", draft.Contact, "Phone:",
+                FirstNonEmpty(draft.ContactPhone, draft.CustomerPhone));
+            y = PdfFieldFlow.Pair(g, y, "Ship To:", draft.Address, "Email:", draft.Email);
 
-            y += 14;
-            g.Text(36, y, "Contact:", 8, true, Theme.Navy);
-            g.Text(110, y, draft.Contact, 9, false, Theme.Ink);
-            g.Text(330, y, "Phone:", 8, true, Theme.Navy);
-            g.Text(420, y, FirstNonEmpty(draft.ContactPhone, draft.CustomerPhone), 8, false, Theme.Ink);
+            string billing = (draft.BillingAddress ?? "").Trim();
+            string ship = (draft.Address ?? "").Trim();
+            if (billing.Length > 0 &&
+                !billing.Equals(ship, StringComparison.OrdinalIgnoreCase))
+                y = PdfFieldFlow.Left(g, y, "Bill To:", billing, 8, 460);
 
-            y += 14;
-            var addressLines = (draft.Address ?? "").Replace("\r", "").Split('\n');
-            g.Text(36, y, "Ship To:", 8, true, Theme.Navy);
-            g.Text(110, y, addressLines.Length > 0 ? PdfItemText.Clip(addressLines[0], 36) : "", 8, false, Theme.Ink);
-            g.Text(330, y, "Email:", 8, true, Theme.Navy);
-            g.Text(420, y, PdfItemText.Clip(draft.Email, 28), 8, false, Theme.Ink);
-
-            // Second address line only when Ship To is multi-line.
-            if (addressLines.Length > 1 && addressLines[1].Trim().Length > 0)
-            {
-                y += 12;
-                g.Text(110, y, PdfItemText.Clip(addressLines[1], 36), 8, false, Theme.Ink);
-            }
-
-            y += 22;
+            y += 10;
             g.Fill(36, y, 540, 16, Theme.Navy);
             g.Text(42, y + 11, "SO #", 6.5f, true, Theme.Cream);
             g.Text(150, y + 11, "CUSTOMER PO", 6.5f, true, Theme.Cream);
@@ -69,6 +56,18 @@ namespace CastRightCatchInvManagement
             g.Text(490, y + 13, PdfItemText.Clip(draft.Warehouse, 16), 8, false, Theme.Ink);
 
             y += 18;
+            y += 10;
+            g.Fill(36, y, 540, 16, Theme.Navy);
+            g.Text(42, y + 11, "FREIGHT TERMS", 6.5f, true, Theme.Cream);
+            g.Text(280, y + 11, "PAYMENT TERM", 6.5f, true, Theme.Cream);
+
+            y += 16;
+            g.Rect(36, y, 540, 18);
+            g.Text(42, y + 13, draft.FreightTerms, 8, false, Theme.Ink);
+            g.Text(280, y + 13, draft.DueDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink);
+
+            y += 18;
+            y += 12;
             g.Fill(36, y, 540, 16, Theme.Navy);
             g.Text(42, y + 11, "ITEM", 6.5f, true, Theme.Cream);
             g.Text(114, y + 11, "LOT #", 6.5f, true, Theme.Cream);

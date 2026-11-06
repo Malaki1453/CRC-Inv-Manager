@@ -25,6 +25,7 @@ namespace CastRightCatchInvManagement
         private TextBox _logistics = null!;
         private ComboBox _status = null!;
         private TextBox _freightCo = null!;
+        private ComboBox _freightTerms = null!;
         private TextBox _overhead = null!;
         private TextBox _freight = null!;
         private TextBox _forwarderLb = null!;
@@ -177,11 +178,14 @@ namespace CastRightCatchInvManagement
             _status.DropDownStyle = ComboBoxStyle.DropDownList;
             SelectStatus(_status, "Pending");
 
-            _ship = AddDate(card, "SHIP DATE", 20, 136, 140);
-            _arrival = AddDate(card, "ARRIVAL DATE", 174, 136, 140);
-            _forwarder = AddField(card, "FORWARDER", 328, 136, 150);
-            _logistics = AddField(card, "LOGISTICS", 492, 136, 150);
-            _freightCo = AddField(card, "FREIGHT CO", 656, 136, 180);
+            _ship = AddDate(card, "SHIP DATE", 20, 136, 120);
+            _arrival = AddDate(card, "ARRIVAL DATE", 154, 136, 120);
+            _forwarder = AddField(card, "FORWARDER", 288, 136, 130);
+            _logistics = AddField(card, "LOGISTICS", 432, 136, 130);
+            _freightCo = AddField(card, "FREIGHT CO", 576, 136, 120);
+            _freightTerms = AddCombo(card, "FREIGHT TERMS", 710, 136, 120);
+            _freightTerms.DropDownStyle = ComboBoxStyle.DropDownList;
+            SelectFreightTerms(_freightTerms, "");
 
             _other = AddCostField(card, "OTHER / LB", 20, 186, 110, out _otherHost);
             _freight = AddCostField(card, "FREIGHT / LB", 154, 186, 120, out _freightLbHost);
@@ -250,6 +254,7 @@ namespace CastRightCatchInvManagement
                 DrawHeader(e.Graphics, "ITEM", slots.Item);
                 DrawHeader(e.Graphics, "DESCRIPTION", slots.Description);
                 DrawHeader(e.Graphics, "COO", slots.Coo);
+                DrawHeader(e.Graphics, "EXPIRATION", slots.Expiration);
                 DrawHeader(e.Graphics, "PACK", slots.Pack);
                 DrawHeader(e.Graphics, "CS", slots.Cases);
                 DrawHeader(e.Graphics, "VOLUME", slots.Volume);
@@ -375,11 +380,15 @@ namespace CastRightCatchInvManagement
             foreach (var record in DataFiles.VisibleRecords(DataFiles.Vendors))
             {
                 string code = DataFiles.GetRecord(record, "Code").Trim();
-                string name = DataFiles.GetRecordAny(record, "Name", "Company").Trim();
+                string name = DataFiles.PartyDocumentName(record);
                 // Skip vendors that have neither a code nor a name to type.
                 if (code.Length == 0 && name.Length == 0)
                     continue;
-                var hit = new LookupSuggest.Hit(code, name, DataFiles.GetRecord(record, "Terms"));
+                var hit = new LookupSuggest.Hit(
+                    code,
+                    name,
+                    DataFiles.GetRecord(record, "Terms"),
+                    DataFiles.PartyCompanyName(record) + " " + DataFiles.PartyDba(record));
                 _vendorHits.Add(hit);
                 // Forwarder slot is a subset of vendors, not a separate table.
                 if (VendorTypes.MatchesSlot(record, VendorTypes.SlotPurchaseForwarder))
@@ -604,6 +613,7 @@ namespace CastRightCatchInvManagement
                 ["Overhead / LB"] = MoneyFormat.Store(_overhead.Text),
                 ["Freight / LB"] = MoneyFormat.Store(_freight.Text),
                 [DataFiles.FreightCompanyColumn] = _freightCo.Text.Trim(),
+                [DataFiles.FreightTermsColumn] = _freightTerms.Text.Trim(),
                 ["Forwarder / LB"] = MoneyFormat.Store(_forwarderLb.Text),
                 ["Other / LB"] = MoneyFormat.Store(_other.Text),
                 ["Total Cost / LB"] = MoneyFormat.Store(line.TotalPerLb),
@@ -617,11 +627,7 @@ namespace CastRightCatchInvManagement
                 ["Forwarder"] = _forwarder.Text.Trim(),
                 ["Logistics"] = _logistics.Text.Trim(),
                 ["Status"] = _status.Text.Trim(),
-                [DataFiles.SaleByDateColumn] = DataFiles.SaleByDateForItem(
-                    line.ItemCode,
-                    DateText(_agreement),
-                    DateText(_ship),
-                    DateText(_arrival))
+                [DataFiles.SaleByDateColumn] = line.ExpirationDate
             };
         }
 
@@ -650,6 +656,7 @@ namespace CastRightCatchInvManagement
             _forwarder.Text = DataFiles.GetRecord(rows[0], "Forwarder");
             _logistics.Text = DataFiles.GetRecord(rows[0], "Logistics");
             _freightCo.Text = DataFiles.GetRecordAny(rows[0], DataFiles.FreightCompanyColumn);
+            SelectFreightTerms(_freightTerms, DataFiles.GetRecord(rows[0], DataFiles.FreightTermsColumn));
             SelectStatus(_status, DataFiles.GetRecord(rows[0], "Status"));
             _overhead.Text = MoneyFormat.Display(DataFiles.GetRecord(rows[0], "Overhead / LB"));
             _freight.Text = MoneyFormat.Display(DataFiles.GetRecord(rows[0], "Freight / LB"));
@@ -679,6 +686,7 @@ namespace CastRightCatchInvManagement
             string vendorName = keepVendor ? _vendorName.Text.Trim() : "";
             string location = keepVendor ? _location.Text : "";
             string freightCo = keepVendor ? _freightCo.Text.Trim() : "";
+            string freightTerms = keepVendor ? _freightTerms.Text.Trim() : "";
 
             ClearLines();
             _loadedItems.Clear();
@@ -697,6 +705,7 @@ namespace CastRightCatchInvManagement
             _logistics.Text = "";
             SelectStatus(_status, "Pending");
             _freightCo.Text = freightCo;
+            SelectFreightTerms(_freightTerms, freightTerms);
 
             // Add Another reuses vendor/location; a full clear does not.
             if (keepVendor)
@@ -921,6 +930,32 @@ namespace CastRightCatchInvManagement
 
         /// <summary>Clear an optional date so it is not saved.</summary>
         private static void Uncheck(DateTimePicker picker) => picker.Checked = false;
+
+        /// <summary>Select Collect or Delivered, adding unknown stored values so older rows still display.</summary>
+        private static void SelectFreightTerms(ComboBox box, string? value)
+        {
+            if (box.Items.Count == 0)
+                box.Items.AddRange(new object[] { "Collect", "Delivered" });
+
+            string pick = (value ?? "").Trim();
+            if (pick.Length == 0)
+            {
+                box.SelectedIndex = -1;
+                return;
+            }
+
+            foreach (object item in box.Items)
+            {
+                if (string.Equals(item.ToString(), pick, StringComparison.OrdinalIgnoreCase))
+                {
+                    box.SelectedItem = item;
+                    return;
+                }
+            }
+
+            box.Items.Add(pick);
+            box.SelectedItem = pick;
+        }
 
         /// <summary>Map older status words onto the purchase combo values.</summary>
         private static void SelectStatus(ComboBox box, string? value)

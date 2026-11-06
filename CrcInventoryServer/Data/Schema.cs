@@ -92,10 +92,10 @@ internal static class Schema
         {
             // Purchase tracker columns through Record Status.
             PurchaseSales =>
-                "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Price Paid / LB,Overhead / LB,Freight / LB,Freight Company,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Sale By Date,Override Minimum Profit,Record Status",
+                "PO #,Vendor Code,Vendor,Location,Item Code,Description,COO,Pack Size,CS,Volume,Price Paid / LB,Overhead / LB,Freight / LB,Freight Company,Freight Terms,Forwarder / LB,Other / LB,Total Cost / LB,Total Cost,Agreement Date,Expected Ship Date,Vendor Due Date,Ship Date,Arrival Date,Forwarder,Logistics,Status,Sale By Date,Override Minimum Profit,Record Status",
             // Sales: PO # is the purchase lot; Invoice # is the customer PO (Lot # was migrated away).
             Sales =>
-                "PO #,SO #,Customer Code,Customer,Item Code,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Record Status",
+                "PO #,SO #,Customer Code,Customer,Item Code,Description,COO,Pack Size,CS,Volume,Sell Price / LB,Amount,Ship Date,Due Date,Invoice #,Paid,Status,Freight Company,Freight Terms,Payment Term,Overhead / LB,Freight / LB,Other / LB,Record Status",
             // Customer master, including sealed routing/account numbers.
             Customers =>
                 "Code,Name,Company,Established,Terms,Credit Limit,Contact Name,Address,Shipping Address,Email,Phone,Current Balance,Notes,Description,Routing Number,Account Number,Record Status",

@@ -11,6 +11,7 @@ namespace CastRightCatchInvManagement
         private readonly TextBox _item;
         private readonly TextBox _description;
         private readonly TextBox _coo;
+        private readonly NumericDateBox _expiration;
         private readonly TextBox _packSize;
         private readonly TextBox _cs;
         private readonly TextBox _volume;
@@ -46,6 +47,7 @@ namespace CastRightCatchInvManagement
             _item = MakeBox();
             _description = MakeBox();
             _coo = MakeBox();
+            _expiration = MakeDate();
             _packSize = MakeBox();
             _cs = MakeBox();
             _volume = MakeBox();
@@ -68,6 +70,7 @@ namespace CastRightCatchInvManagement
             Controls.Add(_item);
             Controls.Add(_description);
             Controls.Add(_coo);
+            Controls.Add(_expiration);
             Controls.Add(_packSize);
             Controls.Add(_cs);
             Controls.Add(_volume);
@@ -164,6 +167,7 @@ namespace CastRightCatchInvManagement
                 DataFiles.GetRecord(record, "Item Code"),
                 DataFiles.GetRecord(record, "Description"),
                 DataFiles.GetRecord(record, "COO"),
+                DataFiles.GetRecord(record, DataFiles.SaleByDateColumn),
                 DataFiles.GetRecord(record, "Pack Size"),
                 DataFiles.GetRecord(record, "CS"),
                 DataFiles.GetRecord(record, "Volume"),
@@ -177,6 +181,7 @@ namespace CastRightCatchInvManagement
                 line.ItemCode,
                 line.Description,
                 line.Coo,
+                line.ExpirationDate,
                 line.PackSize,
                 line.Cases,
                 line.Volume,
@@ -188,6 +193,7 @@ namespace CastRightCatchInvManagement
             string item,
             string description,
             string coo,
+            string expiration,
             string pack,
             string cases,
             string volume,
@@ -199,6 +205,7 @@ namespace CastRightCatchInvManagement
                 _item.Text = item;
                 _description.Text = description;
                 _coo.Text = coo;
+                SetExpiration(expiration);
                 _packSize.Text = pack;
                 _cs.Text = cases;
                 _volume.Text = volume;
@@ -227,6 +234,7 @@ namespace CastRightCatchInvManagement
                 Cases = _cs.Text.Trim(),
                 Volume = _volume.Text.Trim(),
                 Price = MoneyFormat.Store(_price.Text),
+                ExpirationDate = StoredExpiration(),
                 TotalPerLb = MoneyFormat.Store(_totalPerLb.Text),
                 TotalCost = MoneyFormat.Store(_total.Text)
             };
@@ -271,7 +279,10 @@ namespace CastRightCatchInvManagement
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
-        /// <summary>Derive volume from pack size × cases when both values are present.</summary>
+        /// <summary>
+        /// Pack size × cases fills volume when either of those qty fields changes.
+        /// Volume stays editable so a different received weight can be typed after.
+        /// </summary>
         private void RecalcVolume()
         {
             // Skip while Fill is writing pack/cases/volume together.
@@ -310,6 +321,7 @@ namespace CastRightCatchInvManagement
             _item.Bounds = slots.Item;
             _description.Bounds = slots.Description;
             _coo.Bounds = slots.Coo;
+            _expiration.Bounds = slots.Expiration;
             _packSize.Bounds = slots.Pack;
             _cs.Bounds = slots.Cases;
             _volume.Bounds = slots.Volume;
@@ -339,6 +351,31 @@ namespace CastRightCatchInvManagement
             box.Height = 26;
             return box;
         }
+
+        /// <summary>Line expiration date, typed MM/DD/YY like the other inventory dates.</summary>
+        private static NumericDateBox MakeDate()
+        {
+            var box = new NumericDateBox
+            {
+                Font = Theme.Body,
+                Height = 26,
+                PlaceholderText = "MM/DD/YY"
+            };
+            return box;
+        }
+
+        /// <summary>Show a stored sale-by / expiration cell, or clear the box when blank.</summary>
+        private void SetExpiration(string? text)
+        {
+            if (NumericDateBox.TryParseCell(text, out var date))
+                _expiration.Text = date.ToString("MM/dd/yyyy", CultureInfo.InvariantCulture);
+            else
+                _expiration.ClearDate();
+        }
+
+        /// <summary>ISO date when the box parsed, otherwise blank.</summary>
+        private string StoredExpiration() =>
+            _expiration.Value is DateTime date ? CsvIO.Date(date) : "";
 
         /// <summary>Read-only total cell styled like a grid amount.</summary>
         private static Label MakeTotal()
@@ -389,21 +426,23 @@ namespace CastRightCatchInvManagement
             int gap = 6;
             int remove = 28;
             int inner = Math.Max(520, width - pad * 2 - remove - gap);
-            int item = 96;
-            int coo = 52;
-            int pack = 56;
-            int cs = 44;
-            int vol = 72;
-            int price = 72;
-            int totLb = 72;
-            int total = 78;
-            int used = item + coo + pack + cs + vol + price + totLb + total + gap * 8;
-            int desc = Math.Max(80, inner - used);
+            int item = 90;
+            int coo = 48;
+            int exp = 88;
+            int pack = 52;
+            int cs = 40;
+            int vol = 64;
+            int price = 68;
+            int totLb = 68;
+            int total = 74;
+            int used = item + coo + exp + pack + cs + vol + price + totLb + total + gap * 9;
+            int desc = Math.Max(72, inner - used);
 
             int x = pad;
             var itemR = new Rectangle(x, y, item, h); x += item + gap;
             var descR = new Rectangle(x, y, desc, h); x += desc + gap;
             var cooR = new Rectangle(x, y, coo, h); x += coo + gap;
+            var expR = new Rectangle(x, y, exp, h); x += exp + gap;
             var packR = new Rectangle(x, y, pack, h); x += pack + gap;
             var csR = new Rectangle(x, y, cs, h); x += cs + gap;
             var volR = new Rectangle(x, y, vol, h); x += vol + gap;
@@ -411,7 +450,7 @@ namespace CastRightCatchInvManagement
             var totLbR = new Rectangle(x, y, totLb, h); x += totLb + gap;
             var totalR = new Rectangle(x, y, total, h); x += total + gap;
             var removeR = new Rectangle(x, y, remove, h);
-            return new PurchaseLineSlots(itemR, descR, cooR, packR, csR, volR, priceR, totLbR, totalR, removeR);
+            return new PurchaseLineSlots(itemR, descR, cooR, expR, packR, csR, volR, priceR, totLbR, totalR, removeR);
         }
     }
 
@@ -420,6 +459,7 @@ namespace CastRightCatchInvManagement
         Rectangle Item,
         Rectangle Description,
         Rectangle Coo,
+        Rectangle Expiration,
         Rectangle Pack,
         Rectangle Cases,
         Rectangle Volume,
@@ -434,6 +474,7 @@ namespace CastRightCatchInvManagement
         public string ItemCode { get; set; } = "";
         public string Description { get; set; } = "";
         public string Coo { get; set; } = "";
+        public string ExpirationDate { get; set; } = "";
         public string PackSize { get; set; } = "";
         public string Cases { get; set; } = "";
         public string Volume { get; set; } = "";

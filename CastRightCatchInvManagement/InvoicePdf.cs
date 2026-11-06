@@ -658,7 +658,7 @@ namespace CastRightCatchInvManagement
             {
                 _customer.Items.Add(new CustomerChoice(
                     DataFiles.GetRecord(record, "Code"),
-                    DataFiles.GetRecordAny(record, "Name", "Company"),
+                    DataFiles.PartyDocumentName(record),
                     DataFiles.GetRecord(record, "Terms"),
                     DataFiles.GetRecordAny(record, "Contact Name", "Phone"),
                     DataFiles.CustomerShippingAddress(record)));
@@ -771,7 +771,7 @@ namespace CastRightCatchInvManagement
                 return prefill.CustomerCode.Equals(code, StringComparison.OrdinalIgnoreCase);
             // Fall back to name when either side has no customer code.
             if (prefill.CustomerName.Length > 0 && name.Length > 0)
-                return prefill.CustomerName.Equals(name, StringComparison.OrdinalIgnoreCase);
+                return DataFiles.PartyLabelMatches(prefill.CustomerName, name);
             return true;
         }
 
@@ -1590,7 +1590,7 @@ namespace CastRightCatchInvManagement
                 if (_customer.Items[i] is not CustomerChoice choice)
                     continue;
                 bool byCode = code.Length > 0 && choice.Code.Equals(code, StringComparison.OrdinalIgnoreCase);
-                bool byName = name.Length > 0 && choice.Name.Equals(name, StringComparison.OrdinalIgnoreCase);
+                bool byName = name.Length > 0 && DataFiles.PartyLabelMatches(choice.Name, name);
                 // Skip vendors that match neither the purchase's code nor name.
                 if (!byCode && !byName)
                     continue;
@@ -1641,7 +1641,7 @@ namespace CastRightCatchInvManagement
                 return prefill.VendorCode.Equals(code, StringComparison.OrdinalIgnoreCase);
             // Fall back to name when either side has no vendor code.
             if (prefill.VendorName.Length > 0 && name.Length > 0)
-                return prefill.VendorName.Equals(name, StringComparison.OrdinalIgnoreCase);
+                return DataFiles.PartyLabelMatches(prefill.VendorName, name);
             return true;
         }
 
@@ -1666,7 +1666,7 @@ namespace CastRightCatchInvManagement
                     continue;
 
                 bool byCode = code.Length > 0 && choice.Code.Equals(code, StringComparison.OrdinalIgnoreCase);
-                bool byName = name.Length > 0 && choice.Name.Equals(name, StringComparison.OrdinalIgnoreCase);
+                bool byName = name.Length > 0 && DataFiles.PartyLabelMatches(choice.Name, name);
                 // Skip customers that match neither the sale's code nor name.
                 if (!byCode && !byName)
                     continue;
@@ -1859,7 +1859,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Write the PDF, invoices row, and optional source PDF, then open the viewer.</summary>
         private void SaveInvoicePdf(InvoiceDraft draft)
         {
-            DateTime due = DueDate(draft.ShipDate, draft.Terms);
+            DateTime due = DataFiles.DueDateFromTerms(draft.ShipDate, draft.Terms);
             // Incoming vendor invoices also create/update a CRC purchase PO PDF.
             if (draft.Received &&
                 draft.Lines.Any(line => line.ProductId.Length > 0 || line.Description.Length > 0))
@@ -1927,11 +1927,7 @@ namespace CastRightCatchInvManagement
                         ["Agreement Date"] = CsvIO.Date(draft.InvoiceDate),
 
                         ["Ship Date"] = CsvIO.Date(draft.ShipDate),
-                        ["Status"] = "Pending",
-                        [DataFiles.SaleByDateColumn] = DataFiles.SaleByDateForItem(
-                            item,
-                            CsvIO.Date(draft.InvoiceDate),
-                            CsvIO.Date(draft.ShipDate))
+                        ["Status"] = "Pending"
                     };
                     var inserted = DataFiles.MutateInsert(DataFiles.PurchaseSales, values);
                     // Stop the rest of the PO if one line cannot be stored.
@@ -2134,16 +2130,6 @@ namespace CastRightCatchInvManagement
                 MessageBoxIcon.Warning) == DialogResult.Yes;
         }
 
-        /// <summary>Due date is ship date plus NET days from terms, defaulting to 15.</summary>
-        private static DateTime DueDate(DateTime ship, string terms)
-        {
-            var match = System.Text.RegularExpressions.Regex.Match(terms ?? "", @"\d+");
-            // NET 15 / NET 30: use the number of days from terms when it parses.
-            if (match.Success && int.TryParse(match.Value, out int days))
-                return ship.AddDays(days);
-            return ship.AddDays(15);
-        }
-
         /// <summary>Fill Freight Co from the source row when the combo is still empty.</summary>
         private void SuggestFreightCompany(Dictionary<string, string> record)
         {
@@ -2341,8 +2327,7 @@ namespace CastRightCatchInvManagement
                     continue;
                 return (
                     FirstNonEmpty(
-                        DataFiles.GetRecord(record, "Company"),
-                        DataFiles.GetRecord(record, "Name"),
+                        DataFiles.PartyDocumentName(record),
                         name),
                     DataFiles.GetRecordAny(record, "Address", "Description"),
                     DataFiles.GetRecord(record, "Phone"));
