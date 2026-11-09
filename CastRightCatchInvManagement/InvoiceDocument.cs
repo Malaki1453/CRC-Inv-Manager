@@ -19,7 +19,7 @@ namespace CastRightCatchInvManagement
                 Draw(draft).ToPdf());
         }
 
-        /// <summary>Lay out letterhead or vendor header, sold-to/ship-to, item table, and totals.</summary>
+        /// <summary>Lay out letterhead or vendor header, customer fields, item table, and totals.</summary>
         private static PdfDraw Draw(InvoiceDraft draft)
         {
             var g = new PdfDraw();
@@ -39,6 +39,7 @@ namespace CastRightCatchInvManagement
             string ein = received ? "" : FirstNonEmpty(AppState.Ein, "41-3723454");
             string defaultTerms = FirstNonEmpty(draft.Terms, AppState.PaymentTerms, "NET 15 DAYS");
             string orderNo = received ? draft.PoNumber : draft.SoNumber;
+            string partyName = received ? draft.VendorName : draft.CustomerName;
             string partyCode = received ? draft.VendorCode : draft.CustomerCode;
 
             float y = PdfLetterhead.Draw(g, brand: !received, email: PdfLetterhead.InvoiceEmail);
@@ -52,54 +53,52 @@ namespace CastRightCatchInvManagement
                 y += 50;
             }
 
-            g.Text(36, y + 16, "INVOICE", 16, PdfFace.SerifBold, Theme.Navy);
-            g.Rect(430, y, 146, 36);
-            g.Fill(430, y, 146, 12, Theme.Navy);
-            g.Text(454, y + 9, "INVOICE NO.", 6.5f, true, Theme.Cream);
-            g.Text(508, y + 9, "DATE", 6.5f, true, Theme.Cream);
-            g.TextRight(490, y + 28, draft.InvoiceNumber, 9, true, Theme.Ink);
-            g.Text(516, y + 28, draft.InvoiceDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink, center: true, width: 52);
-            g.Line(494, y, 494, y + 36);
-            // Incoming vendor invoices do not print our EIN.
-            if (ein.Length > 0)
-                g.Text(430, y + 48, "TAX ID# " + ein, 8, false, Theme.Ink);
+            PdfLetterhead.TitleBar(g, y, received ? "VENDOR" : "CUSTOMER");
+            y += 28;
+            y = PdfFieldFlow.Pair(
+                g, y,
+                received ? "Vendor:" : "Customer:", partyName,
+                received ? "Vendor Code:" : "Customer Code:", partyCode,
+                9);
+            y = PdfFieldFlow.Pair(g, y, "Sold To:", draft.SoldTo, "Ship To:", draft.ShipTo);
 
-            y += 56;
+            y += 10;
             g.Fill(36, y, 540, 16, Theme.Navy);
-            g.Text(42, y + 11, received ? "PO #" : "SO #", 6.5f, true, Theme.Cream);
-            g.Text(108, y + 11, "ORDER DATE", 6.5f, true, Theme.Cream);
-            g.Text(186, y + 11, "TERMS", 6.5f, true, Theme.Cream);
-            g.Text(280, y + 11, "SHIP VIA", 6.5f, true, Theme.Cream);
-            g.Text(400, y + 11, received ? "CONTACT" : "SALES REP", 6.5f, true, Theme.Cream);
-            g.Text(478, y + 11, "SHIP DATE", 6.5f, true, Theme.Cream);
-            g.Text(542, y + 11, received ? "VEND ID" : "CUST ID", 6.5f, true, Theme.Cream);
+            g.Text(42, y + 11, "INVOICE #", 6.5f, true, Theme.Cream);
+            g.Text(150, y + 11, "DATE", 6.5f, true, Theme.Cream);
+            g.Text(250, y + 11, received ? "PO #" : "SO #", 6.5f, true, Theme.Cream);
+            g.Text(360, y + 11, "TERMS", 6.5f, true, Theme.Cream);
+            g.Text(470, y + 11, "SHIP DATE", 6.5f, true, Theme.Cream);
 
             y += 16;
             g.Rect(36, y, 540, 18);
-            g.Text(42, y + 13, orderNo, 8, false, Theme.Ink);
-            g.Text(108, y + 13, draft.InvoiceDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink);
-            g.Text(186, y + 13, defaultTerms, 8, false, Theme.Ink);
-            g.Text(280, y + 13, draft.ShipVia, 8, false, Theme.Ink);
-            g.Text(400, y + 13, draft.SalesRep, 8, false, Theme.Ink);
-            g.Text(478, y + 13, draft.ShipDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink);
-            g.Text(542, y + 13, partyCode, 8, false, Theme.Ink);
+            g.Text(42, y + 13, draft.InvoiceNumber, 8, false, Theme.Ink);
+            g.Text(150, y + 13, draft.InvoiceDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink);
+            g.Text(250, y + 13, orderNo, 8, false, Theme.Ink);
+            g.Text(360, y + 13, defaultTerms, 8, false, Theme.Ink);
+            g.Text(470, y + 13, draft.ShipDate.ToString("MM/dd/yyyy"), 8, false, Theme.Ink);
 
-            y += 32;
-            g.Text(36, y, "Sold To:", 8, true, Theme.Navy);
-            g.Text(306, y, "Ship To:", 8, true, Theme.Navy);
-            y += 12;
-            float soldH = PdfFieldFlow.Block(g, 36, y, draft.SoldTo, 258);
-            float shipH = PdfFieldFlow.Block(g, 306, y, draft.ShipTo, 258);
-            y += Math.Max(soldH, shipH) + 10;
+            y += 18;
+            y += 10;
             g.Fill(36, y, 540, 16, Theme.Navy);
-            g.Text(42, y + 11, "PO #", 6.5f, true, Theme.Cream);
-            g.Text(108, y + 11, "PRODUCT", 6.5f, true, Theme.Cream);
-            g.Text(168, y + 11, "LOT #", 6.5f, true, Theme.Cream);
-            g.Text(250, y + 11, "ORD", 6.5f, true, Theme.Cream);
-            g.Text(286, y + 11, "SHIP", 6.5f, true, Theme.Cream);
-            g.Text(322, y + 11, "DESCRIPTION", 6.5f, true, Theme.Cream);
-            g.Text(430, y + 11, "WEIGHT", 6.5f, true, Theme.Cream);
-            g.Text(486, y + 11, "PRICE", 6.5f, true, Theme.Cream);
+            g.Text(42, y + 11, "SHIP VIA", 6.5f, true, Theme.Cream);
+            g.Text(250, y + 11, received ? "CONTACT" : "SALES REP", 6.5f, true, Theme.Cream);
+            g.Text(470, y + 11, "TAX ID", 6.5f, true, Theme.Cream);
+
+            y += 16;
+            g.Rect(36, y, 540, 18);
+            g.Text(42, y + 13, draft.ShipVia, 8, false, Theme.Ink);
+            g.Text(250, y + 13, draft.SalesRep, 8, false, Theme.Ink);
+            g.Text(470, y + 13, ein, 8, false, Theme.Ink);
+
+            y += 18;
+            y += 12;
+            g.Fill(36, y, 540, 16, Theme.Navy);
+            g.Text(42, y + 11, "ITEM", 6.5f, true, Theme.Cream);
+            g.Text(114, y + 11, "LOT #", 6.5f, true, Theme.Cream);
+            g.Text(196, y + 11, "DESCRIPTION", 6.5f, true, Theme.Cream);
+            g.Text(372, y + 11, "WEIGHT", 6.5f, true, Theme.Cream);
+            g.Text(440, y + 11, "PRICE", 6.5f, true, Theme.Cream);
             g.Text(538, y + 11, "AMOUNT", 6.5f, true, Theme.Cream);
 
             y += 16;
@@ -115,30 +114,24 @@ namespace CastRightCatchInvManagement
                 // Zebra-stripe odd rows so the item table is easier to scan.
                 if (i % 2 == 1)
                     g.Fill(36.5f, ly, 539, rowH, Theme.GridAlt);
-                g.Text(42, ly + 12, PdfItemText.Clip(line.PoNumber, 12), 7.5f, false, Theme.Ink);
-                g.Text(108, ly + 12, PdfItemText.Clip(line.ProductId, 9), 7.5f, false, Theme.Ink);
-                g.Text(168, ly + 12, PdfItemText.Clip(line.LotNumber, 14), 7.5f, false, Theme.Ink);
-                g.Text(250, ly + 12, line.Ordered, 7.5f, false, Theme.Ink);
-                g.Text(286, ly + 12, line.Shipped, 7.5f, false, Theme.Ink);
-                PdfItemText.Draw(g, 322, ly, line.Description, line.ProductId, line.Coo, 20);
-                g.Text(430, ly + 12, FormatQty(line.Weight), 7.5f, false, Theme.Ink);
-                g.Text(486, ly + 12, FormatMoney(InvoiceLineRow.ParseNumber(line.Price)), 7.5f, false, Theme.Ink);
+                g.Text(42, ly + 12, PdfItemText.Clip(line.ProductId, 12), 7.5f, false, Theme.Ink);
+                g.Text(114, ly + 12, PdfItemText.Clip(line.LotNumber, 14), 7.5f, false, Theme.Ink);
+                PdfItemText.Draw(g, 196, ly, line.Description, line.ProductId, line.Coo, 28);
+                g.Text(372, ly + 12, FormatQty(line.Weight), 7.5f, false, Theme.Ink);
+                g.Text(440, ly + 12, FormatMoney(InvoiceLineRow.ParseNumber(line.Price)), 7.5f, false, Theme.Ink);
                 g.TextRight(572, ly + 12, FormatMoney(line.Amount), 7.5f, false, Theme.Ink);
             }
 
             float tableBottom = tableTop + rows * rowH;
-            g.Line(102, tableTop, 102, tableBottom);
-            g.Line(162, tableTop, 162, tableBottom);
-            g.Line(244, tableTop, 244, tableBottom);
-            g.Line(280, tableTop, 280, tableBottom);
-            g.Line(316, tableTop, 316, tableBottom);
-            g.Line(422, tableTop, 422, tableBottom);
-            g.Line(478, tableTop, 478, tableBottom);
+            g.Line(108, tableTop, 108, tableBottom);
+            g.Line(190, tableTop, 190, tableBottom);
+            g.Line(366, tableTop, 366, tableBottom);
+            g.Line(434, tableTop, 434, tableBottom);
             g.Line(528, tableTop, 528, tableBottom);
 
-            float ty = tableBottom + 6;
-            g.TextRight(420, ty + 12, "Total Weight", 8, true, Theme.Navy);
-            g.Text(430, ty + 12, FormatQty(draft.TotalWeight.ToString(CultureInfo.InvariantCulture)), 8, false, Theme.Ink);
+            float ty = tableBottom + 10;
+            g.TextRight(366, ty + 12, "Total Weight", 8, true, Theme.Navy);
+            g.Text(372, ty + 12, FormatQty(draft.TotalWeight.ToString(CultureInfo.InvariantCulture)), 8, false, Theme.Ink);
             g.TextRight(528, ty + 12, "Sub Total", 8, true, Theme.Navy);
             g.TextRight(572, ty + 12, FormatMoney(draft.SubTotal), 8, false, Theme.Ink);
 

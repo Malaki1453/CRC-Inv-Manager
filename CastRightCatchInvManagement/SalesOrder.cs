@@ -1622,17 +1622,6 @@ namespace CastRightCatchInvManagement
 
             try
             {
-                if (_editing)
-                    DataFiles.RetireStoredPdf(DataFiles.PdfKindSale, _editPo, po);
-                SaleDocument.SaveFromPo(po);
-            }
-            // Keep the saved rows even if the sale PDF cannot be written.
-            catch
-            {
-            }
-
-            try
-            {
                 var pos = lines.Select(line => line.PoNumber).Where(p => p.Length > 0).ToList();
                 pos.Add(po);
                 string soNumber = draft.SoNumber;

@@ -19,6 +19,86 @@ namespace CastRightCatchInvManagement
                 Draw(draft).ToPdf());
         }
 
+        /// <summary>Rebuild the sales-order PDF from stored sales lines, or null when none exist.</summary>
+        public static string? SaveFromSo(string? soNumber)
+        {
+            var rows = DataFiles.FindSalesBySo(soNumber);
+            return rows.Count == 0 ? null : Save(DraftFromRows(rows));
+        }
+
+        /// <summary>Header and lines from sales-table rows plus the customer master for addresses.</summary>
+        private static SalesOrderDraft DraftFromRows(IReadOnlyList<Dictionary<string, string>> rows)
+        {
+            var first = rows[0];
+            string code = DataFiles.GetRecord(first, "Customer Code");
+            string name = DataFiles.GetRecord(first, "Customer");
+            var customer = FindCustomer(code, name);
+            string billing = customer == null ? "" : DataFiles.CustomerBillingAddress(customer);
+            string ship = customer == null ? billing : DataFiles.CustomerShippingAddress(customer);
+            var warehouses = customer == null
+                ? new List<DataFiles.CustomerWarehouse>()
+                : DataFiles.CustomerWarehouses(customer);
+            DateTime order = ParseDate(DataFiles.GetRecord(first, "Order Date")) ?? DateTime.Today;
+            DateTime release = ParseDate(DataFiles.GetRecord(first, "Ship Date")) ?? order;
+            DateTime due = ParseDate(DataFiles.GetRecord(first, "Due Date"))
+                ?? ParseDate(DataFiles.GetRecord(first, DataFiles.PaymentTermColumn))
+                ?? DataFiles.DueDateFromTerms(order, customer == null ? "" : DataFiles.GetRecord(customer, "Terms"));
+            return new SalesOrderDraft
+            {
+                SoNumber = DataFiles.GetRecord(first, "SO #"),
+                OrderDate = order,
+                ReleaseDate = release,
+                DueDate = due,
+                CustomerCode = code,
+                CustomerName = name,
+                Address = ship,
+                BillingAddress = billing,
+                CustomerPhone = customer == null ? "" : DataFiles.GetRecord(customer, "Phone"),
+                Contact = customer == null ? "" : DataFiles.GetRecord(customer, "Contact Name"),
+                Email = customer == null ? "" : DataFiles.GetRecord(customer, "Email"),
+                ContactPhone = customer == null ? "" : DataFiles.GetRecord(customer, "Phone"),
+                Warehouse = warehouses.Count > 0 ? warehouses[0].Name : DataFiles.GetRecord(first, "Location"),
+                CustomerPo = DataFiles.SalePo(first),
+                Status = DataFiles.GetRecord(first, "Status"),
+                FreightTerms = DataFiles.GetRecord(first, DataFiles.FreightTermsColumn),
+                Lines = rows.Select(row => new SalesOrderLine
+                {
+                    PoNumber = DataFiles.SalePo(row),
+                    ItemCode = DataFiles.GetRecord(row, "Item Code"),
+                    LotNumber = DataFiles.SaleLot(row),
+                    Description = DataFiles.GetRecord(row, "Description"),
+                    Coo = DataFiles.GetRecord(row, "COO"),
+                    UnitSize = DataFiles.GetRecord(row, "Pack Size"),
+                    Cases = DataFiles.GetRecord(row, "CS"),
+                    Volume = DataFiles.GetRecord(row, "Volume"),
+                    Price = DataFiles.GetRecord(row, "Sell Price / LB"),
+                    Amount = DataFiles.GetRecord(row, "Amount")
+                }).ToList()
+            };
+        }
+
+        /// <summary>Visible customer whose code or name matches the sale.</summary>
+        private static Dictionary<string, string>? FindCustomer(string code, string name)
+        {
+            foreach (var record in DataFiles.ReadRecords(DataFiles.Customers))
+            {
+                bool byCode = code.Length > 0 &&
+                    DataFiles.GetRecord(record, "Code").Equals(code, StringComparison.OrdinalIgnoreCase);
+                bool byName = name.Length > 0 &&
+                    DataFiles.GetRecord(record, "Name").Equals(name, StringComparison.OrdinalIgnoreCase);
+                if (byCode || byName)
+                    return record;
+            }
+
+            return null;
+        }
+
+        /// <summary>Parse a stored date cell, or null when the cell is blank or not a date.</summary>
+        private static DateTime? ParseDate(string? text)
+        {
+            return DateTime.TryParse(text, out var date) ? date.Date : null;
+        }
+
         /// <summary>Lay out letterhead, customer/ship-to, and the pick-ticket item table.</summary>
         private static PdfDraw Draw(SalesOrderDraft draft)
         {

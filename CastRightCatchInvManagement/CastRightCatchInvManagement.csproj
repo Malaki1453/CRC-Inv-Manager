@@ -10,16 +10,25 @@
     <AssemblyTitle>Cast Right Catch Inventory</AssemblyTitle>
     <Product>Cast Right Catch Inventory</Product>
     <Authors>Cast Right Catch Co.</Authors>
-    <Version>0.8.14</Version>
-    <AssemblyVersion>0.8.14.0</AssemblyVersion>
-    <FileVersion>0.8.14.0</FileVersion>
-    <InformationalVersion>0.8.14</InformationalVersion>
+    <Version>0.8.15</Version>
+    <AssemblyVersion>0.8.15.0</AssemblyVersion>
+    <FileVersion>0.8.15.0</FileVersion>
+    <InformationalVersion>0.8.15</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+    <None Remove="Assets\**\*" />
+    <Content Include="Assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+    <!-- Embed so PDFs still get the boat lockup when an install omits sidecar Assets. -->
+    <EmbeddedResource Include="Assets\**\*">
+      <LogicalName>Assets.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
     <!-- Sidecar .ico next to the exe so Explorer / shortcuts can show the CRC seal. -->
-    <Content Include="Assets\app.ico" Link="CastRightCatchInvManagement.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\app.ico" Link="CastRightCatchInvManagement.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 
   <ItemGroup>

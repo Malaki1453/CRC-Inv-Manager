@@ -41,26 +41,25 @@ namespace CastRightCatchInvManagement
         /// <summary>Fill the grid from sales (live only, or archive + live when Old is on).</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.Sales);
 
-        /// <summary>Open the stored sale PDF, or build one from the customer PO if it is missing.</summary>
+        /// <summary>Open the sales-order PDF created on save, or rebuild it from this SO if it is missing.</summary>
         private void ShowSalePdf(Dictionary<string, string> record)
         {
-            // SalePo reads Invoice # (customer PO). Grid shows that column as "Customer PO".
-            string po = DataFiles.SalePo(record);
+            string so = DataFiles.GetRecord(record, "SO #").Trim();
             DataFiles.ShowPdf(
-                DataFiles.PdfKindSale,
-                po,
-                "sale " + po,
+                DataFiles.PdfKindSalesOrder,
+                so,
+                "sales order " + so,
                 () =>
                 {
-                    string? path = SaleDocument.SaveFromPo(po);
-                    // No matching sale lines, so there is nothing to draw.
+                    string? path = SalesOrderDocument.SaveFromSo(so);
+                    // No matching sales-order lines, so there is nothing to draw.
                     if (path == null)
                     {
-                        ToastAlert.Error(this, "Could not create a PDF for this sale.");
+                        ToastAlert.Error(this, "Could not create a PDF for this sales order.");
                         return;
                     }
 
-                    DataFiles.OpenPdf(path, DataFiles.PdfKindSale, po);
+                    DataFiles.OpenPdf(path, DataFiles.PdfKindSalesOrder, so);
                 });
         }
 

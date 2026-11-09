@@ -57,23 +57,60 @@ namespace CastRightCatchInvManagement
             foreach (var name in names)
             {
                 var path = Path.Combine(DirectoryPath, name);
-                // Try the next candidate name when this file is missing.
-                if (!File.Exists(path))
-                    continue;
+                if (File.Exists(path))
+                {
+                    try
+                    {
+                        using var fs = File.OpenRead(path);
+                        using var img = Image.FromStream(fs);
+                        return new Bitmap(img);
+                    }
+                    // Skip unreadable files and try the next candidate name.
+                    catch
+                    {
+                    }
+                }
 
-                try
-                {
-                    using var fs = File.OpenRead(path);
-                    using var img = Image.FromStream(fs);
-                    return new Bitmap(img);
-                }
-                // Skip unreadable files and try the next candidate name.
-                catch
-                {
-                }
+                // Single-file / MSI installs may omit sidecar Assets; the PNG is also embedded in the exe.
+                var embedded = LoadEmbedded(name);
+                if (embedded != null)
+                    return embedded;
             }
 
             return null;
+        }
+
+        /// <summary>Open an embedded asset by LogicalName, then by any resource whose name ends with the file name.</summary>
+        private static Stream? OpenEmbedded(string name)
+        {
+            var asm = typeof(BrandAssets).Assembly;
+            var exact = asm.GetManifestResourceStream("Assets." + name);
+            if (exact != null)
+                return exact;
+
+            string? match = Array.Find(
+                asm.GetManifestResourceNames(),
+                n => n.EndsWith("." + name, StringComparison.OrdinalIgnoreCase)
+                  || n.Equals(name, StringComparison.OrdinalIgnoreCase));
+            return match == null ? null : asm.GetManifestResourceStream(match);
+        }
+
+        /// <summary>Read a packaged asset from the assembly when it is not on disk next to the exe.</summary>
+        private static Image? LoadEmbedded(string name)
+        {
+            using var stream = OpenEmbedded(name);
+            if (stream == null)
+                return null;
+
+            try
+            {
+                using var img = Image.FromStream(stream);
+                return new Bitmap(img);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>Make near-black pixels transparent so a dark wordmark works on navy.</summary>
@@ -154,17 +191,36 @@ namespace CastRightCatchInvManagement
         /// <summary>Prefer app.ico; otherwise convert the seal bitmap to an icon.</summary>
         private static Icon? LoadIcon()
         {
-            var icoPath = Path.Combine(DirectoryPath, "app.ico");
-            // Prefer the packaged .ico when the asset pack includes it.
-            if (File.Exists(icoPath))
+            foreach (var icoPath in new[]
             {
+                Path.Combine(DirectoryPath, "app.ico"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico"),
+            })
+            {
+                // Prefer the packaged .ico when the asset pack includes it (Assets\ or install root).
+                if (!File.Exists(icoPath))
+                    continue;
                 try
                 {
                     return new Icon(icoPath);
                 }
-                // Corrupt ico: fall through to bitmap conversion.
+                // Corrupt ico: try the next path, then embedded, then bitmap conversion.
                 catch
                 {
+                }
+            }
+
+            using (var stream = OpenEmbedded("app.ico"))
+            {
+                if (stream != null)
+                {
+                    try
+                    {
+                        return new Icon(stream);
+                    }
+                    catch
+                    {
+                    }
                 }
             }
 
