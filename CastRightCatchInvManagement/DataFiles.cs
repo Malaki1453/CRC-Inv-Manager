@@ -404,7 +404,7 @@ namespace CastRightCatchInvManagement
                    FindStoredPdf(PdfKindPurchase, po);
         }
 
-        /// <summary>Open an attached purchase invoice, else the generated PDF, else offer to create one.</summary>
+        /// <summary>Open an attached purchase invoice, else redraw the generated PDF, else offer to create one.</summary>
         public static void ShowPurchasePdf(string po, Action? create)
         {
             po = (po ?? "").Trim();
@@ -428,7 +428,7 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
-            ShowPdf(PdfKindPurchase, po, "purchase " + po, create);
+            ShowPdf(PdfKindPurchase, po, "purchase " + po, create, refresh: true);
         }
 
         /// <summary>Resolve a stored PDF from the database, importing a leftover disk file if needed.</summary>
@@ -469,8 +469,11 @@ namespace CastRightCatchInvManagement
             return WritePdfViewFile(kind, Path.GetFileName(disk), bytes, key);
         }
 
-        /// <summary>Open a stored PDF, or ask to create one when none is on file.</summary>
-        public static void ShowPdf(string kind, string key, string label, Action? create)
+        /// <summary>
+        /// Open a stored PDF, or ask to create one when none is on file.
+        /// Pass <paramref name="refresh"/> to redraw CRC letterhead PDFs so a newer logo is stored.
+        /// </summary>
+        public static void ShowPdf(string kind, string key, string label, Action? create, bool refresh = false)
         {
             key = (key ?? "").Trim();
             // Document number is blank: cannot look up or create a PDF without a number.
@@ -481,6 +484,13 @@ namespace CastRightCatchInvManagement
                     "PDF",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
+                return;
+            }
+
+            // Redraw from live rows so letterhead (boat lockup) matches the current build.
+            if (refresh && create != null)
+            {
+                create.Invoke();
                 return;
             }
 

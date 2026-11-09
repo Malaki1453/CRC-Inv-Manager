@@ -1,4 +1,5 @@
 using System.Drawing.Imaging;
+using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace CastRightCatchInvManagement
@@ -33,22 +34,81 @@ namespace CastRightCatchInvManagement
         /// <summary>Walk up from the exe until Assets or the source brand-assests folder is found.</summary>
         private static string ResolveDirectory()
         {
-            var start = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-            for (var dir = start; dir != null; dir = dir.Parent)
+            string? withSeal = null;
+            foreach (var startPath in ExeDirectories())
             {
-                var assets = Path.Combine(dir.FullName, "Assets");
-                // Prefer the packaged Assets copy used at runtime.
-                if (File.Exists(Path.Combine(assets, "logo-seal.png")) ||
-                    File.Exists(Path.Combine(assets, "app.ico")))
-                    return assets;
+                for (var dir = new DirectoryInfo(startPath); dir != null; dir = dir.Parent)
+                {
+                    var assets = Path.Combine(dir.FullName, "Assets");
+                    // Prefer a pack that includes the boat lockup used on PDFs.
+                    if (File.Exists(Path.Combine(assets, "logo-boat.png")))
+                        return assets;
+                    if (File.Exists(Path.Combine(dir.FullName, "logo-boat.png")))
+                        return dir.FullName;
+                    if (withSeal == null &&
+                        (File.Exists(Path.Combine(assets, "logo-seal.png")) ||
+                         File.Exists(Path.Combine(assets, "app.ico"))))
+                        withSeal = assets;
 
-                var branded = Path.Combine(dir.FullName, "brand-assests");
-                // Dev-tree fallback: original brand files next to the solution.
-                if (Directory.Exists(branded))
-                    return branded;
+                    var branded = Path.Combine(dir.FullName, "brand-assests");
+                    // Dev-tree fallback: original brand files next to the solution.
+                    if (Directory.Exists(branded) &&
+                        File.Exists(Path.Combine(branded, "logo-boat.png")))
+                        return branded;
+                }
             }
 
-            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets");
+            return withSeal ?? Path.Combine(AppContext.BaseDirectory, "Assets");
+        }
+
+        /// <summary>Install folder and AppContext/AppDomain base directories for the running exe.</summary>
+        private static IEnumerable<string> ExeDirectories()
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            void add(string? path)
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                    return;
+                try
+                {
+                    seen.Add(Path.GetFullPath(path));
+                }
+                catch
+                {
+                }
+            }
+
+            add(Path.GetDirectoryName(Environment.ProcessPath));
+            add(AppContext.BaseDirectory);
+            add(AppDomain.CurrentDomain.BaseDirectory);
+            return seen;
+        }
+
+        /// <summary>Folders that may hold a sidecar PNG: resolved Assets, install root, and Assets next to the exe.</summary>
+        private static IEnumerable<string> SearchDirs()
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            void add(string? path)
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                    return;
+                try
+                {
+                    seen.Add(Path.GetFullPath(path));
+                }
+                catch
+                {
+                }
+            }
+
+            add(DirectoryPath);
+            foreach (var exe in ExeDirectories())
+            {
+                add(exe);
+                add(Path.Combine(exe, "Assets"));
+            }
+
+            return seen;
         }
 
         /// <summary>Load the first readable image among the given file names.</summary>
@@ -56,19 +116,12 @@ namespace CastRightCatchInvManagement
         {
             foreach (var name in names)
             {
-                var path = Path.Combine(DirectoryPath, name);
-                if (File.Exists(path))
+                foreach (var dir in SearchDirs())
                 {
-                    try
-                    {
-                        using var fs = File.OpenRead(path);
-                        using var img = Image.FromStream(fs);
-                        return new Bitmap(img);
-                    }
-                    // Skip unreadable files and try the next candidate name.
-                    catch
-                    {
-                    }
+                    var path = Path.Combine(dir, name);
+                    var fromDisk = ReadImageFile(path);
+                    if (fromDisk != null)
+                        return fromDisk;
                 }
 
                 // Single-file / MSI installs may omit sidecar Assets; the PNG is also embedded in the exe.
@@ -80,31 +133,60 @@ namespace CastRightCatchInvManagement
             return null;
         }
 
+        /// <summary>Decode a disk image into a standalone bitmap, or null if the file is missing or unreadable.</summary>
+        private static Image? ReadImageFile(string path)
+        {
+            if (!File.Exists(path))
+                return null;
+            try
+            {
+                using var fs = File.OpenRead(path);
+                return BitmapFromStream(fs);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         /// <summary>Open an embedded asset by LogicalName, then by any resource whose name ends with the file name.</summary>
         private static Stream? OpenEmbedded(string name)
         {
-            var asm = typeof(BrandAssets).Assembly;
-            var exact = asm.GetManifestResourceStream("Assets." + name);
-            if (exact != null)
-                return exact;
+            foreach (var asm in new[] { typeof(BrandAssets).Assembly, Assembly.GetEntryAssembly() })
+            {
+                if (asm == null)
+                    continue;
+                var exact = asm.GetManifestResourceStream("Assets." + name);
+                if (exact != null)
+                    return exact;
 
-            string? match = Array.Find(
-                asm.GetManifestResourceNames(),
-                n => n.EndsWith("." + name, StringComparison.OrdinalIgnoreCase)
-                  || n.Equals(name, StringComparison.OrdinalIgnoreCase));
-            return match == null ? null : asm.GetManifestResourceStream(match);
+                string? match = Array.Find(
+                    asm.GetManifestResourceNames(),
+                    n => n.EndsWith("." + name, StringComparison.OrdinalIgnoreCase)
+                      || n.Equals(name, StringComparison.OrdinalIgnoreCase));
+                if (match != null)
+                    return asm.GetManifestResourceStream(match);
+            }
+
+            return null;
         }
 
         /// <summary>Read a packaged asset from the assembly when it is not on disk next to the exe.</summary>
         private static Image? LoadEmbedded(string name)
         {
             using var stream = OpenEmbedded(name);
-            if (stream == null)
-                return null;
+            return stream == null ? null : BitmapFromStream(stream);
+        }
 
+        /// <summary>Copy the stream into memory first so GDI+ can decode single-file resource streams.</summary>
+        private static Image? BitmapFromStream(Stream stream)
+        {
             try
             {
-                using var img = Image.FromStream(stream);
+                using var ms = new MemoryStream();
+                stream.CopyTo(ms);
+                ms.Position = 0;
+                using var img = Image.FromStream(ms);
                 return new Bitmap(img);
             }
             catch

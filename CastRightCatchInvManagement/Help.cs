@@ -92,7 +92,7 @@ namespace CastRightCatchInvManagement
 
             AddSection(stack, "Sales", "Sales",
                 "Sales lists sold product rows.",
-                "New Sale opens Create Sales Order: one customer PO with as many product lines as you need, like New Purchase. Saving writes the sales rows and a sales-order PDF. Right-click Show PDF to open that same sales-order PDF. SO # is written onto the sale when that order is saved.",
+                "New Sale opens Create Sales Order: one customer PO with as many product lines as you need, like New Purchase. Saving writes the sales rows and a sales-order PDF. Right-click Show PDF to redraw that same sales-order PDF and open it. SO # is written onto the sale when that order is saved.",
                 "Right-click Add to Invoice, or Shift+click a row, to add every line on that customer PO to Create Invoice. If Create Invoice already has a different sale, it is cleared and replaced.",
                 "Shift+click a row to add those lines without leaving Sales.",
                 "Middle-click a row to work with a sales order. If that sale already has an SO # and a PDF, the PDF opens. If not, Create Sales Order fills from that PO.");
@@ -101,7 +101,7 @@ namespace CastRightCatchInvManagement
                 "Create Sales Order is one customer PO with as many product lines as you need, like New Purchase. Type a customer code or name to fill the header. Type an item code on a line to fill description and country of origin. Each product is its own line. Cases fills volume from pack size × cases; you can then edit volume if the pounds are different. Lot # is the purchase PO for that item and suggests POs that already have that item. If the pounds on a line are more than that lot has left, that line keeps the remaining weight and the leftover cases move to a new line so you can pick another lot. Customer PO is stored on the sale as Invoice #. Payment Term is a due date: the customer’s Terms (days to pay) added to the order date. Terms of 21 on November 4 is November 25. That date is stored as Due Date on the sale and printed on the sales-order PDF. Freight Co is a vendor list for tracking and is stored on the sale; it is not printed on the PDF. Freight / LB appears when Freight Co is filled. Other / LB stays on the header. Those per-lb extras apply to every line amount. Freight Terms is Collect or Delivered and is stored on the sale and printed on the sales-order PDF. Double-click a Sales row to see customer info, the order header, and every item on that sales order.",
                 "Billing Address fills from the customer. Check Shipping is different from billing to show Ship To and pick a warehouse or type an address. Save shipping address on customer is optional and adds that Ship To as a warehouse when you save.",
                 "Enter a customer PO, or middle-click a sale, to add every matching line.",
-                "Save Sales Order writes the sales rows and a sales-order PDF, stores them in the database, writes the SO # onto those sales lines, and opens that PDF. Show PDF on Sales opens the same file.");
+                "Save Sales Order writes the sales rows and a sales-order PDF, stores them in the database, writes the SO # onto those sales lines, and opens that PDF. Show PDF on Sales redraws that same sales-order PDF and opens it.");
 
             AddSection(stack, "Invoices", "Invoices",
                 "Invoices lists invoices you issued to customers and invoices vendors issued to you (Type Issued or Received).",

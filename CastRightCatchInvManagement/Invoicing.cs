@@ -32,6 +32,8 @@ namespace CastRightCatchInvManagement
         private void ShowInvoicePdf(Dictionary<string, string> record)
         {
             string invoiceNumber = DataFiles.GetRecord(record, "Invoice #").Trim();
+            // Received vendor invoices keep the stored file. Issued CRC invoices redraw so the lockup is current.
+            bool refresh = !DataFiles.IsReceivedInvoice(record);
             DataFiles.ShowPdf(
                 DataFiles.PdfKindInvoice,
                 invoiceNumber,
@@ -54,7 +56,8 @@ namespace CastRightCatchInvManagement
 
                         ToastAlert.Success(this, "Invoice " + invoiceNumber + " PDF was created.");
                     });
-                });
+                },
+                refresh: refresh);
         }
     }
 }

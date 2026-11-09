@@ -41,7 +41,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Fill the grid from sales (live only, or archive + live when Old is on).</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.Sales);
 
-        /// <summary>Open the sales-order PDF created on save, or rebuild it from this SO if it is missing.</summary>
+        /// <summary>Redraw the sales-order PDF from this SO so the current letterhead is stored, then open it.</summary>
         private void ShowSalePdf(Dictionary<string, string> record)
         {
             string so = DataFiles.GetRecord(record, "SO #").Trim();
@@ -60,7 +60,8 @@ namespace CastRightCatchInvManagement
                     }
 
                     DataFiles.OpenPdf(path, DataFiles.PdfKindSalesOrder, so);
-                });
+                },
+                refresh: true);
         }
 
         /// <summary>
