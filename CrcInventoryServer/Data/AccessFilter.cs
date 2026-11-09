@@ -32,8 +32,8 @@ internal static class AccessFilter
             // Skip parties/items the user is blocked from seeing.
             if (policy.IsBlocked(row))
                 continue;
-            // Deletes waiting for admin review must not appear in the live table.
-            if (IsWaitingDelete(row))
+            // Purchase/sales waiting-deletes stay off the live table until an administrator reviews them.
+            if (IsTradeTable(table) && IsWaitingDelete(row))
                 continue;
             result.Add(policy.Strip(table, row));
         }
@@ -64,7 +64,7 @@ internal static class AccessFilter
             // Skip parties/items the user is blocked from seeing.
             if (policy.IsBlocked(fields))
                 continue;
-            if (IsWaitingDelete(fields))
+            if (IsTradeTable(table) && IsWaitingDelete(fields))
                 continue;
             result.Add((id, policy.Strip(table, fields)));
         }

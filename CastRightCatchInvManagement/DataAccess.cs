@@ -245,8 +245,8 @@ namespace CastRightCatchInvManagement
                 // Blocked parties and products must not appear in grids or lookups.
                 if (IsRecordBlocked(row))
                     continue;
-                // Purchase/sales deletes wait for admin review and must not appear in the live table.
-                if (DataFiles.IsWaitingDelete(row))
+                // Purchase/sales waiting-deletes stay off the live table until an administrator reviews them.
+                if (IsTradeTable(table) && DataFiles.IsWaitingDelete(row))
                     continue;
                 result.Add(StripHidden(table, row));
             }
@@ -272,7 +272,7 @@ namespace CastRightCatchInvManagement
                 // Blocked parties and products must not appear in grids or lookups.
                 if (IsRecordBlocked(fields))
                     continue;
-                if (DataFiles.IsWaitingDelete(fields))
+                if (IsTradeTable(table) && DataFiles.IsWaitingDelete(fields))
                     continue;
                 result.Add((id, StripHidden(table, fields)));
             }

@@ -262,6 +262,7 @@ namespace CastRightCatchInvManagement
                     "Match Json" TEXT NOT NULL DEFAULT '',
                     "Before Json" TEXT NOT NULL DEFAULT '',
                     "After Json" TEXT NOT NULL DEFAULT '',
+                    "Row Id" TEXT NOT NULL DEFAULT '',
                     "Requested By" TEXT NOT NULL DEFAULT '',
                     "Requested At" TEXT NOT NULL DEFAULT '',
                     "Status" TEXT NOT NULL DEFAULT 'pending',

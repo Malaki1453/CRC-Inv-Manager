@@ -119,7 +119,7 @@ internal static class Schema
                 "Credit #,Date Submitted,Customer Code,Customer,Invoice #,Date Received,Date of Issue,Item Code,Description,Reason,LBS Received,Price / LB,Value,LBS Claimed,Claim Value,Claim %,Contact,Approved,Notes,Record Status",
             // Review-queue rows (not a process table).
             PendingChanges =>
-                "Table,Action,Summary,Match Json,Before Json,After Json,Requested By,Requested At,Status,Reviewed By,Reviewed At",
+                "Table,Action,Summary,Match Json,Before Json,After Json,Row Id,Requested By,Requested At,Status,Reviewed By,Reviewed At",
             // Unknown table names have no headers.
             _ => ""
         };

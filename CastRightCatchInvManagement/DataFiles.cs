@@ -19,6 +19,7 @@ namespace CastRightCatchInvManagement
         public const string Debits = "debits";
         public const string Credits = "credits";
         public const string PendingChanges = "pending_changes";
+        public const string PendingRowIdColumn = "Row Id";
         public const string RecordStatus = "Record Status";
         public const string RecordLive = "Live";
         public const string RecordWaitingAdd = "Waiting for confirmation to add";
@@ -842,7 +843,7 @@ namespace CastRightCatchInvManagement
                     "Credit #,Date Submitted,Customer Code,Customer,Invoice #,Date Received,Date of Issue,Item Code,Description,Reason,LBS Received,Price / LB,Value,LBS Claimed,Claim Value,Claim %,Contact,Approved,Notes,Record Status",
 
                 PendingChanges =>
-                    "Table,Action,Summary,Match Json,Before Json,After Json,Requested By,Requested At,Status,Reviewed By,Reviewed At",
+                    "Table,Action,Summary,Match Json,Before Json,After Json,Row Id,Requested By,Requested At,Status,Reviewed By,Reviewed At",
 
                 _ => ""
             };
@@ -3051,9 +3052,10 @@ namespace CastRightCatchInvManagement
                 // Confirm mode: mark Waiting for delete instead of removing the row.
                 if (gate.Queued)
                 {
+                    var before = new Dictionary<string, string>(map, StringComparer.OrdinalIgnoreCase);
                     map[RecordStatus] = RecordWaitingDelete;
                     SqliteInventory.UpdateById(baseName, id, map);
-                    QueuePending(baseName, "delete", record, record);
+                    QueuePending(baseName, "delete", before, before, id);
                 }
                 // Auto write mode: delete immediately; leaving the row would keep it live.
                 else
@@ -3116,7 +3118,8 @@ namespace CastRightCatchInvManagement
             string baseName,
             string action,
             Dictionary<string, string> after,
-            Dictionary<string, string>? before)
+            Dictionary<string, string>? before,
+            long rowId = 0)
         {
             string name = after.TryGetValue("Name", out var n) ? n :
                 after.TryGetValue("Vendor", out n) ? n :
@@ -3124,6 +3127,7 @@ namespace CastRightCatchInvManagement
                 after.TryGetValue("PO #", out n) ? n :
                 after.TryGetValue("Code", out n) ? n : "";
             string summary = action + " · " + baseName + (name.Length > 0 ? " · " + name : "");
+            SqliteInventory.EnsureColumns(PendingChanges, PendingRowIdColumn);
             SqliteInventory.Insert(PendingChanges, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["Table"] = baseName,
@@ -3132,6 +3136,7 @@ namespace CastRightCatchInvManagement
                 ["Match Json"] = JsonSerializer.Serialize(IdentityOf(baseName, before ?? after)),
                 ["Before Json"] = before == null ? "" : JsonSerializer.Serialize(before),
                 ["After Json"] = action == "delete" ? "" : JsonSerializer.Serialize(after),
+                [PendingRowIdColumn] = rowId > 0 ? rowId.ToString() : "",
                 ["Requested By"] = AppState.CurrentUsername,
                 ["Requested At"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm"),
                 ["Status"] = "pending"
@@ -3209,13 +3214,18 @@ namespace CastRightCatchInvManagement
                 // Pending is a delete: remove the live row now that review accepted it.
                 else if (action.Equals("delete", StringComparison.OrdinalIgnoreCase))
                 {
-                    foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(table))
+                    long rowId = PendingStoredRowId(pending);
+                    bool deleted = rowId > 0 && SqliteInventory.DeleteById(table, rowId);
+                    if (!deleted)
                     {
-                        // This row is not the pending match: do not delete the wrong row.
-                        if (!MatchesPendingTarget(table, match, before, after, map))
-                            continue;
-                        SqliteInventory.DeleteById(table, id);
-                        break;
+                        foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(table))
+                        {
+                            // This row is not the pending match: do not delete the wrong row.
+                            if (!MatchesPendingTarget(table, match, before, after, map))
+                                continue;
+                            SqliteInventory.DeleteById(table, id);
+                            break;
+                        }
                     }
                 }
             }
@@ -3263,17 +3273,7 @@ namespace CastRightCatchInvManagement
                 }
                 // Rejecting a queued delete: clear Waiting for delete so the row stays live.
                 else if (action.Equals("delete", StringComparison.OrdinalIgnoreCase))
-                {
-                    foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(table))
-                    {
-                        // This row is not the pending match: do not restore the wrong row.
-                        if (!MatchesPendingTarget(table, match, before, after, map))
-                            continue;
-                        map[RecordStatus] = RecordLive;
-                        SqliteInventory.UpdateById(table, id, map);
-                        break;
-                    }
-                }
+                    RestoreRejectedDelete(table, pending, match, before, after);
             }
             finally
             {
@@ -3298,6 +3298,44 @@ namespace CastRightCatchInvManagement
             if (before.Count > 0 && MatchesIdentity(IdentityOf(table, before), row))
                 return true;
             return false;
+        }
+
+        /// <summary>SQLite id stored on the pending row so hosted review can restore a hidden waiting-delete.</summary>
+        private static long PendingStoredRowId(Dictionary<string, string> pending)
+        {
+            return long.TryParse(GetRecord(pending, PendingRowIdColumn), out long id) ? id : 0;
+        }
+
+        /// <summary>
+        /// Put a rejected delete back to Live. Hosted reads hide purchase/sales waiting-deletes,
+        /// so fall back to the stored row id, then re-insert Before Json if the row is gone.
+        /// </summary>
+        private static void RestoreRejectedDelete(
+            string table,
+            Dictionary<string, string> pending,
+            Dictionary<string, string> match,
+            Dictionary<string, string> before,
+            Dictionary<string, string> after)
+        {
+            foreach (var (id, map) in SqliteInventory.ReadWithIdsUnrestricted(table))
+            {
+                // This row is not the pending match: do not restore the wrong row.
+                if (!MatchesPendingTarget(table, match, before, after, map))
+                    continue;
+                map[RecordStatus] = RecordLive;
+                SqliteInventory.UpdateById(table, id, map);
+                return;
+            }
+
+            var restored = new Dictionary<string, string>(before, StringComparer.OrdinalIgnoreCase);
+            restored[RecordStatus] = RecordLive;
+            long rowId = PendingStoredRowId(pending);
+            // Hosted table.readIds omitted the waiting-delete row: update that id directly.
+            if (rowId > 0 && restored.Count > 1 && SqliteInventory.UpdateById(table, rowId, restored))
+                return;
+            // Row is gone (already deleted, or an older pending without a stored id): put Before Json back as Live.
+            if (restored.Count > 1)
+                SqliteInventory.Insert(table, restored);
         }
 
         /// <summary>Re-read the pending_changes row so Before/After Json are complete for accept/reject.</summary>
@@ -4544,6 +4582,9 @@ namespace CastRightCatchInvManagement
             // Importing vendors: same schema backfill for vendor extra columns.
             if (baseName == Vendors)
                 EnsureFileColumns(Vendors, "Company", "Phone", "Current Balance", "Notes", "Description", RoutingNumber, AccountNumber);
+            // Importing items: pack size, shelf life, and minimum profit columns on older DBs.
+            if (baseName == ItemCodes)
+                EnsureItemColumns();
 
             SqliteInventory.EnsureCreated();
 
@@ -4554,7 +4595,7 @@ namespace CastRightCatchInvManagement
                 return false;
             }
 
-            bool keyed = baseName == Customers || baseName == Vendors;
+            bool keyed = baseName == Customers || baseName == Vendors || baseName == ItemCodes;
             var existingCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (keyed)
             {
@@ -4589,8 +4630,10 @@ namespace CastRightCatchInvManagement
                     if (baseName == Customers)
                         values["Credit Limit"] = MoneyFormat.Store(GetRecord(values, "Credit Limit"));
                     if (baseName == Vendors)
+                    {
                         values["Amount"] = MoneyFormat.Store(GetRecord(values, "Amount"));
-                    values["Current Balance"] = MoneyFormat.Store(GetRecord(values, "Current Balance"));
+                        values["Current Balance"] = MoneyFormat.Store(GetRecord(values, "Current Balance"));
+                    }
                 }
 
                 batch.Add(values);
