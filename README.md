@@ -12,7 +12,7 @@
 
 ## Server
 
-**[Download server (CrcInventoryServer-linux-x64.zip)](https://github.com/Malaki1453/CRC-Inv-Manager/releases/download/server-0.8.13/CrcInventoryServer-linux-x64.zip)**
+**[Download server (CrcInventoryServer-linux-x64.zip)](https://github.com/Malaki1453/CRC-Inv-Manager/releases/download/server-0.8.14/CrcInventoryServer-linux-x64.zip)**
 
 On the Linux host, after the wrappers are in `/usr/local/bin`:
 
