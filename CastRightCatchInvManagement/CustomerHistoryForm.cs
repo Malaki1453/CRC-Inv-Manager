@@ -23,9 +23,14 @@ namespace CastRightCatchInvManagement
                 form.ShowDialog();
         }
 
+        private readonly Dictionary<string, string> _record;
+        private readonly bool _vendor;
+
         /// <summary>Build identity, notes, and history tabs for this customer or vendor.</summary>
         private CustomerHistoryForm(Dictionary<string, string> customer, bool vendor)
         {
+            _record = new Dictionary<string, string>(customer);
+            _vendor = vendor;
             string name = DataFiles.PartyDocumentName(customer);
             string code = DataFiles.GetRecord(customer, "Code");
             string company = DataFiles.PartyDba(customer);
@@ -116,9 +121,20 @@ namespace CastRightCatchInvManagement
                 using var line = new SolidBrush(Theme.Gold);
                 e.Graphics.FillRectangle(line, 0, 0, footer.Width, 2);
             };
+            var edit = new Button
+            {
+                Text = vendor ? "Edit vendor" : "Edit customer",
+                Size = new Size(140, 34)
+            };
+            Theme.StyleGoldButton(edit);
+            edit.Click += (_, _) => EditParty();
             footer.Controls.Add(close);
+            footer.Controls.Add(edit);
             footer.Resize += (_, _) =>
+            {
                 close.Location = new Point(Math.Max(20, footer.Width - 130), 13);
+                edit.Location = new Point(20, 13);
+            };
 
             var notesBox = new TextBox
             {
@@ -157,6 +173,18 @@ namespace CastRightCatchInvManagement
             Controls.Add(topHost);
             Controls.Add(footer);
             Controls.Add(header);
+        }
+
+        /// <summary>Open New Customer or New Vendor with this row, then close history if the account can edit.</summary>
+        private void EditParty()
+        {
+            string table = _vendor ? DataFiles.Vendors : DataFiles.Customers;
+            if (_vendor)
+                AddVendor.OpenEdit(_record);
+            else
+                AddCustomer.OpenEdit(_record);
+            if (DataAccess.CanMutate(table))
+                Close();
         }
 
         /// <summary>Read-only identity fields: vendor layout is shorter, customer includes address.</summary>
@@ -210,7 +238,7 @@ namespace CastRightCatchInvManagement
                 if (credit.Trim().Length == 0)
                     credit = DataFiles.GetRecord(record, "Amount");
                 PutReadout(grid, 3, 1, "CREDIT LIMIT", MoneyFormat.Display(credit));
-                PutReadout(grid, 0, 2, "CURRENT BALANCE", MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance")));
+                PutReadout(grid, 0, 2, "CURRENT BALANCE", MoneyFormat.Display(DataFiles.CustomerCurrentBalance(record)));
                 PutReadout(grid, 1, 2, "ESTABLISHED", DataFiles.GetRecord(record, "Established"));
                 PutReadout(grid, 0, 3, "BILLING ADDRESS", DataFiles.CustomerBillingAddress(record), colSpan: 2);
                 PutReadout(grid, 2, 3, "WAREHOUSES", DataFiles.CustomerWarehouseDisplay(record), colSpan: 2);

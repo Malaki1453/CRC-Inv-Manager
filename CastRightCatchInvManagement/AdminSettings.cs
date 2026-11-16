@@ -57,7 +57,23 @@ namespace CastRightCatchInvManagement
         private ComboBox _slotLogistics = null!;
         private ComboBox _slotPurchaseFreight = null!;
         private ComboBox _slotSalesFreight = null!;
+        private ComboBox _slotPurchaseWarehouse = null!;
+        private ComboBox _slotSalesWarehouse = null!;
         private TextBox _defaultMinProfit = null!;
+        private TextBox _soPattern = null!;
+        private TextBox _soStart = null!;
+        private Label _soPreview = null!;
+        private TextBox _productPattern = null!;
+        private TextBox _productStart = null!;
+        private Label _productPreview = null!;
+        private CheckBox _reuseNumbers = null!;
+        private bool _syncingNumbering;
+        private TextBox _businessName = null!;
+        private TextBox _companyAddress = null!;
+        private TextBox _companyPhone = null!;
+        private TextBox _companyEmail = null!;
+        private TextBox _paymentTerms = null!;
+        private bool _syncingCompany;
         private bool _loadingVendorLookup;
         private ListBox _productConditions = null!;
 
@@ -88,6 +104,8 @@ namespace CastRightCatchInvManagement
             {
                 LoadBankFeed();
                 LoadSession();
+                LoadCompanyInfo();
+                LoadNumbering();
                 LoadVendorTypes();
                 LoadProductConditions();
                 // Leaving the tab would lose unsaved SMTP edits.
@@ -963,13 +981,17 @@ namespace CastRightCatchInvManagement
                 Height = 40,
                 Font = Theme.Body,
                 ForeColor = Theme.Muted,
-                Text = "Stay signed in, login email (SMTP), vendor types, product conditions, and the live bank feed are administrator-only. They apply to everyone."
+                Text = "Company information, document numbers, stay signed in, login email (SMTP), vendor types, product conditions, and the live bank feed are administrator-only. They apply to everyone."
             };
             var session = new CardPanel { Dock = DockStyle.Top, Height = 168 };
             LayoutSessionCard(session);
+            var company = new CardPanel { Dock = DockStyle.Top, Height = 280 };
+            LayoutCompanyCard(company);
+            var numbering = new CardPanel { Dock = DockStyle.Top, Height = 310 };
+            LayoutNumberingCard(numbering);
             var minProfit = new CardPanel { Dock = DockStyle.Top, Height = 140 };
             LayoutMinProfitCard(minProfit);
-            var types = new CardPanel { Dock = DockStyle.Top, Height = 430 };
+            var types = new CardPanel { Dock = DockStyle.Top, Height = 490 };
             LayoutVendorTypesCard(types);
             var conditions = new CardPanel { Dock = DockStyle.Top, Height = 270 };
             LayoutProductConditionsCard(conditions);
@@ -992,6 +1014,12 @@ namespace CastRightCatchInvManagement
             var spacerMin = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
             host.Controls.Add(minProfit);
             host.Controls.Add(spacerMin);
+            var spacerNumbering = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
+            host.Controls.Add(numbering);
+            host.Controls.Add(spacerNumbering);
+            var spacerCompany = new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Cream };
+            host.Controls.Add(company);
+            host.Controls.Add(spacerCompany);
             host.Controls.Add(session);
             host.Controls.Add(intro);
             return host;
@@ -1248,6 +1276,14 @@ namespace CastRightCatchInvManagement
             _slotSalesFreight = SlotCombo(472, 348);
             _slotPurchaseFreight.SelectedIndexChanged += (_, _) => SaveSlots();
             _slotSalesFreight.SelectedIndexChanged += (_, _) => SaveSlots();
+            var lblSalesWarehouse = new Label { Text = "NEW SALE WAREHOUSE", Location = new Point(248, 384) };
+            var lblPurchaseWarehouse = new Label { Text = "NEW PURCHASE LOCATION", Location = new Point(472, 384) };
+            Theme.StyleFieldLabel(lblSalesWarehouse);
+            Theme.StyleFieldLabel(lblPurchaseWarehouse);
+            _slotSalesWarehouse = SlotCombo(248, 402);
+            _slotPurchaseWarehouse = SlotCombo(472, 402);
+            _slotSalesWarehouse.SelectedIndexChanged += (_, _) => SaveSlots();
+            _slotPurchaseWarehouse.SelectedIndexChanged += (_, _) => SaveSlots();
 
             card.Controls.Add(heading);
             card.Controls.Add(hint);
@@ -1267,6 +1303,10 @@ namespace CastRightCatchInvManagement
             card.Controls.Add(lblSalesFreight);
             card.Controls.Add(_slotPurchaseFreight);
             card.Controls.Add(_slotSalesFreight);
+            card.Controls.Add(lblSalesWarehouse);
+            card.Controls.Add(lblPurchaseWarehouse);
+            card.Controls.Add(_slotSalesWarehouse);
+            card.Controls.Add(_slotPurchaseWarehouse);
             LoadVendorTypes();
         }
 
@@ -1365,6 +1405,8 @@ namespace CastRightCatchInvManagement
             FillSlotCombo(_slotLogistics, VendorTypes.SlotPurchaseLogistics);
             FillSlotCombo(_slotPurchaseFreight, VendorTypes.SlotPurchaseFreight);
             FillSlotCombo(_slotSalesFreight, VendorTypes.SlotSalesFreight);
+            FillSlotCombo(_slotSalesWarehouse, VendorTypes.SlotSalesWarehouse);
+            FillSlotCombo(_slotPurchaseWarehouse, VendorTypes.SlotPurchaseWarehouse);
             _loadingVendorLookup = false;
         }
 
@@ -1440,7 +1482,7 @@ namespace CastRightCatchInvManagement
             filter.Types = target.Types.ToList();
         }
 
-        /// <summary>Persist which filter Forwarder and Logistics use.</summary>
+        /// <summary>Persist which filter each form slot uses.</summary>
         private void SaveSlots()
         {
             // Skip saves while the lists are being refilled.
@@ -1457,6 +1499,10 @@ namespace CastRightCatchInvManagement
                 catalog.Slots[VendorTypes.SlotPurchaseFreight] = purchaseFreight.Id;
             if (_slotSalesFreight.SelectedItem is VendorTypeFilter salesFreight)
                 catalog.Slots[VendorTypes.SlotSalesFreight] = salesFreight.Id;
+            if (_slotSalesWarehouse.SelectedItem is VendorTypeFilter salesWarehouse)
+                catalog.Slots[VendorTypes.SlotSalesWarehouse] = salesWarehouse.Id;
+            if (_slotPurchaseWarehouse.SelectedItem is VendorTypeFilter purchaseWarehouse)
+                catalog.Slots[VendorTypes.SlotPurchaseWarehouse] = purchaseWarehouse.Id;
             VendorTypes.SaveCatalog(catalog);
         }
 
@@ -1684,6 +1730,260 @@ namespace CastRightCatchInvManagement
             SelectChoice(_idleHours, AppState.IdleCloseHours, 5);
             ApplySessionEnabled();
             LoadDefaultMinProfit();
+        }
+
+        /// <summary>Business name, address, phone, email, and payment terms printed on PDFs.</summary>
+        private void LayoutCompanyCard(CardPanel card)
+        {
+            var heading = new Label
+            {
+                Text = "Company information",
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 14),
+                AutoSize = true
+            };
+            var hint = new Label
+            {
+                Text = "Stored on the inventory server so every computer prints the same details on invoices and sales orders.",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 42),
+                Size = new Size(700, 28)
+            };
+            card.Controls.Add(heading);
+            card.Controls.Add(hint);
+
+            var lblName = new Label { Text = "BUSINESS NAME" };
+            Theme.StyleFieldLabel(lblName);
+            _businessName = new TextBox();
+            Theme.StyleField(_businessName);
+            PlaceField(card, lblName, _businessName, 24, 76, 640);
+
+            var lblAddress = new Label { Text = "ADDRESS" };
+            Theme.StyleFieldLabel(lblAddress);
+            _companyAddress = new TextBox();
+            Theme.StyleField(_companyAddress);
+            PlaceField(card, lblAddress, _companyAddress, 24, 124, 640);
+
+            var lblPhone = new Label { Text = "PHONE" };
+            Theme.StyleFieldLabel(lblPhone);
+            _companyPhone = new TextBox();
+            Theme.StyleField(_companyPhone);
+            PlaceField(card, lblPhone, _companyPhone, 24, 172, 240);
+
+            var lblEmail = new Label { Text = "EMAIL" };
+            Theme.StyleFieldLabel(lblEmail);
+            _companyEmail = new TextBox();
+            Theme.StyleField(_companyEmail);
+            PlaceField(card, lblEmail, _companyEmail, 284, 172, 380);
+
+            var lblTerms = new Label { Text = "PAYMENT TERMS" };
+            Theme.StyleFieldLabel(lblTerms);
+            _paymentTerms = new TextBox();
+            Theme.StyleField(_paymentTerms);
+            PlaceField(card, lblTerms, _paymentTerms, 24, 220, 640);
+
+            _businessName.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            _companyAddress.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            _companyEmail.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            _paymentTerms.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+            card.Resize += (_, _) =>
+            {
+                int wide = Math.Max(240, card.Width - 48);
+                _businessName.Width = wide;
+                _companyAddress.Width = wide;
+                _paymentTerms.Width = wide;
+                _companyEmail.Width = Math.Max(160, card.Width - 308);
+            };
+
+            _businessName.Leave += (_, _) => SaveCompanyInfo();
+            _companyAddress.Leave += (_, _) => SaveCompanyInfo();
+            _companyPhone.Leave += (_, _) => SaveCompanyInfo();
+            _companyEmail.Leave += (_, _) => SaveCompanyInfo();
+            _paymentTerms.Leave += (_, _) => SaveCompanyInfo();
+        }
+
+        /// <summary>Copy shared company fields into the Admin card without writing back.</summary>
+        private void LoadCompanyInfo()
+        {
+            if (_businessName == null)
+                return;
+            _syncingCompany = true;
+            try
+            {
+                _businessName.Text = AppState.BusinessName;
+                _companyAddress.Text = AppState.Address;
+                _companyPhone.Text = AppState.Phone;
+                _companyEmail.Text = AppState.CompanyEmail;
+                _paymentTerms.Text = AppState.PaymentTerms;
+            }
+            finally
+            {
+                _syncingCompany = false;
+            }
+        }
+
+        /// <summary>Write company information to the shared database.</summary>
+        private void SaveCompanyInfo()
+        {
+            if (_syncingCompany || _businessName == null)
+                return;
+            AppState.BusinessName = _businessName.Text.Trim();
+            AppState.Address = _companyAddress.Text.Trim();
+            AppState.Phone = _companyPhone.Text.Trim();
+            AppState.CompanyEmail = _companyEmail.Text.Trim();
+            AppState.PaymentTerms = _paymentTerms.Text.Trim();
+            AppLock.SaveSettings();
+        }
+
+        /// <summary>Sales-order and product (purchase PO) patterns stored for every computer.</summary>
+        private void LayoutNumberingCard(CardPanel card)
+        {
+            var heading = new Label
+            {
+                Text = "Document numbers",
+                Font = Theme.SectionTitle,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 14),
+                AutoSize = true
+            };
+            var hint = new Label
+            {
+                Text = "Stored on the inventory server so every computer uses the same patterns. Use # for the running number. yy / yyyy, mm, and dd are today’s date.",
+                Font = Theme.Small,
+                ForeColor = Theme.Muted,
+                Location = new Point(24, 42),
+                Size = new Size(700, 32)
+            };
+            card.Controls.Add(heading);
+            card.Controls.Add(hint);
+
+            var lblSoPattern = new Label { Text = "SALES ORDER PATTERN" };
+            Theme.StyleFieldLabel(lblSoPattern);
+            _soPattern = new TextBox { PlaceholderText = "CRCyy-####" };
+            Theme.StyleField(_soPattern);
+            PlaceField(card, lblSoPattern, _soPattern, 24, 82, 280);
+
+            var lblSoStart = new Label { Text = "START" };
+            Theme.StyleFieldLabel(lblSoStart);
+            _soStart = new TextBox { PlaceholderText = "1" };
+            Theme.StyleField(_soStart);
+            PlaceField(card, lblSoStart, _soStart, 324, 82, 140);
+
+            _soPreview = new Label
+            {
+                AutoSize = true,
+                Font = Theme.BodyBold,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 136)
+            };
+            card.Controls.Add(_soPreview);
+
+            var lblProductPattern = new Label { Text = "PRODUCT NUMBER PATTERN" };
+            Theme.StyleFieldLabel(lblProductPattern);
+            _productPattern = new TextBox { PlaceholderText = "CRCyy-####" };
+            Theme.StyleField(_productPattern);
+            PlaceField(card, lblProductPattern, _productPattern, 24, 164, 280);
+
+            var lblProductStart = new Label { Text = "START" };
+            Theme.StyleFieldLabel(lblProductStart);
+            _productStart = new TextBox { PlaceholderText = "1" };
+            Theme.StyleField(_productStart);
+            PlaceField(card, lblProductStart, _productStart, 324, 164, 140);
+
+            _productPreview = new Label
+            {
+                AutoSize = true,
+                Font = Theme.BodyBold,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 218)
+            };
+            card.Controls.Add(_productPreview);
+
+            _reuseNumbers = new CheckBox
+            {
+                Text = "Reuse missing numbers  (if CRC10 is deleted, the next number can be CRC10 again)",
+                AutoSize = true,
+                Font = Theme.Small,
+                ForeColor = Theme.Navy,
+                Location = new Point(24, 250)
+            };
+            card.Controls.Add(_reuseNumbers);
+
+            _soPattern.Leave += (_, _) => SaveNumbering();
+            _soStart.Leave += (_, _) => SaveNumbering();
+            _productPattern.Leave += (_, _) => SaveNumbering();
+            _productStart.Leave += (_, _) => SaveNumbering();
+            _reuseNumbers.CheckedChanged += (_, _) => SaveNumbering();
+            _soPattern.TextChanged += (_, _) => UpdateNumberingPreviews();
+            _soStart.TextChanged += (_, _) => UpdateNumberingPreviews();
+            _productPattern.TextChanged += (_, _) => UpdateNumberingPreviews();
+            _productStart.TextChanged += (_, _) => UpdateNumberingPreviews();
+        }
+
+        /// <summary>Copy shared numbering into the Admin card without writing back.</summary>
+        private void LoadNumbering()
+        {
+            if (_soPattern == null)
+                return;
+            _syncingNumbering = true;
+            try
+            {
+                _soPattern.Text = AppState.SalesOrderPattern;
+                _soStart.Text = AppState.SalesOrderStart;
+                _productPattern.Text = AppState.ProductNumberPattern;
+                _productStart.Text = AppState.ProductNumberStart;
+                _reuseNumbers.Checked = AppState.ReuseMissingNumbers;
+            }
+            finally
+            {
+                _syncingNumbering = false;
+            }
+            UpdateNumberingPreviews();
+        }
+
+        /// <summary>Write sales-order and product patterns to the shared database.</summary>
+        private void SaveNumbering()
+        {
+            if (_syncingNumbering || _soPattern == null)
+                return;
+            AppState.SalesOrderPattern = _soPattern.Text.Trim();
+            AppState.SalesOrderStart = _soStart.Text.Trim();
+            AppState.ProductNumberPattern = _productPattern.Text.Trim();
+            AppState.ProductNumberStart = _productStart.Text.Trim();
+            AppState.ReuseMissingNumbers = _reuseNumbers.Checked;
+            AppLock.SaveSettings();
+            UpdateNumberingPreviews();
+        }
+
+        /// <summary>Show the next SO # and product number the typed patterns would produce.</summary>
+        private void UpdateNumberingPreviews()
+        {
+            if (_soPreview == null || _productPreview == null)
+                return;
+
+            string savedSoPattern = AppState.SalesOrderPattern;
+            string savedSoStart = AppState.SalesOrderStart;
+            string savedProductPattern = AppState.ProductNumberPattern;
+            string savedProductStart = AppState.ProductNumberStart;
+            AppState.SalesOrderPattern = _soPattern.Text.Trim();
+            AppState.SalesOrderStart = _soStart.Text.Trim();
+            AppState.ProductNumberPattern = _productPattern.Text.Trim();
+            AppState.ProductNumberStart = _productStart.Text.Trim();
+            try
+            {
+                _soPreview.Text = "Next sales order:  " + DataFiles.PreviewSalesOrderNumber();
+                _productPreview.Text = "Next product number:  " + DataFiles.PreviewProductNumber();
+            }
+            finally
+            {
+                AppState.SalesOrderPattern = savedSoPattern;
+                AppState.SalesOrderStart = savedSoStart;
+                AppState.ProductNumberPattern = savedProductPattern;
+                AppState.ProductNumberStart = savedProductStart;
+            }
         }
 
         /// <summary>Default minimum profit / lb for new items and blank item fields.</summary>

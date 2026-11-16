@@ -137,10 +137,12 @@ namespace CastRightCatchInvManagement
                 // Header double-click is not a record.
                 if (e.RowIndex < 0)
                     return;
+                string table = grid.Tag is ColumnSearch search ? search.FileBaseName ?? "" : "";
                 RecordDetailsForm.ShowRecord(
                     form,
                     titleText,
-                    DataFiles.GridRowToRecord(grid, e.RowIndex));
+                    DataFiles.GridRowToRecord(grid, e.RowIndex),
+                    table);
             };
 
             // Three exclusive rows so search, buttons, and table cannot overlap
@@ -345,13 +347,35 @@ namespace CastRightCatchInvManagement
             };
         }
 
+        /// <summary>Right-click row action. Two-tuples convert without an enabled check.</summary>
+        internal readonly struct RowAction
+        {
+            public readonly string Text;
+            public readonly Action<Dictionary<string, string>> Click;
+            public readonly Func<Dictionary<string, string>, bool>? EnabledFor;
+
+            public RowAction(
+                string text,
+                Action<Dictionary<string, string>> click,
+                Func<Dictionary<string, string>, bool>? enabledFor = null)
+            {
+                Text = text;
+                Click = click;
+                EnabledFor = enabledFor;
+            }
+
+            public static implicit operator RowAction(
+                (string Text, Action<Dictionary<string, string>> Click) pair) =>
+                new(pair.Text, pair.Click);
+        }
+
         /// <summary>Copy the clicked cell, then the rest of the row actions.</summary>
         public static void BindRowEdit(
             DataGridView grid,
             Action<Dictionary<string, string>>? onEdit,
             string detailsTitle = "Details",
             string editText = "Edit Product",
-            params (string Text, Action<Dictionary<string, string>> Click)[] extras)
+            params RowAction[] extras)
         {
             grid.CellMouseClick += (_, e) =>
             {
@@ -389,7 +413,10 @@ namespace CastRightCatchInvManagement
                 foreach (var extra in extras)
                 {
                     var item = extra;
-                    menu.Items.Add(item.Text, null, (_, _) => item.Click(record));
+                    var menuItem = menu.Items.Add(item.Text, null, (_, _) => item.Click(record));
+                    // EnabledFor is set when this action is only valid on some rows (paid invoices grey Receive Payment).
+                    if (item.EnabledFor != null)
+                        menuItem.Enabled = item.EnabledFor(record);
                 }
 
                 // Review-only and denied tables cannot edit live rows; skip Edit when onEdit is null or mutate is denied.
@@ -410,7 +437,7 @@ namespace CastRightCatchInvManagement
                         }
                         else
                         {
-                            // Purchase/sales deletes wait for an administrator; other tables may apply immediately.
+                            // Delete always queues for Review; purchase/sales deletes wait for an administrator.
                             if (MessageBox.Show(
                                     "Delete this row?",
                                     "Delete",

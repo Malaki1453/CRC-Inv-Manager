@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace CastRightCatchInvManagement
 {
     /// <summary>
-    /// Facade over inventory tables: grids, CSV import, PDFs, numbering, and term roll-over.
+    /// Facade over inventory tables: grids, CSV import, PDFs, and numbering.
     /// Table names match SQLite tables. Pages should call this instead of SqliteInventory directly.
     /// </summary>
     public static class DataFiles
@@ -609,6 +609,13 @@ namespace CastRightCatchInvManagement
             return null;
         }
 
+        /// <summary>Write a generated PDF (aging statement and similar) to the viewer temp folder and open it.</summary>
+        public static void OpenGeneratedPdf(byte[] content, string fileName, string title)
+        {
+            string path = WritePdfViewFile("statement", fileName, content);
+            PdfViewForm.ShowDocument(path, title);
+        }
+
         /// <summary>Open a PDF in the in-app viewer, inferring kind and key from the file name when omitted.</summary>
         public static void OpenPdf(string path, string? kind = null, string? key = null)
         {
@@ -775,49 +782,6 @@ namespace CastRightCatchInvManagement
             SqliteInventory.EnsureCreated();
             foreach (var baseName in missingBaseNames)
                 SqliteInventory.EnsureColumns(baseName);
-        }
-
-        /// <summary>
-        /// Archive leftover CSVs, move completed process rows into old_inventory.db,
-        /// and start a new term. Unfinished rows stay live and undated.
-        /// </summary>
-        public static void RollToNextTerm()
-        {
-            if (!HasStore())
-                throw new InvalidOperationException(AppLock.NeedStoreMessage());
-
-            SyncTermStartFromFiles();
-
-            DateTime start = AppState.TermStartDate ?? DateTime.Today;
-            DateTime end = DateTime.Today;
-
-            // Local-SQLite leftover CSVs move into old data next to the database. Hosted builds skip this.
-            if (UsingLocalFolder())
-            {
-                string archiveFolder = Path.Combine(AppState.InventoryFolder!, "old data");
-                Directory.CreateDirectory(archiveFolder);
-
-                foreach (var baseName in All)
-                {
-                    // currentPath is a leftover live CSV about to be moved into old data.
-                    foreach (var currentPath in Directory.GetFiles(AppState.InventoryFolder!, baseName + "_*.csv"))
-                    {
-                        string archivedName = $"{baseName}_{start:yyyy-MM-dd}_{end:yyyy-MM-dd}.csv";
-                        string archivePath = Path.Combine(archiveFolder, Path.GetFileName(currentPath));
-                        // Leftover CSV already sits in old data under that name: File.Move would fail on an existing dest.
-                        if (File.Exists(archivePath))
-                            File.Delete(archivePath);
-                        File.Move(currentPath, archivePath);
-                    }
-                }
-            }
-
-            SqliteInventory.ArchiveCompleted(start);
-            SetViewingOldInventory(false);
-            AppState.TermStartDate = DateTime.Today;
-            AppLock.SaveSettings();
-            SqliteInventory.EnsureCreated();
-            NotifyDataChanged();
         }
 
         /// <summary>Canonical CSV/SQLite column list for a table, used to create schema and validate imports.</summary>
@@ -1279,6 +1243,223 @@ namespace CastRightCatchInvManagement
             return InvoiceOutstanding(invoice) <= 0 && ParseMoney(GetRecord(invoice, "Amount")) > 0;
         }
 
+        /// <summary>True when the user can open Receive Payment and the invoice still has a balance.</summary>
+        public static bool CanReceiveInvoicePayment(Dictionary<string, string> invoice)
+        {
+            if (!CanMatchInvoicePayment(invoice))
+                return false;
+            return InvoiceOutstanding(invoice) > 0;
+        }
+
+        /// <summary>True when the user may tag bank lines onto this invoice (even if it is already paid).</summary>
+        public static bool CanMatchInvoicePayment(Dictionary<string, string> invoice)
+        {
+            if (!HasStore())
+                return false;
+            // Queued adds are not live invoices yet; matching would tag a number that is not on the table.
+            if (IsWaitingAdd(invoice))
+                return false;
+            if (!TableAccess.Can(TableAccess.Invoices) || !TableAccess.Can(TableAccess.Banking))
+                return false;
+            return DataAccess.CanMutate(Invoices) && DataAccess.CanMutate(BankTransactions);
+        }
+
+        /// <summary>
+        /// Bank lines that can be matched to this invoice: already tagged to it, or untagged
+        /// deposits (issued) / withdrawals (received). Lines tagged to another invoice stay out.
+        /// </summary>
+        public static List<Dictionary<string, string>> BankLinesForPayment(
+            Dictionary<string, string> invoice)
+        {
+            BankFeed.EnsureSchema();
+            string number = GetRecord(invoice, "Invoice #").Trim();
+            bool received = IsReceivedInvoice(invoice);
+            var list = new List<Dictionary<string, string>>();
+            foreach (var row in ReadRecords(BankTransactions))
+            {
+                // Queued adds are not live statement lines yet.
+                if (IsWaitingAdd(row))
+                    continue;
+                string tagged = GetRecord(row, "Invoice #").Trim();
+                bool applied = number.Length > 0 &&
+                               tagged.Equals(number, StringComparison.OrdinalIgnoreCase);
+                // Already on this invoice: keep it so the matcher can unmatch.
+                if (applied)
+                {
+                    list.Add(row);
+                    continue;
+                }
+
+                // Tagged to a different invoice: that payment is already spoken for.
+                if (tagged.Length > 0)
+                    continue;
+
+                decimal amount = ParseMoney(GetRecord(row, "Amount"));
+                // Issued invoices collect deposits; received invoices are paid with withdrawals.
+                if (received ? amount >= 0 : amount <= 0)
+                    continue;
+                list.Add(row);
+            }
+
+            return list;
+        }
+
+        /// <summary>
+        /// Tag matched bank lines with this Invoice #, clear lines that were unmatched,
+        /// and write Paid / Outstanding / Status on the invoice. Live write so the balance
+        /// updates immediately (invoice field edits still go to Review).
+        /// </summary>
+        public static MutateResult ApplyInvoicePayment(
+            Dictionary<string, string> invoice,
+            IReadOnlyList<Dictionary<string, string>> matched)
+        {
+            if (!CanMatchInvoicePayment(invoice))
+                return MutateResult.Deny("You cannot match a payment on that invoice.");
+
+            string number = GetRecord(invoice, "Invoice #").Trim();
+            // Invoice # is the identity for tagging bank lines; blank would match every untagged row.
+            if (number.Length == 0)
+                return MutateResult.Deny("This invoice has no invoice number.");
+
+            var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            decimal paid = 0;
+            string method = "";
+            foreach (var row in matched)
+            {
+                string key = BankFeed.RowIdentity(row);
+                // Duplicate identity in the matched list: count the payment once.
+                if (!keep.Add(key))
+                    continue;
+                paid += BankFeed.PaymentAmount(row);
+                if (method.Length == 0)
+                    method = GetRecordAny(row, "Method", "Type").Trim();
+            }
+
+            decimal amount = ParseMoney(GetRecord(invoice, "Amount"));
+            decimal remaining = Math.Max(0m, amount - paid);
+            bool received = IsReceivedInvoice(invoice);
+            string customerCode = PartyCodeFromInvoice(invoice, vendor: false);
+            string vendorCode = PartyCodeFromInvoice(invoice, vendor: true);
+            string so = GetRecord(invoice, "SO #").Trim();
+            string po = GetRecord(invoice, "PO #").Trim();
+
+            UpdateRecords(
+                BankTransactions,
+                row =>
+                {
+                    string tagged = GetRecord(row, "Invoice #").Trim();
+                    string key = BankFeed.RowIdentity(row);
+                    return keep.Contains(key) ||
+                           tagged.Equals(number, StringComparison.OrdinalIgnoreCase);
+                },
+                row =>
+                {
+                    string key = BankFeed.RowIdentity(row);
+                    // This line was matched: stamp the invoice so later loads keep it on the applied side.
+                    if (keep.Contains(key))
+                    {
+                        row["Invoice #"] = number;
+                        // Issued invoices belong to a customer; received invoices belong to a vendor.
+                        if (received)
+                        {
+                            if (vendorCode.Length > 0)
+                                row["Vendor Code"] = vendorCode;
+                            if (po.Length > 0)
+                                row["PO #"] = po;
+                        }
+                        else
+                        {
+                            if (customerCode.Length > 0)
+                                row["Customer Code"] = customerCode;
+                            if (so.Length > 0)
+                                row["SO #"] = so;
+                        }
+
+                        return;
+                    }
+
+                    // Was tagged to this invoice and is no longer matched: free the line for another invoice.
+                    if (GetRecord(row, "Invoice #").Trim()
+                        .Equals(number, StringComparison.OrdinalIgnoreCase))
+                        row["Invoice #"] = "";
+                });
+
+            string status = remaining <= 0 && amount > 0
+                ? "Paid"
+                : GetRecord(invoice, "Status").Trim();
+            // Fully paid invoices that still said Open/blank become Paid; a leftover balance that still said Paid goes back to Open.
+            if (remaining > 0 &&
+                (status.Equals("Paid", StringComparison.OrdinalIgnoreCase) ||
+                 status.Equals("paid", StringComparison.OrdinalIgnoreCase)))
+                status = "Open";
+            if (status.Length == 0)
+                status = remaining <= 0 ? "Paid" : "Open";
+
+            UpdateRecords(
+                Invoices,
+                row => GetRecord(row, "Invoice #").Trim()
+                    .Equals(number, StringComparison.OrdinalIgnoreCase),
+                row =>
+                {
+                    row["Paid"] = MoneyFormat.Plain(paid);
+                    row["Outstanding"] = MoneyFormat.Plain(remaining);
+                    row["Status"] = status;
+                    // A payment was applied: stamp today's date so archive/process-complete can see it.
+                    if (paid > 0)
+                        row["Payment Date"] = CsvIO.Date(DateTime.Today);
+                    else
+                        row["Payment Date"] = "";
+                    if (method.Length > 0)
+                        row["Payment Method"] = method;
+                });
+
+            return MutateResult.Saved();
+        }
+
+        /// <summary>First live invoice whose Invoice # matches, or null.</summary>
+        public static Dictionary<string, string>? FindInvoice(string? number)
+        {
+            string key = (number ?? "").Trim();
+            // Blank number cannot identify an invoice.
+            if (key.Length == 0)
+                return null;
+            foreach (var record in ReadRecords(Invoices))
+            {
+                if (GetRecord(record, "Invoice #").Trim().Equals(key, StringComparison.OrdinalIgnoreCase))
+                    return record;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Customer or vendor Code stored on the invoice, or looked up from the party name
+        /// so bank lines still land on the history tab when the invoice omitted the code.
+        /// </summary>
+        private static string PartyCodeFromInvoice(Dictionary<string, string> invoice, bool vendor)
+        {
+            string code = vendor
+                ? GetRecordAny(invoice, "Vendor Code")
+                : GetRecordAny(invoice, "Customer Code", "Cust ID");
+            if (code.Length > 0)
+                return code.Trim();
+
+            string name = vendor
+                ? GetRecord(invoice, "Vendor")
+                : GetRecordAny(invoice, "Customer", "Customer Name");
+            // No name to match: the invoice cannot point at a customer or vendor row.
+            if (name.Length == 0)
+                return "";
+
+            foreach (var party in ReadRecords(vendor ? Vendors : Customers))
+            {
+                if (PartyNameEquals(party, name))
+                    return GetRecord(party, "Code").Trim();
+            }
+
+            return "";
+        }
+
         /// <summary>Start date plus NET days from terms. Defaults to 15 when terms has no number.</summary>
         public static DateTime DueDateFromTerms(DateTime start, string? terms)
         {
@@ -1518,6 +1699,143 @@ namespace CastRightCatchInvManagement
                 if (!GetRecord(vendor, "Code").Equals(code, StringComparison.OrdinalIgnoreCase))
                     continue;
                 return StoredVendorBalance(vendor);
+            }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Money this customer still owes us: remaining amounts on open invoices we issued.
+        /// Received (vendor) invoices, queued adds, and paid/closed invoices are skipped.
+        /// </summary>
+        public static decimal CustomerCurrentBalance(Dictionary<string, string> customer) =>
+            CustomerCurrentBalance(
+                GetRecord(customer, "Code"),
+                PartyCompanyName(customer),
+                PartyDba(customer),
+                customer);
+
+        /// <summary>Money this customer still owes us, identified by code/company/DBA.</summary>
+        public static decimal CustomerCurrentBalance(
+            string? code,
+            string? name,
+            string? company,
+            Dictionary<string, string>? stored = null)
+        {
+            code = (code ?? "").Trim();
+            name = (name ?? "").Trim();
+            company = (company ?? "").Trim();
+            // No inventory store: fall back to the value already on the customer row.
+            if (!HasStore())
+                return StoredCustomerBalance(stored);
+
+            // Hidden invoice table: open invoices cannot be summed, so keep the stored balance.
+            if (!TableAccess.Can(TableAccess.Invoices))
+                return stored != null ? StoredCustomerBalance(stored) : StoredCustomerBalanceByCode(code);
+
+            decimal owed = 0;
+            foreach (var invoice in ReadRecords(Invoices))
+            {
+                // Queued add, vendor bill, or paid invoice: those are not amounts the customer owes us.
+                if (IsWaitingAdd(invoice) || IsReceivedInvoice(invoice) || InvoiceIsClosed(invoice))
+                    continue;
+                if (!MatchesCustomer(invoice, code, name) &&
+                    (company.Length == 0 ||
+                     company.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+                     !MatchesCustomer(invoice, code, company)))
+                    continue;
+                decimal due = InvoiceOutstanding(invoice);
+                // Nothing left on this invoice: skip so paid rows with a stale Outstanding cell do not add.
+                if (due <= 0)
+                    continue;
+                owed += due;
+            }
+
+            return owed;
+        }
+
+        /// <summary>Current Balance per customer Code from open issued invoices.</summary>
+        public static Dictionary<string, decimal> CustomerCurrentBalances(
+            List<Dictionary<string, string>> customers)
+        {
+            var map = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+            // Empty customer list or no store: callers overlay nothing.
+            if (customers.Count == 0 || !HasStore())
+                return map;
+
+            // Hidden invoice table: keep whatever is already stored on each customer row.
+            if (!TableAccess.Can(TableAccess.Invoices))
+            {
+                foreach (var customer in customers)
+                {
+                    string code = GetRecord(customer, "Code").Trim();
+                    if (code.Length == 0)
+                        continue;
+                    map[code] = StoredCustomerBalance(customer);
+                }
+
+                return map;
+            }
+
+            foreach (var customer in customers)
+            {
+                string code = GetRecord(customer, "Code").Trim();
+                if (code.Length > 0)
+                    map[code] = 0;
+            }
+
+            foreach (var invoice in ReadRecords(Invoices))
+            {
+                // Queued add, vendor bill, or paid invoice: those are not amounts the customer owes us.
+                if (IsWaitingAdd(invoice) || IsReceivedInvoice(invoice) || InvoiceIsClosed(invoice))
+                    continue;
+                decimal due = InvoiceOutstanding(invoice);
+                // Nothing left on this invoice: skip so paid rows with a stale Outstanding cell do not add.
+                if (due <= 0)
+                    continue;
+                foreach (var customer in customers)
+                {
+                    string code = GetRecord(customer, "Code").Trim();
+                    if (code.Length == 0 || !MatchesCustomer(invoice, code, PartyCompanyName(customer)))
+                        continue;
+                    map[code] = map[code] + due;
+                    break;
+                }
+            }
+
+            return map;
+        }
+
+        /// <summary>Write Current Balance from open issued invoices. Credit Limit stays in Amount.</summary>
+        public static void ApplyCustomerCurrentBalance(
+            Dictionary<string, string> fields,
+            string code,
+            string name,
+            string company)
+        {
+            fields["Current Balance"] = MoneyFormat.Plain(CustomerCurrentBalance(code, name, company));
+        }
+
+        /// <summary>Stored Current Balance on the customer row; Amount is Credit Limit and is ignored.</summary>
+        private static decimal StoredCustomerBalance(Dictionary<string, string>? customer)
+        {
+            // No customer row to read: callers treat missing stored balance as 0.
+            if (customer == null)
+                return 0;
+            return ParseMoney(GetRecord(customer, "Current Balance"));
+        }
+
+        /// <summary>Look up the stored customer balance by Code when the row was not passed in.</summary>
+        private static decimal StoredCustomerBalanceByCode(string code)
+        {
+            // Blank code cannot match a customer row.
+            if (code.Length == 0)
+                return 0;
+            foreach (var customer in ReadRecords(Customers))
+            {
+                if (!GetRecord(customer, "Code").Equals(code, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                return StoredCustomerBalance(customer);
             }
 
             return 0;
@@ -2053,12 +2371,19 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Insert or update the invoices table from an editor draft, preserving Paid when already set.</summary>
-        internal static void UpsertInvoiceFromDraft(InvoiceDraft draft, DateTime due)
+        internal static MutateResult UpsertInvoiceFromDraft(
+            InvoiceDraft draft,
+            DateTime due,
+            string? existingNumber = null)
         {
             string number = (draft.InvoiceNumber ?? "").Trim();
             // Draft has no invoice number: the invoices table is keyed by Invoice #; blank would collide.
             if (number.Length == 0)
                 throw new InvalidOperationException("Enter an invoice number.");
+
+            string matchNumber = (existingNumber ?? "").Trim();
+            if (matchNumber.Length == 0)
+                matchNumber = number;
 
             Dictionary<string, string>? existing = null;
             // record is an invoice row (including blocked) checked as the existing row to update.
@@ -2066,7 +2391,7 @@ namespace CastRightCatchInvManagement
             {
                 // This row is not the invoice being upserted: keep scanning for the existing row.
                 if (!GetRecord(record, "Invoice #").Trim()
-                        .Equals(number, StringComparison.OrdinalIgnoreCase))
+                        .Equals(matchNumber, StringComparison.OrdinalIgnoreCase))
                     continue;
                 existing = record;
                 break;
@@ -2115,11 +2440,12 @@ namespace CastRightCatchInvManagement
                 : MutateUpdate(
                     Invoices,
                     row => GetRecord(row, "Invoice #").Trim()
-                        .Equals(number, StringComparison.OrdinalIgnoreCase),
+                        .Equals(matchNumber, StringComparison.OrdinalIgnoreCase),
                     values);
             // Insert/update was denied or failed: surface the access/error message instead of silently skipping.
             if (!result.Ok)
                 throw new InvalidOperationException(result.Message);
+            return result;
         }
 
         /// <summary>Sale+purchase lines that belong on an invoice, matched by invoice # and/or SO #.</summary>
@@ -3043,7 +3369,7 @@ namespace CastRightCatchInvManagement
             return last;
         }
 
-        /// <summary>Delete immediately, or mark Waiting for delete and queue review when Confirm is on.</summary>
+        /// <summary>Mark Waiting for delete and queue Review. Accept removes the row.</summary>
         public static MutateResult MutateDelete(string baseName, Dictionary<string, string> record)
         {
             var gate = GateWrite(baseName, "delete", record, record);
@@ -3113,8 +3439,18 @@ namespace CastRightCatchInvManagement
             if (DataAccess.WriteMode(baseName) == DataWriteMode.View)
                 return MutateResult.Deny("This account can only view that table.");
 
+            // Every delete waits in Review until it is accepted.
+            if (action.Equals("delete", StringComparison.OrdinalIgnoreCase) && !DataAccess.ApplyingReview)
+                return MutateResult.QueuedForReview();
+
             // Customers, vendors, and items wait in Review before they go live.
             if (DataAccess.IsCatalogTable(baseName) && !DataAccess.ApplyingReview)
+                return MutateResult.QueuedForReview();
+
+            // Invoice edits wait in Review; creating an invoice still follows write mode.
+            if (DataAccess.IsInvoiceTable(baseName) &&
+                action.Equals("edit", StringComparison.OrdinalIgnoreCase) &&
+                !DataAccess.ApplyingReview)
                 return MutateResult.QueuedForReview();
 
             // Confirm mode: queue instead of saving live.
@@ -3280,6 +3616,7 @@ namespace CastRightCatchInvManagement
                         row => MatchesPendingTarget(table, match, before, after, row),
                         before,
                         unrestricted: true);
+                    RestoreInvoicePdfAfterReject(table, before, after);
                 }
                 // Rejecting a queued delete: clear Waiting for delete so the row stays live.
                 else if (action.Equals("delete", StringComparison.OrdinalIgnoreCase))
@@ -3291,6 +3628,32 @@ namespace CastRightCatchInvManagement
             }
 
             return MarkPending(pending, "rejected");
+        }
+
+        /// <summary>Put the stored invoice PDF back to Before Json after a rejected edit.</summary>
+        private static void RestoreInvoicePdfAfterReject(
+            string table,
+            Dictionary<string, string> before,
+            Dictionary<string, string> after)
+        {
+            if (!table.Equals(Invoices, StringComparison.OrdinalIgnoreCase))
+                return;
+            string oldNumber = GetRecord(before, "Invoice #").Trim();
+            string newNumber = GetRecord(after, "Invoice #").Trim();
+            if (newNumber.Length > 0 &&
+                !newNumber.Equals(oldNumber, StringComparison.OrdinalIgnoreCase))
+                DeleteStoredPdf(PdfKindInvoice, newNumber);
+            if (!TryInvoiceDraft(before, out var draft) || draft.Lines.Count == 0)
+                return;
+            if (draft.InvoiceNumber.Length == 0)
+                draft.InvoiceNumber = oldNumber;
+            try
+            {
+                InvoiceDocument.Save(draft);
+            }
+            catch
+            {
+            }
         }
 
         /// <summary>True when this live row is the pending add/edit/delete, even if identity columns changed.</summary>
@@ -3459,6 +3822,12 @@ namespace CastRightCatchInvManagement
                 return po.Length > 0 ? "purchase order " + po : "purchase order";
             }
 
+            if (table.Equals(Invoices, StringComparison.OrdinalIgnoreCase))
+            {
+                string invoice = GetRecord(body, "Invoice #").Trim();
+                return invoice.Length > 0 ? "invoice " + invoice : "invoice";
+            }
+
             string name = GetRecordAny(body, "Name", "Code", "Vendor", "Customer");
             return name;
         }
@@ -3500,10 +3869,13 @@ namespace CastRightCatchInvManagement
 
         private static bool SkipPendingDiffField(string key)
         {
-            return key.Equals(RecordStatus, StringComparison.OrdinalIgnoreCase) ||
-                   key.Equals("Notes", StringComparison.OrdinalIgnoreCase) ||
-                   key.Equals("Description", StringComparison.OrdinalIgnoreCase) ||
-                   key.Contains("Json", StringComparison.OrdinalIgnoreCase);
+            if (key.Equals(RecordStatus, StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("Notes", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("Description", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (key.Equals(InvoiceLinesColumn, StringComparison.OrdinalIgnoreCase))
+                return false;
+            return key.Contains("Json", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string DisplayPendingValue(string key, string value)
@@ -3513,6 +3885,8 @@ namespace CastRightCatchInvManagement
                 return "(blank)";
             if (key.Equals(AccountNumber, StringComparison.OrdinalIgnoreCase))
                 return MaskAccountNumber(value);
+            if (key.Equals(InvoiceLinesColumn, StringComparison.OrdinalIgnoreCase))
+                value = FormatInvoiceLines(value);
             if (value.Length > 40)
                 return value[..37] + "…";
             return value;
@@ -3630,6 +4004,8 @@ namespace CastRightCatchInvManagement
                 return "Vendor";
             if (table.Equals(ItemCodes, StringComparison.OrdinalIgnoreCase))
                 return "Inventory";
+            if (table.Equals(Invoices, StringComparison.OrdinalIgnoreCase))
+                return "Invoice";
             return table.Replace('_', ' ');
         }
 
@@ -3670,13 +4046,24 @@ namespace CastRightCatchInvManagement
                     FreightCompanyColumn, FreightTermsColumn, PaymentTermColumn,
                     "Overhead / LB", "Freight / LB", "Other / LB"
                 };
+            if (table.Equals(Invoices, StringComparison.OrdinalIgnoreCase))
+                return new[]
+                {
+                    "Invoice #", InvoiceTypeColumn, "SO #", "PO #", "Customer Code", "Customer",
+                    "Vendor Code", "Vendor", "Invoice Date", "Ship Date", "Due Date", "Amount",
+                    "Terms", "Sold To", "Ship To", "Discount", "Freight", FreightCompanyColumn,
+                    "Tax", InvoiceTaxModeColumn, InvoiceLinesColumn
+                };
             return Array.Empty<string>();
         }
 
         private static bool SkipReviewDetailField(string key)
         {
-            return key.Equals(RecordStatus, StringComparison.OrdinalIgnoreCase) ||
-                   key.Contains("Json", StringComparison.OrdinalIgnoreCase);
+            if (key.Equals(RecordStatus, StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (key.Equals(InvoiceLinesColumn, StringComparison.OrdinalIgnoreCase))
+                return false;
+            return key.Contains("Json", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string FormatReviewValue(string table, string key, string value)
@@ -3692,7 +4079,29 @@ namespace CastRightCatchInvManagement
             if (table.Equals(ItemCodes, StringComparison.OrdinalIgnoreCase) &&
                 key.Equals(ItemConditionColumn, StringComparison.OrdinalIgnoreCase))
                 return NormalizeItemCondition(value);
+            if (key.Equals(InvoiceLinesColumn, StringComparison.OrdinalIgnoreCase))
+                return FormatInvoiceLines(value);
             return value;
+        }
+
+        /// <summary>Product lines from Lines Json, for Review old → new without dumping the snapshot.</summary>
+        private static string FormatInvoiceLines(string json)
+        {
+            var draft = InvoiceDraft.FromJson(json);
+            if (draft == null || draft.Lines.Count == 0)
+                return "";
+            return string.Join("; ", draft.Lines.Select(line =>
+            {
+                string item = line.ProductId.Trim();
+                if (item.Length == 0)
+                    item = line.Description.Trim();
+                string qty = line.Weight.Trim();
+                if (qty.Length == 0)
+                    qty = line.Ordered.Trim();
+                if (item.Length == 0)
+                    return qty;
+                return qty.Length > 0 ? item + " " + qty : item;
+            }));
         }
 
         /// <summary>Line heading for one pending member on a multi-line Review popup.</summary>
@@ -4323,7 +4732,7 @@ namespace CastRightCatchInvManagement
             status.Equals(RecordWaitingEdit, StringComparison.OrdinalIgnoreCase) ||
             status.Equals(RecordWaitingDelete, StringComparison.OrdinalIgnoreCase);
 
-        /// <summary>Raised after inserts, updates, deletes, imports, and term roll-over so open pages reload.</summary>
+        /// <summary>Raised after inserts, updates, deletes, and imports so open pages reload.</summary>
         public static event Action? DataChanged;
 
         /// <summary>Tell open pages the inventory tables changed.</summary>
@@ -4394,9 +4803,13 @@ namespace CastRightCatchInvManagement
             data.Order = ColumnDisplayOrder(baseName, data.Header);
             var records = VisibleRecords(baseName);
             Dictionary<string, decimal>? vendorOwed = null;
+            Dictionary<string, decimal>? customerOwed = null;
             // Vendor grid: Current Balance is lots plus bank payments, not the stored Amount cell.
             if (baseName == Vendors)
                 vendorOwed = VendorCurrentBalances(records);
+            // Customer grid: Current Balance is open issued invoices, scanned on this worker.
+            else if (baseName == Customers)
+                customerOwed = CustomerCurrentBalances(records);
             data.Rows = new List<(object[] Cells, string Status)>(records.Count);
             // record is one visible table row turned into grid cells plus Record Status.
             foreach (var record in records)
@@ -4404,10 +4817,11 @@ namespace CastRightCatchInvManagement
                 token.ThrowIfCancellationRequested();
                 var cells = new object[data.Order.Length];
                 string? owedText = null;
-                if (vendorOwed != null)
+                var owedMap = vendorOwed ?? customerOwed;
+                if (owedMap != null)
                 {
                     string code = GetRecord(record, "Code").Trim();
-                    if (code.Length > 0 && vendorOwed.TryGetValue(code, out decimal owed))
+                    if (code.Length > 0 && owedMap.TryGetValue(code, out decimal owed))
                         owedText = MoneyFormat.Plain(owed);
                 }
 
@@ -4416,10 +4830,14 @@ namespace CastRightCatchInvManagement
                     int c = data.Order[n];
                     string header = data.Header[c];
                     string value = GetRecord(record, header);
-                    // Overlay computed payable onto Current Balance and the legacy Amount column.
+                    // Overlay computed receivable/payable onto Current Balance.
                     if (owedText != null &&
-                        (header.Equals("Current Balance", StringComparison.OrdinalIgnoreCase) ||
-                         header.Equals("Amount", StringComparison.OrdinalIgnoreCase)))
+                        header.Equals("Current Balance", StringComparison.OrdinalIgnoreCase))
+                        value = owedText;
+                    // Vendor Amount is the same payable; customer Amount is Credit Limit and stays.
+                    if (owedText != null &&
+                        vendorOwed != null &&
+                        header.Equals("Amount", StringComparison.OrdinalIgnoreCase))
                         value = owedText;
                     // Older customer files stored the credit amount in Amount.
                     if (baseName == Customers &&

@@ -198,6 +198,8 @@ namespace CastRightCatchInvManagement
                 _extra.PlaceholderText = "0.00";
                 _address.PlaceholderText = "Street, city, state, ZIP";
                 _shipping.PlaceholderText = "Street, city, state, ZIP";
+                _balance.PlaceholderText = "From open invoices";
+                Theme.StyleComputedField(_balance);
             }
 
             _code.PlaceholderText = vendor ? "V-1001" : "C-1001";
@@ -205,12 +207,10 @@ namespace CastRightCatchInvManagement
             _company.PlaceholderText = "DBA";
             _phone.PlaceholderText = "(253) 000-0000";
             _terms.PlaceholderText = "NET 15";
-            _balance.PlaceholderText = _vendor ? "From lots and bank" : "0.00";
+            if (_vendor)
+                _balance.PlaceholderText = "From lots and bank";
             if (!_vendor)
-            {
-                MoneyFormat.BindInput(_balance);
                 MoneyFormat.BindInput(_extra);
-            }
             identity.Dock = DockStyle.Top;
 
             var banking = Section("Banking", 108, 2, out var bankGrid);
@@ -263,7 +263,7 @@ namespace CastRightCatchInvManagement
                     if (credit.Trim().Length == 0)
                         credit = DataFiles.GetRecord(record, "Amount");
                     _extra.Text = MoneyFormat.Display(credit);
-                    _balance.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance"));
+                    LoadCustomerBalance(record);
                     _contact.Text = DataFiles.GetRecord(record, "Contact Name");
                     _email.Text = DataFiles.GetRecord(record, "Email");
                     _address.Text = DataFiles.CustomerBillingAddress(record);
@@ -278,7 +278,7 @@ namespace CastRightCatchInvManagement
                 _storedAccount = DataFiles.DigitsOnly(DataFiles.GetRecord(record, DataFiles.AccountNumber));
                 _account.Text = DataFiles.MaskAccountNumber(_storedAccount);
             }
-            else if (vendor)
+            else
             {
                 _balance.Text = MoneyFormat.Display(0m);
             }
@@ -325,6 +325,42 @@ namespace CastRightCatchInvManagement
             _shippingHost.Visible = on;
             identity.Height = on ? 500 : 420;
             topHost.Height = identity.Height + banking.Height + 28;
+        }
+
+        /// <summary>Fill current balance from open invoices on a worker so the dialog stays responsive.</summary>
+        private void LoadCustomerBalance(Dictionary<string, string> record)
+        {
+            _balance.Text = "";
+            var snapshot = new Dictionary<string, string>(record, StringComparer.OrdinalIgnoreCase);
+            Task.Run(() =>
+            {
+                decimal owed = DataFiles.CustomerCurrentBalance(snapshot);
+                void Apply()
+                {
+                    if (IsDisposed)
+                        return;
+                    _balance.Text = MoneyFormat.Display(owed);
+                }
+
+                if (IsHandleCreated)
+                {
+                    BeginInvoke(Apply);
+                    return;
+                }
+
+                EventHandler? once = null;
+                once = (_, _) =>
+                {
+                    HandleCreated -= once;
+                    Apply();
+                };
+                HandleCreated += once;
+                if (IsHandleCreated)
+                {
+                    HandleCreated -= once;
+                    Apply();
+                }
+            });
         }
 
         /// <summary>Header subtitle from company, name, and code as they type.</summary>
@@ -409,7 +445,6 @@ namespace CastRightCatchInvManagement
             else
             {
                 fields["Credit Limit"] = MoneyFormat.Store(_extra.Text);
-                fields["Current Balance"] = MoneyFormat.Store(_balance.Text);
                 fields["Contact Name"] = _contact.Text.Trim();
                 fields["Email"] = _email.Text.Trim();
                 string billing = _address.Text.Trim();
@@ -419,6 +454,7 @@ namespace CastRightCatchInvManagement
                 fields["Address"] = billing;
                 fields[DataFiles.ShippingAddressColumn] = shipping;
                 fields["Established"] = _established.Text.Trim();
+                DataFiles.ApplyCustomerCurrentBalance(fields, code, name, _company.Text.Trim());
             }
 
             // Mutate can throw if the database is locked.
@@ -497,7 +533,7 @@ namespace CastRightCatchInvManagement
             TextBox notes)
         {
             string code = record == null ? "" : DataFiles.GetRecord(record, "Code");
-            string name = record == null ? "" : DataFiles.PartyDocumentName(record);
+            string name = record == null ? "" : DataFiles.PartyCompanyName(record);
             string company = record == null ? "" : DataFiles.PartyDba(record);
 
             var card = new CardPanel
@@ -540,7 +576,24 @@ namespace CastRightCatchInvManagement
             linesPage.Controls.Add(lines);
 
             var bank = MakeHistoryGrid();
-            BankFeed.FillPartyGrid(bank, vendor, code, name, company);
+            BankFeed.EnsurePartyColumns(bank, vendor);
+            bank.CellDoubleClick += (_, e) =>
+            {
+                // Header or placeholder rows are not a statement to open.
+                if (e.RowIndex < 0 || e.RowIndex >= bank.Rows.Count)
+                    return;
+                if (bank.Rows[e.RowIndex].Tag is not Dictionary<string, string> row)
+                    return;
+                string invoiceNumber = DataFiles.GetRecord(row, "Invoice #").Trim();
+                // No invoice tag: this line is only a bank memo, not a payment match.
+                if (invoiceNumber.Length == 0)
+                    return;
+                var invoice = DataFiles.FindInvoice(invoiceNumber);
+                if (invoice == null)
+                    return;
+                RecordDetailsForm.ShowRecord(bank.FindForm(), "Invoice", invoice, DataFiles.Invoices);
+            };
+            LoadPartyBankGrid(bank, vendor, code, name, company);
             var bankPage = new TabPage("Bank transactions")
             {
                 BackColor = Theme.Paper,
@@ -580,6 +633,45 @@ namespace CastRightCatchInvManagement
                 using var gold = new SolidBrush(Theme.Gold);
                 e.Graphics.FillRectangle(gold, bounds.X, bounds.Bottom - 3, bounds.Width, 3);
             }
+        }
+
+        /// <summary>Fill the bank-transactions tab on a worker so opening history stays responsive.</summary>
+        private static void LoadPartyBankGrid(
+            DataGridView grid,
+            bool vendor,
+            string code,
+            string name,
+            string company)
+        {
+            Theme.FadeGrid(grid, true);
+            Task.Run(() =>
+            {
+                List<Dictionary<string, string>> rows;
+                try
+                {
+                    rows = vendor
+                        ? BankFeed.TransactionsForVendor(code, name, company)
+                        : BankFeed.TransactionsForCustomer(code, name, company);
+                }
+                catch
+                {
+                    rows = new List<Dictionary<string, string>>();
+                }
+
+                void Apply()
+                {
+                    if (grid.IsDisposed)
+                        return;
+                    BankFeed.EnsurePartyColumns(grid, vendor);
+                    BankFeed.FillStatementRows(grid, rows, vendor, "No bank transactions yet");
+                    Theme.FadeGrid(grid, false);
+                }
+
+                if (grid.IsHandleCreated)
+                    grid.BeginInvoke(Apply);
+                else
+                    grid.HandleCreated += (_, _) => Apply();
+            });
         }
 
         /// <summary>Read-only grid used for sales, purchases, or bank lines.</summary>

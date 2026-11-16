@@ -205,6 +205,13 @@ namespace CastRightCatchInvManagement
                    table.Equals(DataFiles.ItemCodes, StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>Invoice edits always queue for Review. Creating an invoice still follows write mode.</summary>
+        public static bool IsInvoiceTable(string table)
+        {
+            table = TableKey(table);
+            return table.Equals(TableAccess.Invoices, StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>True when the user may read this table, including pending_changes for reviewers.</summary>
         public static bool CanReadTable(string table)
         {

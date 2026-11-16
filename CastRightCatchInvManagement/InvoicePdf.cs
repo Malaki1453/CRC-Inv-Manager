@@ -978,7 +978,7 @@ namespace CastRightCatchInvManagement
 
             try
             {
-                SaveInvoicePdf(draft);
+                SaveInvoicePdf(draft, writeRow: false);
                 ResetDraft();
                 done(null);
             }
@@ -1836,10 +1836,12 @@ namespace CastRightCatchInvManagement
 
             try
             {
-                SaveInvoicePdf(draft);
-                ToastAlert.Success(this, _editing
-                    ? $"Invoice {draft.InvoiceNumber} was updated."
-                    : $"Invoice {draft.InvoiceNumber} was saved.");
+                var result = SaveInvoicePdf(draft);
+                ToastAlert.Success(this, result.Queued
+                    ? result.Message
+                    : _editing
+                        ? $"Invoice {draft.InvoiceNumber} was updated."
+                        : $"Invoice {draft.InvoiceNumber} was saved.");
                 if (stayOnForm)
                 {
                     ResetDraft(received: _received, keepParty: true);
@@ -1857,11 +1859,12 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Write the PDF, invoices row, and optional source PDF, then open the viewer.</summary>
-        private void SaveInvoicePdf(InvoiceDraft draft)
+        private MutateResult SaveInvoicePdf(InvoiceDraft draft, bool writeRow = true)
         {
             DateTime due = DataFiles.DueDateFromTerms(draft.ShipDate, draft.Terms);
             // Incoming vendor invoices also create/update a CRC purchase PO PDF.
-            if (draft.Received &&
+            if (writeRow &&
+                draft.Received &&
                 draft.Lines.Any(line => line.ProductId.Length > 0 || line.Description.Length > 0))
                 SaveIncomingPurchase(draft);
 
@@ -1869,9 +1872,11 @@ namespace CastRightCatchInvManagement
             if (_editing)
                 DataFiles.RetireStoredPdf(DataFiles.PdfKindInvoice, _editInvoice, draft.InvoiceNumber);
             string pdfPath = InvoiceDocument.Save(draft);
-            DataFiles.UpsertInvoiceFromDraft(draft, due);
+            MutateResult result = MutateResult.Saved();
+            if (writeRow)
+                result = DataFiles.UpsertInvoiceFromDraft(draft, due, _editing ? _editInvoice : null);
             // Keep the original imported PDF beside the generated invoice PDF.
-            if (_importPdf is { Length: > 0 })
+            if (writeRow && _importPdf is { Length: > 0 })
             {
                 DataFiles.SaveStoredPdf(
                     DataFiles.PdfKindInvoiceSource,
@@ -1881,6 +1886,7 @@ namespace CastRightCatchInvManagement
             }
 
             DataFiles.OpenPdf(pdfPath, DataFiles.PdfKindInvoice, draft.InvoiceNumber);
+            return result;
         }
 
         /// <summary>

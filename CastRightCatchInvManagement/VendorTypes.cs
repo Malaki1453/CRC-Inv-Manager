@@ -35,14 +35,18 @@ namespace CastRightCatchInvManagement
         public const string SlotPurchaseForwarder = "purchase.forwarder";
         public const string SlotPurchaseLogistics = "purchase.logistics";
         public const string SlotPurchaseFreight = "purchase.freight";
+        public const string SlotPurchaseWarehouse = "purchase.warehouse";
         public const string SlotSalesFreight = "sales.freight";
+        public const string SlotSalesWarehouse = "sales.warehouse";
 
         public static readonly (string Slot, string Label, string DefaultFilterId)[] Slots =
         {
             (SlotPurchaseForwarder, "New Purchase · Forwarder", "forwarder"),
             (SlotPurchaseLogistics, "New Purchase · Logistics", "logistics"),
             (SlotPurchaseFreight, "New Purchase · Freight Co", "freight"),
-            (SlotSalesFreight, "New Sale · Freight Co", "freight")
+            (SlotPurchaseWarehouse, "New Purchase · Location", "warehouse"),
+            (SlotSalesFreight, "New Sale · Freight Co", "freight"),
+            (SlotSalesWarehouse, "New Sale · Warehouse", "warehouse")
         };
 
         private static readonly JsonSerializerOptions JsonOptions = new()
@@ -158,9 +162,12 @@ namespace CastRightCatchInvManagement
                     loaded.Types.Any(name => name.Equals(LegacyFreight, StringComparison.OrdinalIgnoreCase));
                 migrateFreight |= loaded.Filters.Any(filter =>
                     filter.Types.Any(type => type.Equals(LegacyFreight, StringComparison.OrdinalIgnoreCase)));
+                bool migrateWarehouse =
+                    !loaded.Filters.Any(filter =>
+                        filter.Id.Equals("warehouse", StringComparison.OrdinalIgnoreCase));
                 var catalog = Normalize(loaded);
                 // Persist the rename so Freight Co does not come back on the next load.
-                if (migrateFreight)
+                if (migrateFreight || migrateWarehouse)
                     Write(catalog);
                 return catalog;
             }
@@ -181,7 +188,8 @@ namespace CastRightCatchInvManagement
                 {
                     new VendorTypeFilter { Id = "forwarder", Name = Forwarder, Types = { Forwarder } },
                     new VendorTypeFilter { Id = "logistics", Name = Logistics, Types = { Logistics } },
-                    new VendorTypeFilter { Id = "freight", Name = LegacyFreight, Types = { Freight } }
+                    new VendorTypeFilter { Id = "freight", Name = LegacyFreight, Types = { Freight } },
+                    new VendorTypeFilter { Id = "warehouse", Name = "Warehouse" }
                 }
             };
             foreach (var slot in Slots)
@@ -218,6 +226,8 @@ namespace CastRightCatchInvManagement
                 catalog.Filters.Add(new VendorTypeFilter { Id = "logistics", Name = Logistics, Types = { Logistics } });
             if (!catalog.Filters.Any(filter => filter.Id.Equals("freight", StringComparison.OrdinalIgnoreCase)))
                 catalog.Filters.Add(new VendorTypeFilter { Id = "freight", Name = LegacyFreight, Types = { Freight } });
+            if (!catalog.Filters.Any(filter => filter.Id.Equals("warehouse", StringComparison.OrdinalIgnoreCase)))
+                catalog.Filters.Add(new VendorTypeFilter { Id = "warehouse", Name = "Warehouse" });
 
             foreach (var filter in catalog.Filters)
             {

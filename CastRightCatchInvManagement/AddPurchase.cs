@@ -44,12 +44,14 @@ namespace CastRightCatchInvManagement
         private List<LookupSuggest.Hit> _forwarderHits = new();
         private List<LookupSuggest.Hit> _logisticsHits = new();
         private List<LookupSuggest.Hit> _freightHits = new();
+        private List<LookupSuggest.Hit> _warehouseHits = new();
         private List<LookupSuggest.Hit> _itemHits = new();
         private LookupSuggest? _vendorCodeSuggest;
         private LookupSuggest? _vendorNameSuggest;
         private LookupSuggest? _forwarderSuggest;
         private LookupSuggest? _logisticsSuggest;
         private LookupSuggest? _freightSuggest;
+        private LookupSuggest? _warehouseSuggest;
         private bool _editing;
         private string _editPo = "";
 
@@ -197,6 +199,7 @@ namespace CastRightCatchInvManagement
             _forwarderSuggest = new LookupSuggest(_forwarder, () => _forwarderHits, codeFirst: false, hit => ApplyNameHit(_forwarder, hit));
             _logisticsSuggest = new LookupSuggest(_logistics, () => _logisticsHits, codeFirst: false, hit => ApplyNameHit(_logistics, hit));
             _freightSuggest = new LookupSuggest(_freightCo, () => _freightHits, codeFirst: false, hit => ApplyNameHit(_freightCo, hit));
+            _warehouseSuggest = new LookupSuggest(_location, () => _warehouseHits, codeFirst: false, hit => ApplyNameHit(_location, hit));
             foreach (var box in new[] { _overhead, _freight, _forwarderLb, _other })
             {
                 MoneyFormat.BindInput(box);
@@ -370,13 +373,14 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
-        /// <summary>Reload vendor, forwarder, logistics, freight, and item lookups from live tables.</summary>
+        /// <summary>Reload vendor, forwarder, logistics, freight, warehouse, and item lookups from live tables.</summary>
         private void LoadLookups()
         {
             _vendorHits.Clear();
             _forwarderHits.Clear();
             _logisticsHits.Clear();
             _freightHits.Clear();
+            _warehouseHits.Clear();
             foreach (var record in DataFiles.VisibleRecords(DataFiles.Vendors))
             {
                 string code = DataFiles.GetRecord(record, "Code").Trim();
@@ -398,6 +402,8 @@ namespace CastRightCatchInvManagement
                     _logisticsHits.Add(hit);
                 if (VendorTypes.MatchesSlot(record, VendorTypes.SlotPurchaseFreight))
                     _freightHits.Add(hit);
+                if (VendorTypes.MatchesSlot(record, VendorTypes.SlotPurchaseWarehouse))
+                    _warehouseHits.Add(hit);
             }
 
             _itemHits.Clear();

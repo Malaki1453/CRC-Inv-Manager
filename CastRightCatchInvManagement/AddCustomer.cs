@@ -25,6 +25,8 @@ namespace CastRightCatchInvManagement
         private Label _waitNote = null!;
         private string _originalCode = "";
         private string _storedAccount = "";
+        /// <summary>Drops a late invoice-scan result when the page has moved to another customer.</summary>
+        private int _balanceLoad;
         /// <summary>True when OpenNew should wipe the last draft on the next show.</summary>
         internal static bool StartNew { get; set; }
         /// <summary>Customer row queued by OpenEdit until this page is shown.</summary>
@@ -177,9 +179,9 @@ namespace CastRightCatchInvManagement
             _email.PlaceholderText = "name@company.com";
             _terms.PlaceholderText = "NET 15";
             _credit.PlaceholderText = "0.00";
-            _balance.PlaceholderText = "0.00";
+            _balance.PlaceholderText = "From open invoices";
             MoneyFormat.BindInput(_credit);
-            MoneyFormat.BindInput(_balance);
+            Theme.StyleComputedField(_balance);
             return card;
         }
 
@@ -258,7 +260,8 @@ namespace CastRightCatchInvManagement
             _email.Text = "";
             _terms.Text = "";
             _credit.Text = "";
-            _balance.Text = "";
+            Interlocked.Increment(ref _balanceLoad);
+            _balance.Text = MoneyFormat.Display(0m);
             _established.Text = "";
             _billing.Text = "";
             _warehouses.Set(Array.Empty<DataFiles.CustomerWarehouse>());
@@ -287,7 +290,7 @@ namespace CastRightCatchInvManagement
             if (credit.Trim().Length == 0)
                 credit = DataFiles.GetRecord(record, "Amount");
             _credit.Text = MoneyFormat.Display(credit);
-            _balance.Text = MoneyFormat.Display(DataFiles.GetRecord(record, "Current Balance"));
+            LoadComputedBalance(record);
             _established.Text = DataFiles.GetRecord(record, "Established");
             _billing.Text = DataFiles.CustomerBillingAddress(record);
             _warehouses.Set(DataFiles.CustomerWarehouses(record));
@@ -295,6 +298,44 @@ namespace CastRightCatchInvManagement
             _routing.Text = DataFiles.GetRecord(record, DataFiles.RoutingNumber);
             _storedAccount = DataFiles.DigitsOnly(DataFiles.GetRecord(record, DataFiles.AccountNumber));
             _account.Text = DataFiles.MaskAccountNumber(_storedAccount);
+        }
+
+        /// <summary>Fill current balance from open invoices on a worker so the page stays responsive.</summary>
+        private void LoadComputedBalance(Dictionary<string, string> record)
+        {
+            int gen = Interlocked.Increment(ref _balanceLoad);
+            _balance.Text = "";
+            var snapshot = new Dictionary<string, string>(record, StringComparer.OrdinalIgnoreCase);
+            Task.Run(() =>
+            {
+                decimal owed = DataFiles.CustomerCurrentBalance(snapshot);
+                void Apply()
+                {
+                    // Page closed or another customer loaded while invoices were scanning.
+                    if (IsDisposed || gen != _balanceLoad)
+                        return;
+                    _balance.Text = MoneyFormat.Display(owed);
+                }
+
+                if (IsHandleCreated)
+                {
+                    BeginInvoke(Apply);
+                    return;
+                }
+
+                EventHandler? once = null;
+                once = (_, _) =>
+                {
+                    HandleCreated -= once;
+                    Apply();
+                };
+                HandleCreated += once;
+                if (IsHandleCreated)
+                {
+                    HandleCreated -= once;
+                    Apply();
+                }
+            });
         }
 
         /// <summary>Gold bar when this record is still waiting in Review.</summary>
@@ -352,7 +393,6 @@ namespace CastRightCatchInvManagement
                 ["Email"] = _email.Text.Trim(),
                 ["Terms"] = _terms.Text.Trim(),
                 ["Credit Limit"] = MoneyFormat.Store(_credit.Text),
-                ["Current Balance"] = MoneyFormat.Store(_balance.Text),
                 ["Established"] = _established.Text.Trim(),
                 ["Address"] = billing,
                 [DataFiles.ShippingAddressColumn] = shipping,
@@ -361,6 +401,7 @@ namespace CastRightCatchInvManagement
                 [DataFiles.RoutingNumber] = DataFiles.DigitsOnly(_routing.Text),
                 [DataFiles.AccountNumber] = DataFiles.ResolveAccountNumber(_account.Text, _storedAccount)
             };
+            DataFiles.ApplyCustomerCurrentBalance(fields, code, name, _company.Text.Trim());
 
             try
             {

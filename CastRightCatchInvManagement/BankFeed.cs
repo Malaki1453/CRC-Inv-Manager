@@ -37,6 +37,25 @@ namespace CastRightCatchInvManagement
             SqliteInventory.EnsureColumns(DataFiles.BankTransactions, ExtraColumns);
         }
 
+        /// <summary>Stable id for a stored bank line: External Id plus account, else date+amount+description.</summary>
+        public static string RowIdentity(Dictionary<string, string> row)
+        {
+            string account = DataFiles.GetRecord(row, "Account").Trim();
+            string ext = DataFiles.GetRecord(row, "External Id").Trim();
+            // FITID is unique per account when the bank provided one.
+            if (ext.Length > 0)
+                return "id|" + account + "|" + ext;
+
+            return "row|" + account + "|" +
+                   DataFiles.GetRecord(row, "Date").Trim() + "|" +
+                   DataFiles.GetRecord(row, "Amount").Trim() + "|" +
+                   DataFiles.GetRecordAny(row, "Description", "Notes").Trim();
+        }
+
+        /// <summary>Absolute dollars on a bank line, used as a payment amount.</summary>
+        public static decimal PaymentAmount(Dictionary<string, string> row) =>
+            Math.Abs(DataFiles.ParseMoney(DataFiles.GetRecord(row, "Amount")));
+
         /// <summary>Parse OFX/QFX or a bank CSV. Returns an error if the file cannot be read.</summary>
         public static bool TryParseFile(string path, out List<Parsed> rows, out string error)
         {
@@ -197,6 +216,36 @@ namespace CastRightCatchInvManagement
             return FilterRows(vendor: true, code, name, company, poKeys, null);
         }
 
+        /// <summary>Bank lines whose Invoice # is this invoice (payments matched in Receive Payment).</summary>
+        public static List<Dictionary<string, string>> TransactionsForInvoice(string? invoiceNumber)
+        {
+            EnsureSchema();
+            string number = (invoiceNumber ?? "").Trim();
+            var list = new List<Dictionary<string, string>>();
+            // Blank invoice number cannot match a tagged bank line.
+            if (number.Length == 0)
+                return list;
+
+            foreach (var row in DataFiles.ReadRecords(DataFiles.BankTransactions))
+            {
+                // Queued adds are not live statement lines yet.
+                if (DataFiles.IsWaitingAdd(row))
+                    continue;
+                if (!DataFiles.GetRecord(row, "Invoice #").Trim()
+                    .Equals(number, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                list.Add(row);
+            }
+
+            list.Sort((a, b) =>
+            {
+                DateTime.TryParse(DataFiles.GetRecord(a, "Date"), out var da);
+                DateTime.TryParse(DataFiles.GetRecord(b, "Date"), out var db);
+                return db.CompareTo(da);
+            });
+            return list;
+        }
+
         /// <summary>Fill a read-only grid of bank lines for a customer or vendor form.</summary>
         public static void FillPartyGrid(
             DataGridView grid,
@@ -205,34 +254,103 @@ namespace CastRightCatchInvManagement
             string name,
             string company)
         {
-            grid.Columns.Clear();
-            grid.Rows.Clear();
+            EnsurePartyColumns(grid, vendor);
+            var rows = vendor
+                ? TransactionsForVendor(code, name, company)
+                : TransactionsForCustomer(code, name, company);
+            PaintStatementRows(grid, rows, vendor, empty: "No bank transactions yet");
+        }
+
+        /// <summary>Fill a read-only grid of statement lines tagged to one invoice.</summary>
+        public static void FillInvoiceGrid(DataGridView grid, string invoiceNumber)
+        {
+            EnsureInvoiceColumns(grid);
+            PaintStatementRows(
+                grid,
+                TransactionsForInvoice(invoiceNumber),
+                vendor: false,
+                empty: "No bank statements linked. Receive Payment to match statements.");
+        }
+
+        /// <summary>Date, amount, account, type, invoice/PO, memo columns for a party history grid.</summary>
+        public static void EnsurePartyColumns(DataGridView grid, bool vendor)
+        {
+            if (grid.Columns.Count > 0)
+                return;
             grid.Columns.Add("Date", "Date");
             grid.Columns.Add("Amount", "Amount");
             grid.Columns.Add("Account", "Account");
             grid.Columns.Add("Type", "Type");
             grid.Columns.Add(vendor ? "PO #" : "Invoice #", vendor ? "PO #" : "Invoice #");
             grid.Columns.Add("Description", "Description");
+        }
 
-            var rows = vendor
-                ? TransactionsForVendor(code, name, company)
-                : TransactionsForCustomer(code, name, company);
+        /// <summary>Date, amount, account, type, memo columns for invoice details.</summary>
+        public static void EnsureInvoiceColumns(DataGridView grid)
+        {
+            if (grid.Columns.Count > 0)
+                return;
+            grid.Columns.Add("Date", "Date");
+            grid.Columns.Add("Amount", "Amount");
+            grid.Columns.Add("Account", "Account");
+            grid.Columns.Add("Type", "Type");
+            grid.Columns.Add("Memo", "Memo");
+        }
+
+        /// <summary>Paint already-loaded statement rows onto a party or invoice grid.</summary>
+        public static void FillStatementRows(
+            DataGridView grid,
+            List<Dictionary<string, string>> rows,
+            bool vendor,
+            string empty)
+        {
+            PaintStatementRows(grid, rows, vendor, empty);
+        }
+
+        /// <summary>Paint statement rows, keeping a placeholder so the grid is not a blank hole.</summary>
+        private static void PaintStatementRows(
+            DataGridView grid,
+            List<Dictionary<string, string>> rows,
+            bool vendor,
+            string empty)
+        {
+            grid.Rows.Clear();
             foreach (var row in rows)
             {
-                grid.Rows.Add(
-                    DataFiles.GetRecord(row, "Date"),
-                    DataFiles.GetRecord(row, "Amount"),
-                    DataFiles.GetRecord(row, "Account"),
-                    DataFiles.GetRecordAny(row, "Type", "Method"),
-                    vendor
-                        ? DataFiles.GetRecordAny(row, "PO #", "Reference")
-                        : DataFiles.GetRecordAny(row, "Invoice #", "SO #"),
-                    DataFiles.GetRecordAny(row, "Description", "Notes"));
+                int i;
+                if (grid.Columns.Contains("Memo"))
+                {
+                    i = grid.Rows.Add(
+                        DataFiles.GetRecord(row, "Date"),
+                        DataFiles.GetRecord(row, "Amount"),
+                        DataFiles.GetRecord(row, "Account"),
+                        DataFiles.GetRecordAny(row, "Type", "Method"),
+                        DataFiles.GetRecordAny(row, "Description", "Notes", "Reference"));
+                }
+                else
+                {
+                    i = grid.Rows.Add(
+                        DataFiles.GetRecord(row, "Date"),
+                        DataFiles.GetRecord(row, "Amount"),
+                        DataFiles.GetRecord(row, "Account"),
+                        DataFiles.GetRecordAny(row, "Type", "Method"),
+                        vendor
+                            ? DataFiles.GetRecordAny(row, "PO #", "Reference")
+                            : DataFiles.GetRecordAny(row, "Invoice #", "SO #"),
+                        DataFiles.GetRecordAny(row, "Description", "Notes"));
+                }
+
+                grid.Rows[i].Tag = row;
             }
 
-            // Keep a placeholder so the history grid is not a blank hole.
             if (grid.Rows.Count == 0)
-                grid.Rows.Add("No bank transactions yet", "", "", "", "", "");
+            {
+                var cells = new object[Math.Max(1, grid.Columns.Count)];
+                cells[0] = empty;
+                for (int n = 1; n < cells.Length; n++)
+                    cells[n] = "";
+                grid.Rows.Add(cells);
+            }
         }
 
         /// <summary>External Id and date+amount+description keys already stored for each account.</summary>
@@ -319,7 +437,18 @@ namespace CastRightCatchInvManagement
                 // Invoice or SO already stored on the bank line for this customer.
                 if ((invoice.Length > 0 && primaryKeys.Contains(invoice)) ||
                     (so.Length > 0 && soKeys != null && soKeys.Contains(so)))
+                {
                     list.Add(row);
+                    continue;
+                }
+
+                // Invoice # is tagged but was missing from the key set (name-only invoice): still attach it.
+                if (invoice.Length > 0)
+                {
+                    var linked = DataFiles.FindInvoice(invoice);
+                    if (linked != null && DataFiles.MatchesCustomer(linked, code, name))
+                        list.Add(row);
+                }
             }
 
             return list;

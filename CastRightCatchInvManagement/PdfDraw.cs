@@ -241,64 +241,76 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Build a one-page PDF 1.4 file with fonts, images, and optional opacity.</summary>
-        public byte[] ToPdf()
+        public byte[] ToPdf() => Combine(new[] { this });
+
+        /// <summary>Join one or more drawn pages into a single PDF 1.4 file. Fonts are shared; images stay per page.</summary>
+        public static byte[] Combine(IReadOnlyList<PdfDraw> pages)
         {
-            string content = ToStream();
-            var body = Encoding.ASCII.GetBytes(content);
-            var objects = new List<byte[]>();
-            int fontEnd = 8;
-            int gsStart = fontEnd + 1;
-            int imgStart = gsStart + _gs.Count;
+            if (pages == null || pages.Count == 0)
+                throw new ArgumentOutOfRangeException(nameof(pages));
 
-            var xObject = new StringBuilder();
-            var gsRes = new StringBuilder();
-            for (int i = 0; i < _gs.Count; i++)
+            int n = pages.Count;
+            var contents = new byte[n][];
+            var imageSets = new List<XImage>[n];
+            var gsSets = new List<(string Name, float Opacity)>[n];
+            for (int i = 0; i < n; i++)
             {
-                // Space-separate ExtGState names in the resource dictionary.
-                if (gsRes.Length > 0)
-                    gsRes.Append(' ');
-                gsRes.Append('/').Append(_gs[i].Name).Append(' ').Append(gsStart + i).Append(" 0 R");
+                contents[i] = Encoding.ASCII.GetBytes(pages[i].ToStream());
+                imageSets[i] = pages[i]._images;
+                gsSets[i] = pages[i]._gs;
             }
 
-            int obj = imgStart;
-            foreach (var image in _images)
+            int firstPage = 3;
+            int firstContent = 3 + n;
+            int firstFont = 3 + 2 * n;
+            int cursor = firstFont + 4;
+            var gsStart = new int[n];
+            var imgObj = new int[n][];
+            var maskObj = new int[n][];
+            for (int i = 0; i < n; i++)
             {
-                // Space-separate image XObject names.
-                if (xObject.Length > 0)
-                    xObject.Append(' ');
-                xObject.Append('/').Append(image.Name).Append(' ').Append(obj).Append(" 0 R");
-                obj += image.Data.Alpha == null ? 1 : 2;
+                gsStart[i] = cursor;
+                cursor += gsSets[i].Count;
+                imgObj[i] = new int[imageSets[i].Count];
+                maskObj[i] = new int[imageSets[i].Count];
+                for (int j = 0; j < imageSets[i].Count; j++)
+                {
+                    imgObj[i][j] = cursor++;
+                    maskObj[i][j] = imageSets[i][j].Data.Alpha == null ? 0 : cursor++;
+                }
             }
 
-            var pageDict = new StringBuilder();
-            pageDict.Append("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << ");
-            pageDict.Append("/Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R /F4 8 0 R >> ");
-            // Omit empty resource dictionaries so Acrobat stays happy.
-            if (xObject.Length > 0)
-                pageDict.Append("/XObject << ").Append(xObject).Append(" >> ");
-            // Omit empty ExtGState so Acrobat stays happy when there are no watermarks.
-            if (gsRes.Length > 0)
-                pageDict.Append("/ExtGState << ").Append(gsRes).Append(" >> ");
-            pageDict.Append(">> >>");
+            var kids = new StringBuilder();
+            for (int i = 0; i < n; i++)
+            {
+                if (i > 0)
+                    kids.Append(' ');
+                kids.Append(firstPage + i).Append(" 0 R");
+            }
 
-            objects.Add(Obj("<< /Type /Catalog /Pages 2 0 R >>"));
-            objects.Add(Obj("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"));
-            objects.Add(Obj(pageDict.ToString()));
-            objects.Add(Stream(body));
+            var objects = new List<byte[]>
+            {
+                Obj("<< /Type /Catalog /Pages 2 0 R >>"),
+                Obj($"<< /Type /Pages /Kids [{kids}] /Count {n} >>")
+            };
+            for (int i = 0; i < n; i++)
+                objects.Add(Obj(PageDict(firstContent + i, firstFont, gsSets[i], gsStart[i], imageSets[i], imgObj[i])));
+            for (int i = 0; i < n; i++)
+                objects.Add(Stream(contents[i]));
             objects.Add(Obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"));
             objects.Add(Obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"));
             objects.Add(Obj("<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>"));
             objects.Add(Obj("<< /Type /Font /Subtype /Type1 /BaseFont /Times-Italic >>"));
-            foreach (var gs in _gs)
-                objects.Add(Obj($"<< /Type /ExtGState /ca {F(gs.Opacity)} /CA {F(gs.Opacity)} >>"));
-            foreach (var image in _images)
+            for (int i = 0; i < n; i++)
             {
-                int self = objects.Count + 1;
-                int mask = image.Data.Alpha == null ? 0 : self + 1;
-                objects.Add(ImageObj(image.Data, mask));
-                // Soft mask object follows the RGB image when the PNG had transparency.
-                if (image.Data.Alpha != null)
-                    objects.Add(MaskObj(image.Data));
+                foreach (var gs in gsSets[i])
+                    objects.Add(Obj($"<< /Type /ExtGState /ca {F(gs.Opacity)} /CA {F(gs.Opacity)} >>"));
+                for (int j = 0; j < imageSets[i].Count; j++)
+                {
+                    objects.Add(ImageObj(imageSets[i][j].Data, maskObj[i][j]));
+                    if (imageSets[i][j].Data.Alpha != null)
+                        objects.Add(MaskObj(imageSets[i][j].Data));
+                }
             }
 
             using var ms = new MemoryStream();
@@ -322,6 +334,44 @@ namespace CastRightCatchInvManagement
 
             Write($"trailer << /Size {objects.Count + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF");
             return ms.ToArray();
+        }
+
+        /// <summary>Page dictionary with shared fonts and this page's images and opacity states.</summary>
+        private static string PageDict(
+            int contentObj,
+            int firstFont,
+            List<(string Name, float Opacity)> gs,
+            int gsStart,
+            List<XImage> images,
+            int[] imageObjs)
+        {
+            var gsRes = new StringBuilder();
+            for (int i = 0; i < gs.Count; i++)
+            {
+                if (gsRes.Length > 0)
+                    gsRes.Append(' ');
+                gsRes.Append('/').Append(gs[i].Name).Append(' ').Append(gsStart + i).Append(" 0 R");
+            }
+
+            var xObject = new StringBuilder();
+            for (int i = 0; i < images.Count; i++)
+            {
+                if (xObject.Length > 0)
+                    xObject.Append(' ');
+                xObject.Append('/').Append(images[i].Name).Append(' ').Append(imageObjs[i]).Append(" 0 R");
+            }
+
+            var pageDict = new StringBuilder();
+            pageDict.Append("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ");
+            pageDict.Append(contentObj).Append(" 0 R /Resources << ");
+            pageDict.Append("/Font << /F1 ").Append(firstFont).Append(" 0 R /F2 ").Append(firstFont + 1);
+            pageDict.Append(" 0 R /F3 ").Append(firstFont + 2).Append(" 0 R /F4 ").Append(firstFont + 3).Append(" 0 R >> ");
+            if (xObject.Length > 0)
+                pageDict.Append("/XObject << ").Append(xObject).Append(" >> ");
+            if (gsRes.Length > 0)
+                pageDict.Append("/ExtGState << ").Append(gsRes).Append(" >> ");
+            pageDict.Append(">> >>");
+            return pageDict.ToString();
         }
 
         /// <summary>Emit r g b (0–1) for the next fill or stroke operator.</summary>

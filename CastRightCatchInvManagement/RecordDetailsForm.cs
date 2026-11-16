@@ -12,9 +12,14 @@ namespace CastRightCatchInvManagement
         private DataGridView? _lotsGrid;
         private WaitSpinner? _lotsSpinner;
         private CancellationTokenSource? _lotsLoad;
+        private DataGridView? _statementsGrid;
+        private CancellationTokenSource? _statementsLoad;
         private string _itemCode = "";
         private string _itemDescription = "";
         private bool _itemFrozen;
+        private readonly Dictionary<string, string> _sourceRecord;
+        private readonly string _heading;
+        private readonly string? _table;
         /// <summary>
         /// Lot totals by normalized PO. Each snap is purchased/sold/vendor plus SO # : lbs.
         /// The dictionary key is the normalized PO # (or "(no lot)" when PO is blank).
@@ -79,9 +84,13 @@ namespace CastRightCatchInvManagement
         private RecordDetailsForm(string title, Dictionary<string, string> record, string? table, bool includeHidden = false)
         {
             string heading = string.IsNullOrWhiteSpace(title) ? "Details" : title;
+            _heading = heading;
+            _table = table;
+            _sourceRecord = new Dictionary<string, string>(record);
             bool purchase = IsPurchase(title, table);
             bool sale = IsSale(title, table);
             bool item = IsItem(title, table);
+            bool invoice = IsInvoice(title, table);
             if (item)
             {
                 _itemCode = DataFiles.GetRecord(record, "Code").Trim();
@@ -114,7 +123,7 @@ namespace CastRightCatchInvManagement
             ShowInTaskbar = item;
             AutoScaleMode = AutoScaleMode.Font;
             AutoScaleDimensions = new SizeF(7F, 15F);
-            ClientSize = purchase || sale || item ? new Size(980, 720) : new Size(640, 640);
+            ClientSize = purchase || sale || item || invoice ? new Size(980, 720) : new Size(640, 640);
             MinimumSize = new Size(480, 400);
             BackColor = Theme.Cream;
             Font = Theme.Body;
@@ -128,6 +137,7 @@ namespace CastRightCatchInvManagement
                 purchase ? "Purchase order  ·  " + lines.Count + " item" + (lines.Count == 1 ? "" : "s")
                 : sale ? "Sales order  ·  " + lines.Count + " item" + (lines.Count == 1 ? "" : "s")
                 : item ? "Lots"
+                : invoice ? "Invoice  ·  linked bank statements"
                 : heading + " details");
 
             var footer = Footer();
@@ -135,7 +145,9 @@ namespace CastRightCatchInvManagement
                 ? BuildOrderBody(purchase, first, lines, record)
                 : item
                     ? BuildItemLotsTable(record)
-                    : BuildFieldBody(heading, record);
+                    : invoice
+                        ? BuildInvoiceBody(record)
+                        : BuildFieldBody(heading, record);
 
             Controls.Add(body);
             Controls.Add(footer);
@@ -147,6 +159,10 @@ namespace CastRightCatchInvManagement
                 // Start after the empty grid is on screen so the spinner can paint.
                 Shown += (_, _) => StartLotsLoad();
             }
+
+            // Invoice details load tagged bank lines after the window is on screen.
+            if (invoice)
+                Shown += (_, _) => StartStatementsLoad();
         }
 
         /// <summary>Sales-order lines by SO # when present, otherwise by customer PO.</summary>
@@ -162,6 +178,7 @@ namespace CastRightCatchInvManagement
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _lotsLoad?.Cancel();
+            _statementsLoad?.Cancel();
             base.OnFormClosing(e);
         }
 
@@ -170,7 +187,10 @@ namespace CastRightCatchInvManagement
         {
             // disposing is true for managed cleanup; skip when the finalizer is running.
             if (disposing)
+            {
                 _lotsLoad?.Dispose();
+                _statementsLoad?.Dispose();
+            }
             base.Dispose(disposing);
         }
 
@@ -1082,6 +1102,92 @@ namespace CastRightCatchInvManagement
             return bar;
         }
 
+        /// <summary>Invoice fields on top, bank statements matched in Receive Payment below.</summary>
+        private Control BuildInvoiceBody(Dictionary<string, string> record)
+        {
+            var split = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Theme.Cream,
+                Padding = new Padding(20, 12, 20, 8)
+            };
+
+            _statementsGrid = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                AllowUserToOrderColumns = false,
+                MultiSelect = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect
+            };
+            Theme.StyleGrid(_statementsGrid);
+            BankFeed.EnsureInvoiceColumns(_statementsGrid);
+            var statementsCard = new CardPanel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(1)
+            };
+            statementsCard.Controls.Add(_statementsGrid);
+            statementsCard.Controls.Add(SectionBar("BANK STATEMENTS"));
+
+            var fields = OrderedFields("Invoice", record);
+            int rows = Math.Max(1, (fields.Count + 2) / 3);
+            var fieldsCard = LabeledFieldsCard(
+                "INVOICE",
+                fields,
+                "Invoice",
+                3,
+                28 + 16 + rows * 40);
+
+            split.Controls.Add(statementsCard);
+            split.Controls.Add(fieldsCard);
+            return split;
+        }
+
+        /// <summary>Read tagged bank lines on a worker so opening an invoice stays responsive.</summary>
+        private void StartStatementsLoad()
+        {
+            if (_statementsGrid == null)
+                return;
+            _statementsLoad?.Cancel();
+            _statementsLoad = new CancellationTokenSource();
+            var token = _statementsLoad.Token;
+            string number = DataFiles.GetRecord(_sourceRecord, "Invoice #").Trim();
+            Theme.FadeGrid(_statementsGrid, true);
+            Task.Run(() =>
+            {
+                List<Dictionary<string, string>> rows;
+                try
+                {
+                    token.ThrowIfCancellationRequested();
+                    rows = BankFeed.TransactionsForInvoice(number);
+                }
+                catch
+                {
+                    rows = new List<Dictionary<string, string>>();
+                }
+
+                void Apply()
+                {
+                    if (IsDisposed || _statementsGrid == null || _statementsGrid.IsDisposed)
+                        return;
+                    BankFeed.FillStatementRows(
+                        _statementsGrid,
+                        rows,
+                        vendor: false,
+                        "No bank statements linked. Receive Payment to match statements.");
+                    Theme.FadeGrid(_statementsGrid, false);
+                }
+
+                if (IsHandleCreated)
+                    BeginInvoke(Apply);
+                else
+                    HandleCreated += (_, _) => Apply();
+            }, token);
+        }
+
         /// <summary>Scrollable two-column field list for invoices and other non-order rows.</summary>
         private Control BuildFieldBody(string title, Dictionary<string, string> record)
         {
@@ -1284,26 +1390,29 @@ namespace CastRightCatchInvManagement
                     "Email", "Current Balance"
                 };
 
-            string vendorBalance = "";
-            if (purchase)
-            {
-                string vendorCode = DataFiles.GetRecord(party, "Code").Trim();
-                if (vendorCode.Length == 0)
-                    vendorCode = code;
-                string vendorName = DataFiles.PartyCompanyName(party);
-                if (vendorName.Length == 0)
-                    vendorName = name;
-                vendorBalance = MoneyFormat.Display(DataFiles.VendorCurrentBalance(
-                    vendorCode,
-                    vendorName,
+            string partyCode = DataFiles.GetRecord(party, "Code").Trim();
+            if (partyCode.Length == 0)
+                partyCode = code;
+            string partyName = DataFiles.PartyCompanyName(party);
+            if (partyName.Length == 0)
+                partyName = name;
+            var storedParty = party.Count > 0 ? party : null;
+            string partyBalance = purchase
+                ? MoneyFormat.Display(DataFiles.VendorCurrentBalance(
+                    partyCode,
+                    partyName,
                     DataFiles.PartyDba(party),
-                    party.Count > 0 ? party : null));
-            }
+                    storedParty))
+                : MoneyFormat.Display(DataFiles.CustomerCurrentBalance(
+                    partyCode,
+                    partyName,
+                    DataFiles.PartyDba(party),
+                    storedParty));
             var list = new List<KeyValuePair<string, string>>();
             foreach (var key in keys)
             {
-                string value = key.Equals("Current Balance", StringComparison.OrdinalIgnoreCase) && purchase
-                    ? vendorBalance
+                string value = key.Equals("Current Balance", StringComparison.OrdinalIgnoreCase)
+                    ? partyBalance
                     : DataFiles.GetRecord(party, key);
                 // Party table may be missing; fall back to the order row for code, name, and terms.
                 if (value.Length == 0)
@@ -1454,7 +1563,7 @@ namespace CastRightCatchInvManagement
             return header;
         }
 
-        /// <summary>Close button docked at the bottom of the popup.</summary>
+        /// <summary>Close button docked at the bottom of the popup; editable records also have Edit.</summary>
         private Panel Footer()
         {
             var close = new Button
@@ -1480,9 +1589,109 @@ namespace CastRightCatchInvManagement
                 e.Graphics.FillRectangle(line, 0, 0, footer.Width, 2);
             };
             footer.Controls.Add(close);
+
+            Button? edit = null;
+            string? editText = EditCaption();
+            if (editText != null)
+            {
+                edit = new Button
+                {
+                    Text = editText,
+                    Size = new Size(150, 34)
+                };
+                Theme.StyleGoldButton(edit);
+                edit.Click += (_, _) => EditSource();
+                footer.Controls.Add(edit);
+            }
+
+            Button? receive = null;
+            if (IsInvoice(_heading, _table))
+            {
+                receive = new Button
+                {
+                    Text = "Receive Payment",
+                    Size = new Size(150, 34)
+                };
+                Theme.StyleGoldButton(receive);
+                receive.Enabled = DataFiles.CanReceiveInvoicePayment(_sourceRecord);
+                receive.Click += (_, _) =>
+                {
+                    // Payment was saved: close details so the grid shows the new remaining / greyed button.
+                    if (ReceivePaymentForm.ShowFor(this, _sourceRecord))
+                        Close();
+                };
+                footer.Controls.Add(receive);
+            }
+
             footer.Resize += (_, _) =>
+            {
                 close.Location = new Point(Math.Max(20, footer.Width - 130), 13);
+                int x = 20;
+                if (edit != null)
+                {
+                    edit.Location = new Point(x, 13);
+                    x = edit.Right + 12;
+                }
+
+                if (receive != null)
+                    receive.Location = new Point(x, 13);
+            };
             return footer;
+        }
+
+        /// <summary>Footer label for the matching edit page, or null when this row has no editor.</summary>
+        private string? EditCaption()
+        {
+            if (IsPurchase(_heading, _table))
+                return "Edit purchase";
+            if (IsSale(_heading, _table))
+                return "Edit sales order";
+            if (IsItem(_heading, _table))
+                return "Edit item";
+            if (IsInvoice(_heading, _table))
+                return "Edit invoice";
+            return null;
+        }
+
+        /// <summary>Table used for mutate checks on the Edit button.</summary>
+        private string? EditTable()
+        {
+            if (IsPurchase(_heading, _table))
+                return DataFiles.PurchaseSales;
+            if (IsSale(_heading, _table))
+                return DataFiles.Sales;
+            if (IsItem(_heading, _table))
+                return DataFiles.ItemCodes;
+            if (IsInvoice(_heading, _table))
+                return DataFiles.Invoices;
+            return null;
+        }
+
+        /// <summary>Open the matching edit page and close this details window.</summary>
+        private void EditSource()
+        {
+            string? table = EditTable();
+            if (table != null && !DataAccess.CanMutate(table))
+            {
+                LaunchEdit();
+                return;
+            }
+
+            LaunchEdit();
+            Close();
+        }
+
+        /// <summary>Hand this row to New Purchase, Create Sales Order, New Item, or Create Invoice.</summary>
+        private void LaunchEdit()
+        {
+            if (IsPurchase(_heading, _table))
+                global::CastRightCatchInvManagement.AddPurchase.OpenEdit(_sourceRecord);
+            else if (IsSale(_heading, _table))
+                SalesOrder.OpenEdit(_sourceRecord);
+            else if (IsItem(_heading, _table))
+                AddItemCode.OpenEdit(_sourceRecord);
+            else if (IsInvoice(_heading, _table))
+                InvoicePdf.OpenEdit(_sourceRecord);
         }
 
         /// <summary>Purchase Description is labeled Species so it matches the inventory wording.</summary>
@@ -1553,6 +1762,14 @@ namespace CastRightCatchInvManagement
                     "Current Balance", "Finalized",
                     DataFiles.RoutingNumber, DataFiles.AccountNumber, "Description", "Notes"
                 }
+                : title.Equals("Invoice", StringComparison.OrdinalIgnoreCase) ||
+                  title.Equals("Invoices", StringComparison.OrdinalIgnoreCase)
+                ? new[]
+                {
+                    DataFiles.RecordStatus, "Invoice #", "Type", "Status", "Customer", "Vendor",
+                    "Amount", "Paid", "Outstanding", "SO #", "PO #", "Due Date",
+                    "Payment Date", "Payment Method", "Invoice Date"
+                }
                 : Array.Empty<string>();
 
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1566,20 +1783,26 @@ namespace CastRightCatchInvManagement
                     DataFiles.StatusOf(record)));
             }
 
-            bool partyCard = prefer.Length > 0;
             bool vendorCard = title.Equals("Vendor", StringComparison.OrdinalIgnoreCase);
+            bool customerCard = title.Equals("Customer", StringComparison.OrdinalIgnoreCase);
+            bool partyCard = vendorCard || customerCard;
+            bool invoiceCard = title.Equals("Invoice", StringComparison.OrdinalIgnoreCase) ||
+                               title.Equals("Invoices", StringComparison.OrdinalIgnoreCase);
             foreach (var key in prefer)
             {
                 // Preferred keys that are missing or already listed are skipped.
                 if (used.Contains(key))
                     continue;
-                // Vendor Current Balance is lots plus bank payments, even when the stored cell is blank.
-                if (vendorCard && key.Equals("Current Balance", StringComparison.OrdinalIgnoreCase))
+                // Party Current Balance is computed (lots+bank or open invoices), even when the stored cell is blank.
+                if (partyCard && key.Equals("Current Balance", StringComparison.OrdinalIgnoreCase))
                 {
                     used.Add(key);
+                    decimal owed = vendorCard
+                        ? DataFiles.VendorCurrentBalance(record)
+                        : DataFiles.CustomerCurrentBalance(record);
                     list.Add(new KeyValuePair<string, string>(
                         key,
-                        MoneyFormat.Display(DataFiles.VendorCurrentBalance(record))));
+                        MoneyFormat.Display(owed)));
                     continue;
                 }
 
@@ -1614,6 +1837,9 @@ namespace CastRightCatchInvManagement
                     continue;
                 // Amount on a party card is Credit Limit (customer) or Current Balance (vendor).
                 if (partyCard && key.Equals("Amount", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                // Invoice details show the prefer list plus statements; skip the JSON blob and extra columns.
+                if (invoiceCard)
                     continue;
                 list.Add(new KeyValuePair<string, string>(
                     partyCard ? DataFiles.DisplayPartyColumn(key) : key,
@@ -1674,6 +1900,12 @@ namespace CastRightCatchInvManagement
             (table != null && table.Equals(DataFiles.Sales, StringComparison.OrdinalIgnoreCase)) ||
             title.Equals("Sales", StringComparison.OrdinalIgnoreCase) ||
             title.Equals("Sale", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>True when this details popup is an invoices-table row.</summary>
+        private static bool IsInvoice(string title, string? table) =>
+            (table != null && table.Equals(DataFiles.Invoices, StringComparison.OrdinalIgnoreCase)) ||
+            title.Equals("Invoices", StringComparison.OrdinalIgnoreCase) ||
+            title.Equals("Invoice", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>True when this details popup should open customer history instead of a field list.</summary>
         private static bool IsCustomer(string title, string? table) =>

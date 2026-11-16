@@ -3,16 +3,14 @@ namespace CastRightCatchInvManagement
     /// <summary>Item description text on purchase, sale, sales-order, and invoice PDFs.</summary>
     internal static class PdfItemText
     {
-        /// <summary>Second-line origin block: | COO : country | processed in : country.</summary>
+        /// <summary>Second-line origin block: | COO : country | Processed In : country.</summary>
         public static string Origin(string? itemCode, string? coo = null)
         {
             string origin = First(coo, DataFiles.ItemMasterField(itemCode, "COO"));
             string proc = DataFiles.ItemMasterField(itemCode, "Proc Country");
             string text = "| COO : " + origin;
-            // Same country is already on COO; do not repeat it as processed-in.
-            if (proc.Length > 0 &&
-                !proc.Equals(origin, StringComparison.OrdinalIgnoreCase))
-                text += " | processed in : " + proc;
+            if (proc.Length > 0)
+                text += " | Processed In : " + proc;
             return text;
         }
 

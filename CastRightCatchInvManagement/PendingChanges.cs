@@ -98,6 +98,7 @@ namespace CastRightCatchInvManagement
                         // Only administrators review purchase/sales deletes.
                         if (DataFiles.GetRecord(record, "Action")
                                 .Equals("delete", StringComparison.OrdinalIgnoreCase) &&
+                            DataAccess.IsTradeTable(DataFiles.GetRecord(record, "Table")) &&
                             !AppState.IsAdmin)
                             continue;
                         rows.Add(record);

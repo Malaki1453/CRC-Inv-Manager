@@ -3,7 +3,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 namespace CastRightCatchInvManagement
 {
-    /// <summary>Dedicated PDF window (WebView2). Send the file, or edit the source document.</summary>
+    /// <summary>Dedicated PDF window (WebView2). Send opens Outlook with the file attached, or edit the source document.</summary>
     internal sealed class PdfViewForm : Form
     {
         private static readonly Dictionary<string, PdfViewForm> OpenDocs =
@@ -351,16 +351,11 @@ namespace CastRightCatchInvManagement
                 label.Text = message;
         }
 
-        /// <summary>Open the send form so this PDF can be emailed to a list of addresses.</summary>
+        /// <summary>Open a blank Outlook message with this PDF attached.</summary>
         private void SendPdf()
         {
-            if (!File.Exists(_path))
-            {
-                ToastAlert.Error(this, "The PDF could not be found.");
-                return;
-            }
-
-            PdfSendForm.ShowFor(this, _path, _title.Text);
+            if (!OutlookMail.TryCompose(_path, _title.Text, out string error))
+                ToastAlert.Error(this, error);
         }
 
         /// <summary>Open the matching edit page with this document loaded, then close the viewer.</summary>

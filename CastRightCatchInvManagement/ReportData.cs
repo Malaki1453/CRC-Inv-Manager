@@ -26,22 +26,49 @@ namespace CastRightCatchInvManagement
         public string Empty { get; init; } = "No rows for this report in the current view.";
     }
 
-    /// <summary>One Aging (or similar) tab: columns, rows, and chips.</summary>
+    /// <summary>One Aging (or similar) tab: columns, rows, chips, and optional expand groups.</summary>
     internal sealed class ReportTab
     {
         public required string Name { get; init; }
         public required string[] Columns { get; init; }
         public List<string[]> Rows { get; } = new();
+        public List<ReportGroup>? Groups { get; set; }
         public List<(string Label, string Value)> Stats { get; } = new();
         public string Empty { get; init; } = "No rows for this report in the current view.";
     }
 
-    /// <summary>Expandable parent row plus child item-code rows.</summary>
+    /// <summary>Expandable parent row plus child item-code or invoice rows.</summary>
     internal sealed class ReportGroup
     {
         public required string Key { get; init; }
         public required string[] Parent { get; init; }
         public List<string[]> Children { get; } = new();
+        /// <summary>Open invoices for an aging customer or vendor; null on species groups.</summary>
+        public AgingParty? Party { get; set; }
+    }
+
+    /// <summary>One customer or vendor on the aging report, used to draw a statement PDF.</summary>
+    internal sealed class AgingParty
+    {
+        public required string Name { get; init; }
+        public string Code { get; init; } = "";
+        public string Address { get; init; } = "";
+        public bool Received { get; init; }
+        public List<AgingInvoiceLine> Invoices { get; } = new();
+    }
+
+    /// <summary>One open invoice under an aging customer or vendor.</summary>
+    internal sealed class AgingInvoiceLine
+    {
+        public string Number { get; init; } = "";
+        public string Date { get; init; } = "";
+        public string DueDate { get; init; } = "";
+        public string Reference { get; init; } = "";
+        public decimal Amount { get; init; }
+        public decimal Paid { get; init; }
+        public decimal Outstanding { get; init; }
+        public int Days { get; init; }
+        public string Bucket { get; init; } = "";
     }
 
     /// <summary>
@@ -72,30 +99,33 @@ namespace CastRightCatchInvManagement
         /// <summary>Customers and vendors aging tabs.</summary>
         private static ReportResult Aging()
         {
-            var customers = AgingCustomers();
-            var vendors = AgingVendors();
+            var customers = AgingParties(received: false);
+            var vendors = AgingParties(received: true);
             return new ReportResult
             {
                 Title = "Aging Report",
-                Hint = "Customers are open invoices. Vendors are open purchases. Use the tabs, then filter if you want.",
+                Hint = "Open invoices grouped by customer and vendor. Click a name to expand invoices. Right-click to create a statement PDF.",
                 Columns = customers.Columns,
                 Empty = customers.Empty,
                 Tabs = new List<ReportTab> { customers, vendors }
             };
         }
 
-        /// <summary>Open invoices bucketed by days past due.</summary>
-        private static ReportTab AgingCustomers()
+        /// <summary>Open issued invoices under customers, or open received invoices under vendors.</summary>
+        private static ReportTab AgingParties(bool received)
         {
+            string partyLabel = received ? "Vendor" : "Customer";
             var tab = new ReportTab
             {
-                Name = "Customers",
+                Name = received ? "Vendors" : "Customers",
                 Columns = new[]
                 {
-                    "Invoice #", "Customer", "Due Date", "Amount", "Outstanding", "Days past due", "Bucket"
+                    partyLabel + " / Invoice #", "Due Date", "Amount", "Paid", "Outstanding", "Days past due", "Bucket"
                 },
                 Empty = TableAccess.Can(TableAccess.Invoices)
-                    ? "No open invoices in this view."
+                    ? received
+                        ? "No open vendor invoices in this view."
+                        : "No open invoices in this view."
                     : "You do not have access to invoices."
             };
             // Hidden invoice tables must not leak into aging or risk.
@@ -103,100 +133,158 @@ namespace CastRightCatchInvManagement
                 return tab;
 
             decimal current = 0, d30 = 0, d60 = 0, d90 = 0, older = 0, total = 0;
-            var rows = new List<(int sort, string[] cells)>();
+            var parties = new Dictionary<string, AgingParty>(StringComparer.OrdinalIgnoreCase);
             foreach (var invoice in DataFiles.VisibleRecords(DataFiles.Invoices))
             {
                 // Queued adds are not yet live totals.
-                if (DataFiles.IsWaitingAdd(invoice) ||
-                    DataFiles.IsReceivedInvoice(invoice) ||
-                    DataFiles.InvoiceIsClosed(invoice))
+                if (DataFiles.IsWaitingAdd(invoice) || DataFiles.InvoiceIsClosed(invoice))
+                    continue;
+                // Customers tab is issued invoices we are owed; Vendors tab is received invoices we still owe.
+                if (DataFiles.IsReceivedInvoice(invoice) != received)
                     continue;
                 decimal due = DataFiles.InvoiceOutstanding(invoice);
-                // Not-due invoices stay out of past-due buckets.
+                // Paid-in-full invoices stay out of aging even if Status is still open.
                 if (due <= 0)
                     continue;
 
                 int days = DaysPastDue(DataFiles.GetRecord(invoice, "Due Date"));
                 string bucket = AgingBucket(days);
                 decimal amount = DataFiles.ParseMoney(DataFiles.GetRecord(invoice, "Amount"));
+                decimal paid = DataFiles.ParseMoney(DataFiles.GetRecord(invoice, "Paid"));
                 AddAging(bucket, due, ref current, ref d30, ref d60, ref d90, ref older, ref total);
-                rows.Add((days, new[]
+
+                string code = received
+                    ? DataFiles.GetRecordAny(invoice, "Vendor Code", "Code")
+                    : DataFiles.GetRecordAny(invoice, "Customer Code", "Cust ID");
+                string name = received
+                    ? DataFiles.GetRecordAny(invoice, "Vendor", "Vendor Name")
+                    : DataFiles.GetRecordAny(invoice, "Customer", "Customer Name");
+                string key = AgingPartyKey(received, code, name);
+                if (!parties.TryGetValue(key, out var party))
                 {
-                    DataFiles.GetRecord(invoice, "Invoice #"),
-                    DataFiles.GetRecordAny(invoice, "Customer", "Customer Code"),
-                    DataFiles.GetRecord(invoice, "Due Date"),
-                    Money(amount),
-                    Money(due),
-                    DaysText(days),
-                    bucket
-                }));
+                    var master = FindAgingMaster(received, code, name);
+                    string display = master != null
+                        ? DataFiles.PartyDocumentName(master)
+                        : (name.Length > 0 ? name : (received ? "(no vendor)" : "(no customer)"));
+                    party = new AgingParty
+                    {
+                        Name = display,
+                        Code = master != null
+                            ? DataFiles.GetRecord(master, "Code")
+                            : code,
+                        Address = master != null
+                            ? DataFiles.GetRecord(master, "Address")
+                            : "",
+                        Received = received
+                    };
+                    parties[key] = party;
+                }
+
+                party.Invoices.Add(new AgingInvoiceLine
+                {
+                    Number = DataFiles.GetRecord(invoice, "Invoice #"),
+                    Date = DataFiles.GetRecord(invoice, DataFiles.InvoiceDateColumn),
+                    DueDate = DataFiles.GetRecord(invoice, "Due Date"),
+                    Reference = received
+                        ? DataFiles.GetRecord(invoice, "PO #")
+                        : DataFiles.GetRecord(invoice, "SO #"),
+                    Amount = amount,
+                    Paid = paid,
+                    Outstanding = due,
+                    Days = days,
+                    Bucket = bucket
+                });
             }
 
-            foreach (var row in rows.OrderByDescending(r => r.sort))
-                tab.Rows.Add(row.cells);
+            tab.Groups = new List<ReportGroup>();
+            foreach (var pair in parties.OrderByDescending(p => p.Value.Invoices.Sum(i => i.Outstanding))
+                         .ThenBy(p => p.Value.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                var party = pair.Value;
+                var invoices = party.Invoices
+                    .OrderByDescending(i => i.Days == int.MinValue ? int.MinValue : i.Days)
+                    .ToList();
+                party.Invoices.Clear();
+                party.Invoices.AddRange(invoices);
+
+                decimal partyDue = invoices.Sum(i => i.Outstanding);
+                decimal partyAmount = invoices.Sum(i => i.Amount);
+                decimal partyPaid = invoices.Sum(i => i.Paid);
+                int oldest = invoices.Max(i => i.Days);
+                string oldestBucket = AgingBucket(oldest);
+                string oldestDue = invoices
+                    .Select(i => i.DueDate)
+                    .FirstOrDefault(d => !string.IsNullOrWhiteSpace(d)) ?? "";
+                var group = new ReportGroup
+                {
+                    Key = pair.Key,
+                    Parent = new[]
+                    {
+                        party.Name,
+                        oldestDue,
+                        Money(partyAmount),
+                        Money(partyPaid),
+                        Money(partyDue),
+                        DaysText(oldest),
+                        oldestBucket
+                    },
+                    Party = party
+                };
+                foreach (var line in invoices)
+                {
+                    string number = line.Number.Length > 0 ? line.Number : "(no invoice #)";
+                    group.Children.Add(new[]
+                    {
+                        "    " + number,
+                        line.DueDate,
+                        Money(line.Amount),
+                        Money(line.Paid),
+                        Money(line.Outstanding),
+                        DaysText(line.Days),
+                        line.Bucket
+                    });
+                }
+
+                tab.Groups.Add(group);
+                tab.Rows.Add(group.Parent);
+            }
+
             AddAgingStats(tab, total, current, d30, d60, d90, older);
             return tab;
         }
 
-        /// <summary>Open purchases bucketed by days past due.</summary>
-        private static ReportTab AgingVendors()
+        /// <summary>Stable group key: code when present, otherwise the document name.</summary>
+        private static string AgingPartyKey(bool received, string code, string name)
         {
-            var tab = new ReportTab
+            string prefix = received ? "vend:" : "cust:";
+            if (code.Length > 0)
+                return prefix + "code:" + code;
+            if (name.Length > 0)
+                return prefix + "name:" + name;
+            return prefix + "unknown";
+        }
+
+        /// <summary>Customer or vendor master row for the aging parent label and statement address.</summary>
+        private static Dictionary<string, string>? FindAgingMaster(bool received, string code, string name)
+        {
+            string table = received ? DataFiles.Vendors : DataFiles.Customers;
+            string access = received ? TableAccess.Vendors : TableAccess.Customers;
+            // Hidden master tables still group invoices by the name printed on the invoice.
+            if (!TableAccess.Can(access))
+                return null;
+
+            foreach (var rec in DataFiles.VisibleRecords(table))
             {
-                Name = "Vendors",
-                Columns = new[]
-                {
-                    "PO #", "Vendor", "Due Date", "Total Cost", "Days past due", "Bucket", "Status"
-                },
-                Empty = TableAccess.Can(TableAccess.Purchases)
-                    ? "No open purchases in this view."
-                    : "You do not have access to purchases."
-            };
-            // Hidden purchase tables must not leak into vendor aging.
-            if (!TableAccess.Can(TableAccess.Purchases))
-                return tab;
-
-            decimal current = 0, d30 = 0, d60 = 0, d90 = 0, older = 0, total = 0;
-            var rows = new List<(int sort, string[] cells)>();
-            foreach (var purchase in DataFiles.VisibleRecords(DataFiles.PurchaseSales))
-            {
-                // Queued purchases are not vendor performance yet.
-                if (DataFiles.IsWaitingAdd(purchase))
+                if (DataFiles.IsWaitingAdd(rec))
                     continue;
-                string status = DataFiles.GetRecord(purchase, "Status").Trim();
-                // Completed purchases are not open payables.
-                if (status.Equals("Complete", StringComparison.OrdinalIgnoreCase) ||
-                    status.Equals("Paid", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                decimal due = DataFiles.ParseMoney(DataFiles.GetRecord(purchase, "Total Cost"));
-                // Not-due invoices stay out of past-due buckets.
-                if (due <= 0)
-                    continue;
-
-                string dueDate = FirstDate(
-                    DataFiles.GetRecord(purchase, "Vendor Due Date"),
-                    DataFiles.GetRecord(purchase, "Expected Ship Date"),
-                    DataFiles.GetRecord(purchase, "Agreement Date"));
-                int days = DaysPastDue(dueDate);
-                string bucket = AgingBucket(days);
-                AddAging(bucket, due, ref current, ref d30, ref d60, ref d90, ref older, ref total);
-                rows.Add((days, new[]
-                {
-                    DataFiles.GetRecord(purchase, "PO #"),
-                    DataFiles.GetRecordAny(purchase, "Vendor", "Vendor Code"),
-                    dueDate,
-                    Money(due),
-                    DaysText(days),
-                    bucket,
-                    status
-                }));
+                string recCode = DataFiles.GetRecord(rec, "Code");
+                if (code.Length > 0 && recCode.Equals(code, StringComparison.OrdinalIgnoreCase))
+                    return rec;
+                if (name.Length > 0 && DataFiles.PartyNameEquals(rec, name))
+                    return rec;
             }
 
-            foreach (var row in rows.OrderByDescending(r => r.sort))
-                tab.Rows.Add(row.cells);
-            AddAgingStats(tab, total, current, d30, d60, d90, older);
-            return tab;
+            return null;
         }
 
         /// <summary>Append one aging row and accumulate bucket totals.</summary>
@@ -235,19 +323,6 @@ namespace CastRightCatchInvManagement
             tab.Stats.Add(("Current", Money(current)));
             tab.Stats.Add(("1–30 days", Money(d30)));
             tab.Stats.Add(("31–60 / 61–90 / 90+", $"{Money(d60)}  ·  {Money(d90)}  ·  {Money(older)}"));
-        }
-
-        /// <summary>First parseable date among alternate column names.</summary>
-        private static string FirstDate(params string[] values)
-        {
-            foreach (var value in values)
-            {
-                // Skip empty alternate date columns.
-                if (!string.IsNullOrWhiteSpace(value))
-                    return value.Trim();
-            }
-
-            return "";
         }
 
         /// <summary>Human days-past-due label.</summary>
@@ -483,7 +558,7 @@ namespace CastRightCatchInvManagement
                     Name = name.Length > 0 ? name : code,
                     Terms = DataFiles.GetRecord(customer, "Terms"),
                     Limit = DataFiles.ParseMoney(DataFiles.GetRecord(customer, "Credit Limit")),
-                    OnFile = DataFiles.ParseMoney(DataFiles.GetRecord(customer, "Current Balance"))
+                    OnFile = 0
                 };
             }
 
@@ -518,6 +593,10 @@ namespace CastRightCatchInvManagement
                 if (DataFiles.InvoiceIsPastDue(invoice))
                     risk.Overdue += due;
             }
+
+            // On file is the same receivable as Current Balance: open issued invoices.
+            foreach (var risk in customers.Values)
+                risk.OnFile = risk.Outstanding;
 
             decimal outstanding = 0, overdue = 0;
             int overLimit = 0;

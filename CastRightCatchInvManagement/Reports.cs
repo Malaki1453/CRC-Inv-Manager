@@ -82,7 +82,7 @@ namespace CastRightCatchInvManagement
 
             var cards = new (ReportKind Kind, string Title, string Hint)[]
             {
-                (ReportKind.Aging, "Aging Report", "Customers and vendors — tabs and a filter"),
+                (ReportKind.Aging, "Aging Report", "Open invoices grouped by customer and vendor"),
                 (ReportKind.Commission, "Commission Tracker", "Deals by PO / SO — no commission rate is stored yet"),
                 (ReportKind.ProfitLoss, "Monthly P&L", "Revenue vs lot cost by ship month"),
                 (ReportKind.Suppliers, "Supplier Performance", "Vendor volume, cost, and average cost / lb"),
@@ -185,7 +185,7 @@ namespace CastRightCatchInvManagement
                 AllowUserToDeleteRows = false
             };
             Theme.StyleGrid(_grid);
-            _grid.CellClick += OnSpeciesClick;
+            _grid.CellMouseClick += OnReportCellMouseClick;
 
             _tabs = new TabControl
             {
@@ -276,7 +276,7 @@ namespace CastRightCatchInvManagement
         /// <summary>Build and show one report table from the current database view.</summary>
         private void ShowReport(ReportKind kind)
         {
-            // Switching reports clears expanded species groups.
+            // Switching reports clears expanded species and aging groups.
             if (_kind != kind)
                 _expanded.Clear();
             _kind = kind;
@@ -330,7 +330,7 @@ namespace CastRightCatchInvManagement
             {
                 var tab = tabs[_tabs.SelectedIndex];
                 FillStats(tab.Stats);
-                FillTable(tab.Columns, tab.Rows, tab.Empty, _current.Groups);
+                FillTable(tab.Columns, tab.Rows, tab.Empty, tab.Groups ?? _current.Groups);
             }
             // Fill from the report's main table when there are no tabs.
             else
@@ -411,20 +411,20 @@ namespace CastRightCatchInvManagement
             foreach (var column in columns)
                 _grid.Columns.Add(column, column);
 
-            // Profit per species uses expandable parent rows.
+            // Species and aging use expandable parent rows; children stay hidden until the parent is open.
             if (groups is { Count: > 0 })
             {
                 foreach (var group in groups)
                 {
                     bool open = _expanded.Contains(group.Key);
                     var parent = (string[])group.Parent.Clone();
-                    // Show a triangle on the species name cell.
+                    // Triangle sits on the party or species name already stored in the first parent cell.
                     if (parent.Length > 0)
-                        parent[0] = (open ? "▼  " : "▶  ") + group.Key;
+                        parent[0] = (open ? "▼  " : "▶  ") + parent[0];
                     int index = _grid.Rows.Add(PadRow(parent, columns.Length));
-                    _grid.Rows[index].Tag = group.Key;
+                    _grid.Rows[index].Tag = group;
                     _grid.Rows[index].DefaultCellStyle.Font = Theme.BodyBold;
-                    // Collapsed groups hide item-code children.
+                    // Collapsed groups hide invoice or item-code children.
                     if (!open)
                         continue;
                     foreach (var child in group.Children)
@@ -486,20 +486,57 @@ namespace CastRightCatchInvManagement
             }
         }
 
-        /// <summary>Expand or collapse a species group on click.</summary>
-        private void OnSpeciesClick(object? sender, DataGridViewCellEventArgs e)
+        /// <summary>Left-click expands a parent row. Right-click on aging opens a statement PDF menu.</summary>
+        private void OnReportCellMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
         {
-            // Header clicks and flat reports have nothing to expand.
-            if (_current?.Groups == null || e.RowIndex < 0 || e.ColumnIndex < 0)
+            if (e.RowIndex < 0)
                 return;
-            // Child item-code rows are not toggles.
-            if (_grid.Rows[e.RowIndex].Tag is not string key || key.Length == 0)
+            if (e.Button == MouseButtons.Right)
+            {
+                ShowAgingMenu(e.RowIndex);
                 return;
-            // Second click collapses the species.
-            if (!_expanded.Add(key))
-                _expanded.Remove(key);
-            FillGrid(_current);
-            ApplyFilter();
+            }
+
+            if (e.Button != MouseButtons.Left || e.ColumnIndex < 0)
+                return;
+            // Child invoice / item-code rows are not toggles.
+            if (_grid.Rows[e.RowIndex].Tag is not ReportGroup group)
+                return;
+            // Second click collapses the group.
+            if (!_expanded.Add(group.Key))
+                _expanded.Remove(group.Key);
+            ShowActiveTab();
+        }
+
+        /// <summary>Right-click a customer or vendor (or one of their invoices) to create a statement PDF.</summary>
+        private void ShowAgingMenu(int rowIndex)
+        {
+            var group = GroupAt(rowIndex);
+            if (group?.Party == null || group.Party.Invoices.Count == 0)
+                return;
+
+            _grid.ClearSelection();
+            _grid.Rows[rowIndex].Selected = true;
+            UiStyle.RowContextMenuShown = true;
+            var party = group.Party;
+            var menu = new ContextMenuStrip();
+            string label = party.Received
+                ? "Create payables PDF"
+                : "Create statement PDF";
+            menu.Items.Add(label, null, (_, _) => AgingStatementDocument.Show(party));
+            menu.Show(Cursor.Position);
+        }
+
+        /// <summary>Parent group for this row, or the parent above a child invoice row.</summary>
+        private ReportGroup? GroupAt(int rowIndex)
+        {
+            for (int i = rowIndex; i >= 0; i--)
+            {
+                if (_grid.Rows[i].Tag is ReportGroup group)
+                    return group;
+            }
+
+            return null;
         }
 
         /// <summary>Empty-state row with the message in the first cell.</summary>
@@ -568,12 +605,25 @@ namespace CastRightCatchInvManagement
                     lines.Add(Array.Empty<string>());
                     lines.Add(new[] { tab.Name });
                     lines.Add(tab.Columns);
+                    // Aging CSV includes every invoice under each customer or vendor, not only expanded rows.
+                    if (tab.Groups is { Count: > 0 })
+                    {
+                        foreach (var group in tab.Groups)
+                        {
+                            lines.Add(group.Parent);
+                            lines.AddRange(group.Children);
+                        }
+                    }
                     // Still export the empty-state line so the sheet is not blank.
-                    if (tab.Rows.Count == 0)
+                    else if (tab.Rows.Count == 0)
+                    {
                         lines.Add(new[] { tab.Empty });
+                    }
                     // Export the tab's data rows when it is not empty.
                     else
+                    {
                         lines.AddRange(tab.Rows);
+                    }
                 }
 
                 return lines;

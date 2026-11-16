@@ -25,6 +25,8 @@ namespace CastRightCatchInvManagement
         private DateTimePicker _orderDate = null!;
         private TextBox _freightCo = null!;
         private ComboBox _freightTerms = null!;
+        private Panel _freightSection = null!;
+        private bool _freightSectionBad;
         private TextBox _overhead = null!;
         private TextBox _freight = null!;
         private TextBox _other = null!;
@@ -43,7 +45,9 @@ namespace CastRightCatchInvManagement
         private Button _another = null!;
         private List<LookupSuggest.Hit> _itemHits = new();
         private List<LookupSuggest.Hit> _freightHits = new();
+        private List<LookupSuggest.Hit> _warehouseHits = new();
         private LookupSuggest? _freightSuggest;
+        private LookupSuggest? _warehouseSuggest;
         private LookupSuggest? _shipSuggest;
         private CheckBox _saveAddress = null!;
         private CheckBox _shippingDifferent = null!;
@@ -231,10 +235,24 @@ namespace CastRightCatchInvManagement
             SelectStatus(_status, "Open");
 
             _warehouse = AddField(card, "WAREHOUSE", 20, 136, 150);
-            _freightCo = AddField(card, "FREIGHT CO", 184, 136, 140);
-            _freightTerms = AddCombo(card, "FREIGHT TERMS", 338, 136, 130);
+            _freightSection = new Panel
+            {
+                Location = new Point(180, 132),
+                Size = new Size(294, 50),
+                BackColor = Theme.Cream
+            };
+            _freightCo = AddField(_freightSection, "FREIGHT CO", 4, 4, 140);
+            _freightTerms = AddCombo(_freightSection, "FREIGHT TERMS", 154, 4, 130);
             _freightTerms.DropDownStyle = ComboBoxStyle.DropDownList;
             SelectFreightTerms(_freightTerms, "");
+            _freightSection.Paint += (_, e) =>
+            {
+                if (!_freightSectionBad)
+                    return;
+                using var pen = new Pen(Theme.Danger);
+                e.Graphics.DrawRectangle(pen, 0, 0, _freightSection.Width - 1, _freightSection.Height - 1);
+            };
+            card.Controls.Add(_freightSection);
             _contact = AddField(card, "CONTACT", 482, 136, 150);
 
             _email = AddField(card, "EMAIL", 20, 186, 200);
@@ -309,6 +327,11 @@ namespace CastRightCatchInvManagement
                 () => _freightHits,
                 codeFirst: false,
                 hit => _freightCo.Text = hit.Name.Length > 0 ? hit.Name : hit.Code);
+            _warehouseSuggest = new LookupSuggest(
+                _warehouse,
+                () => _warehouseHits,
+                codeFirst: false,
+                hit => _warehouse.Text = hit.Name.Length > 0 ? hit.Name : hit.Code);
 
             foreach (var box in new[] { _overhead, _freight, _other })
             {
@@ -316,7 +339,12 @@ namespace CastRightCatchInvManagement
                 box.TextChanged += (_, _) => RecalcLines();
             }
 
-            _freightCo.TextChanged += (_, _) => SyncCostFields();
+            _freightCo.TextChanged += (_, _) =>
+            {
+                SyncCostFields();
+                RefreshFreightHighlight();
+            };
+            _freightTerms.SelectedIndexChanged += (_, _) => RefreshFreightHighlight();
             SyncCostFields();
 
             _customerPo.Leave += (_, _) => RequestPoFill();
@@ -610,7 +638,7 @@ namespace CastRightCatchInvManagement
             return card;
         }
 
-        /// <summary>Reload customer, item, freight, and PO suggestions from live tables.</summary>
+        /// <summary>Reload customer, item, freight, warehouse, and PO suggestions from live tables.</summary>
         private void RefreshLookups()
         {
             _customerRecords.Clear();
@@ -657,19 +685,22 @@ namespace CastRightCatchInvManagement
             }
 
             _freightHits.Clear();
+            _warehouseHits.Clear();
             foreach (var record in DataFiles.VisibleRecords(DataFiles.Vendors))
             {
-                if (!VendorTypes.MatchesSlot(record, VendorTypes.SlotSalesFreight))
-                    continue;
                 string code = DataFiles.GetRecord(record, "Code").Trim();
                 string name = DataFiles.PartyDocumentName(record);
                 if (code.Length == 0 && name.Length == 0)
                     continue;
-                _freightHits.Add(new LookupSuggest.Hit(
+                var hit = new LookupSuggest.Hit(
                     code,
                     name,
                     DataFiles.GetRecord(record, "Terms"),
-                    DataFiles.PartyCompanyName(record) + " " + DataFiles.PartyDba(record)));
+                    DataFiles.PartyCompanyName(record) + " " + DataFiles.PartyDba(record));
+                if (VendorTypes.MatchesSlot(record, VendorTypes.SlotSalesFreight))
+                    _freightHits.Add(hit);
+                if (VendorTypes.MatchesSlot(record, VendorTypes.SlotSalesWarehouse))
+                    _warehouseHits.Add(hit);
             }
 
             foreach (var row in _lines)
@@ -1514,6 +1545,15 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Delivered: Freight Co must be a Trucking/Logistics vendor already on file. Collect skips this.
+            if (IsDeliveredFreight(draft.FreightTerms) && !IsKnownFreightCompany(draft.FreightCompany))
+            {
+                MarkFreightSection(true);
+                ToastAlert.Error(this, "When Freight Terms is Delivered, pick a freight company already in the system.");
+                _freightCo.Focus();
+                return;
+            }
+
             var lines = draft.Lines
                 .Where(line => line.ItemCode.Length > 0 || line.Description.Length > 0)
                 .ToList();
@@ -1758,6 +1798,7 @@ namespace CastRightCatchInvManagement
             RecalcLines();
             SetMode(true);
             UpdateTotals();
+            RefreshFreightHighlight();
         }
 
         /// <summary>Switch captions and hide Add Another while editing an existing sales order.</summary>
@@ -1855,6 +1896,62 @@ namespace CastRightCatchInvManagement
             host.Controls.Add(box);
             parent.Controls.Add(host);
             return box;
+        }
+
+        /// <summary>True when Freight Terms is Delivered (CRC is providing the truck).</summary>
+        private static bool IsDeliveredFreight(string? terms) =>
+            string.Equals((terms ?? "").Trim(), "Delivered", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Red Freight Co / Freight Terms block while Delivered is missing a known company.</summary>
+        private void RefreshFreightHighlight()
+        {
+            bool bad = IsDeliveredFreight(_freightTerms.Text) &&
+                       !IsKnownFreightCompany(_freightCo.Text, refresh: false);
+            MarkFreightSection(bad);
+        }
+
+        /// <summary>Paint or clear the freight section error colors.</summary>
+        private void MarkFreightSection(bool bad)
+        {
+            if (_freightSection == null || _freightCo == null || _freightTerms == null)
+                return;
+
+            _freightSectionBad = bad;
+            _freightSection.BackColor = bad ? Theme.DangerFill : Theme.Cream;
+            _freightCo.BackColor = bad ? Theme.DangerFill : Theme.Paper;
+            _freightCo.ForeColor = bad ? Theme.Danger : Theme.Ink;
+            _freightTerms.BackColor = bad ? Theme.DangerFill : Theme.Paper;
+            _freightTerms.ForeColor = bad ? Theme.Danger : Theme.Ink;
+            foreach (Control child in _freightSection.Controls)
+            {
+                if (child is Label label)
+                    label.ForeColor = bad ? Theme.Danger : Theme.Muted;
+            }
+
+            _freightSection.Invalidate();
+        }
+
+        /// <summary>True when the typed Freight Co is a vendor in the New Sale freight list.</summary>
+        private bool IsKnownFreightCompany(string? text, bool refresh = true)
+        {
+            string pick = (text ?? "").Trim();
+            if (pick.Length == 0)
+                return false;
+
+            if (refresh)
+                RefreshLookups();
+            foreach (var record in DataFiles.VisibleRecords(DataFiles.Vendors))
+            {
+                if (!VendorTypes.MatchesSlot(record, VendorTypes.SlotSalesFreight))
+                    continue;
+                if (DataFiles.GetRecord(record, "Code").Trim().Equals(pick, StringComparison.OrdinalIgnoreCase) ||
+                    DataFiles.PartyDocumentName(record).Equals(pick, StringComparison.OrdinalIgnoreCase) ||
+                    DataFiles.PartyCompanyName(record).Equals(pick, StringComparison.OrdinalIgnoreCase) ||
+                    DataFiles.PartyDba(record).Equals(pick, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>Select Collect or Delivered, adding unknown stored values so older rows still display.</summary>

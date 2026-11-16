@@ -17,7 +17,11 @@ namespace CastRightCatchInvManagement
                 onEdit: null,
                 "Invoice",
                 "Edit",
-                ("Show PDF", ShowInvoicePdf));
+                ("Show PDF", ShowInvoicePdf),
+                new UiStyle.RowAction(
+                    "Receive Payment",
+                    ReceivePayment,
+                    DataFiles.CanReceiveInvoicePayment));
             DataFiles.DataChanged += LoadTable;
             LoadTable();
         }
@@ -27,6 +31,12 @@ namespace CastRightCatchInvManagement
 
         /// <summary>Fill the grid from invoices (live only, or archive + live when Old is on).</summary>
         private void LoadTable() => DataFiles.FillGrid(dataGridView1, DataFiles.Invoices);
+
+        /// <summary>Match banking statement lines to this invoice.</summary>
+        private void ReceivePayment(Dictionary<string, string> record)
+        {
+            ReceivePaymentForm.ShowFor(this, record);
+        }
 
         /// <summary>Open the stored invoice PDF, or rebuild it from the invoice row if it is missing.</summary>
         private void ShowInvoicePdf(Dictionary<string, string> record)

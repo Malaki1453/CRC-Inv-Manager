@@ -78,18 +78,42 @@ namespace CastRightCatchInvManagement
             label.TextAlign = ContentAlignment.MiddleLeft;
         }
 
-        /// <summary>Primary gold CTA used on save/sign-in.</summary>
+        /// <summary>Primary gold CTA used on save/sign-in. Greys out when Enabled is false.</summary>
         public static void StyleGoldButton(Button button)
         {
             button.FlatStyle = FlatStyle.Flat;
             button.FlatAppearance.BorderSize = 0;
-            button.FlatAppearance.MouseOverBackColor = GoldLight;
-            button.FlatAppearance.MouseDownBackColor = Color.FromArgb(180, 136, 28);
-            button.BackColor = Gold;
-            button.ForeColor = NavyDark;
             button.Font = BodyBold;
-            button.Cursor = Cursors.Hand;
             button.UseVisualStyleBackColor = false;
+            ApplyGoldEnabled(button);
+            button.EnabledChanged -= GoldEnabledChanged;
+            button.EnabledChanged += GoldEnabledChanged;
+        }
+
+        private static void GoldEnabledChanged(object? sender, EventArgs e)
+        {
+            if (sender is Button button)
+                ApplyGoldEnabled(button);
+        }
+
+        /// <summary>Gold when enabled; cream/muted when the action is not available.</summary>
+        private static void ApplyGoldEnabled(Button button)
+        {
+            if (button.Enabled)
+            {
+                button.FlatAppearance.MouseOverBackColor = GoldLight;
+                button.FlatAppearance.MouseDownBackColor = Color.FromArgb(180, 136, 28);
+                button.BackColor = Gold;
+                button.ForeColor = NavyDark;
+                button.Cursor = Cursors.Hand;
+                return;
+            }
+
+            button.FlatAppearance.MouseOverBackColor = CreamDark;
+            button.FlatAppearance.MouseDownBackColor = CreamDark;
+            button.BackColor = CreamDark;
+            button.ForeColor = Muted;
+            button.Cursor = Cursors.Default;
         }
 
         /// <summary>Solid navy action button used on toolbars.</summary>
@@ -175,7 +199,7 @@ namespace CastRightCatchInvManagement
                 box.ScrollBars = want;
         }
 
-        /// <summary>Read-only money box filled from lots or bank lines, not typed.</summary>
+        /// <summary>Read-only money box filled from lots, bank lines, or open invoices, not typed.</summary>
         public static void StyleComputedField(TextBox box)
         {
             StyleField(box);
