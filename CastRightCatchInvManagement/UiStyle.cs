@@ -137,6 +137,11 @@ namespace CastRightCatchInvManagement
                 // Header double-click is not a record.
                 if (e.RowIndex < 0)
                     return;
+                // Receive Payment is its own click; do not also open details.
+                if (e.ColumnIndex >= 0 &&
+                    e.ColumnIndex < grid.Columns.Count &&
+                    Theme.IsActionColumn(grid.Columns[e.ColumnIndex]))
+                    return;
                 string table = grid.Tag is ColumnSearch search ? search.FileBaseName ?? "" : "";
                 RecordDetailsForm.ShowRecord(
                     form,
@@ -369,6 +374,36 @@ namespace CastRightCatchInvManagement
                 new(pair.Text, pair.Click);
         }
 
+        /// <summary>Click the gold Receive Payment chip to open the bank-line matcher.</summary>
+        public static void BindReceivePaymentColumn(DataGridView grid)
+        {
+            grid.CellClick += (_, e) =>
+            {
+                if (e.RowIndex < 0 || e.ColumnIndex < 0 || e.ColumnIndex >= grid.Columns.Count)
+                    return;
+                if (!Theme.IsActionColumn(grid.Columns[e.ColumnIndex]))
+                    return;
+                var cell = grid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                // Grey chips (paid invoices, parent aging rows) do not open the matcher.
+                if (cell.Tag is not true)
+                    return;
+
+                var invoice = InvoiceForPaymentRow(grid, e.RowIndex);
+                if (invoice == null)
+                    return;
+                var host = grid.FindForm();
+                ReceivePaymentForm.ShowFor(host, invoice);
+            };
+        }
+
+        /// <summary>Invoice record for a grid row: invoices table cells, or an aging child tagged with the invoice number.</summary>
+        private static Dictionary<string, string>? InvoiceForPaymentRow(DataGridView grid, int rowIndex)
+        {
+            if (grid.Rows[rowIndex].Tag is AgingInvoiceLine line)
+                return DataFiles.FindInvoiceByNumber(line.Number);
+            return DataFiles.GridRowToRecord(grid, rowIndex);
+        }
+
         /// <summary>Copy the clicked cell, then the rest of the row actions.</summary>
         public static void BindRowEdit(
             DataGridView grid,
@@ -516,13 +551,14 @@ namespace CastRightCatchInvManagement
         {
             string table = grid.Tag is ColumnSearch search ? search.FileBaseName ?? "" : "";
             var hidden = grid.Columns.Cast<DataGridViewColumn>()
-                .Where(c => !c.Visible && !Theme.IsAddColumn(c))
+                .Where(c => !c.Visible && !Theme.IsControlColumn(c))
                 .Where(c =>
                 {
                     string key = c.Tag as string ?? c.Name;
                     return !DataAccess.IsColumnHidden(table, key) &&
                            !DataAccess.IsColumnHidden(table, c.HeaderText) &&
-                           !DataFiles.IsRetiredItemShelfLifeColumn(table, key);
+                           !DataFiles.IsRetiredItemShelfLifeColumn(table, key) &&
+                           !DataFiles.IsBankAllocationsColumn(table, key);
                 })
                 .OrderBy(c => c.DisplayIndex)
                 .ToList();
@@ -562,15 +598,15 @@ namespace CastRightCatchInvManagement
                 return;
 
             var column = grid.Columns[columnIndex];
-            // The trailing "+" column is not a data field.
-            if (!column.Visible || Theme.IsAddColumn(column))
+            // "+" and Receive Payment are not data fields the user hides.
+            if (!column.Visible || Theme.IsControlColumn(column))
                 return;
 
             var menu = new ContextMenuStrip();
             menu.Items.Add("Hide column", null, (_, _) =>
             {
                 int visible = grid.Columns.Cast<DataGridViewColumn>()
-                    .Count(c => c.Visible && !Theme.IsAddColumn(c));
+                    .Count(c => c.Visible && !Theme.IsControlColumn(c));
                 // A table with zero data columns cannot be used.
                 if (visible <= 1)
                     return;

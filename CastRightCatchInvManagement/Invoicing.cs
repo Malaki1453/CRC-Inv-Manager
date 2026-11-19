@@ -22,6 +22,7 @@ namespace CastRightCatchInvManagement
                     "Receive Payment",
                     ReceivePayment,
                     DataFiles.CanReceiveInvoicePayment));
+            UiStyle.BindReceivePaymentColumn(dataGridView1);
             DataFiles.DataChanged += LoadTable;
             LoadTable();
         }

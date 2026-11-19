@@ -72,8 +72,8 @@ namespace CastRightCatchInvManagement
 
             foreach (DataGridViewColumn col in _grid.Columns)
             {
-                // The trailing "+" column is not searchable or sortable.
-                if (Theme.IsAddColumn(col))
+                // "+" and Receive Payment are not searchable or sortable.
+                if (Theme.IsControlColumn(col))
                     continue;
                 col.SortMode = DataGridViewColumnSortMode.Programmatic;
                 // Date headers get a FROM/TO pair instead of a substring box.
@@ -208,7 +208,7 @@ namespace CastRightCatchInvManagement
                     foreach (DataGridViewCell cell in row.Cells)
                     {
                         // Skip cells with no column and the trailing "+" control column.
-                        if (cell.OwningColumn == null || Theme.IsAddColumn(cell.OwningColumn))
+                        if (cell.OwningColumn == null || Theme.IsControlColumn(cell.OwningColumn))
                             continue;
                         // Page-wide dates only look at date columns (Established, * At, *Date*).
                         if (!IsDateColumn(cell.OwningColumn.HeaderText))
@@ -233,7 +233,7 @@ namespace CastRightCatchInvManagement
                     foreach (DataGridViewCell cell in row.Cells)
                     {
                         // Do not search the dummy "+" column.
-                        if (cell.OwningColumn != null && Theme.IsAddColumn(cell.OwningColumn))
+                        if (cell.OwningColumn != null && Theme.IsControlColumn(cell.OwningColumn))
                             continue;
                         fields.Add(cell.Value?.ToString() ?? "");
                     }
@@ -362,6 +362,10 @@ namespace CastRightCatchInvManagement
                 return;
             }
 
+            // Receive Payment is a row action, not a sortable field.
+            if (Theme.IsActionColumn(_grid.Columns[e.ColumnIndex]))
+                return;
+
             // Clicks in the filter-box band should not toggle sort or reopen search.
             if (e.Y > HeaderHeight)
                 return;
@@ -387,7 +391,7 @@ namespace CastRightCatchInvManagement
             var headers = _grid.Columns
                 .Cast<DataGridViewColumn>()
                 .OrderBy(c => c.DisplayIndex)
-                .Where(c => c.Visible && !Theme.IsAddColumn(c))
+                .Where(c => c.Visible && !Theme.IsControlColumn(c))
                 .Select(c => c.HeaderText)
                 .ToList();
             _jump.SetColumns(headers);
@@ -403,8 +407,8 @@ namespace CastRightCatchInvManagement
             int n = 0;
             foreach (var col in _grid.Columns.Cast<DataGridViewColumn>().OrderBy(c => c.DisplayIndex))
             {
-                // Hidden columns are not in the jump list, so they must not consume `index`.
-                if (!col.Visible)
+                // Hidden, "+", and Receive Payment are not in the jump list, so they must not consume `index`.
+                if (!col.Visible || Theme.IsControlColumn(col))
                     continue;
                 // n is the visible-column index matching the picker; scroll that column into view.
                 if (n == index)
@@ -530,7 +534,7 @@ namespace CastRightCatchInvManagement
             int bestDisplay = int.MaxValue;
             foreach (DataGridViewColumn col in _grid.Columns)
             {
-                if (!col.Visible || Theme.IsAddColumn(col) || col.DisplayIndex >= bestDisplay)
+                if (!col.Visible || Theme.IsControlColumn(col) || col.DisplayIndex >= bestDisplay)
                     continue;
                 bestDisplay = col.DisplayIndex;
                 first = col.Index;

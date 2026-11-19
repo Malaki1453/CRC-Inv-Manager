@@ -1265,8 +1265,9 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>
-        /// Bank lines that can be matched to this invoice: already tagged to it, or untagged
-        /// deposits (issued) / withdrawals (received). Lines tagged to another invoice stay out.
+        /// Bank lines that can be matched to this invoice: already allocated to it, leftover
+        /// from the same customer or vendor, or untagged deposits (issued) / withdrawals (received).
+        /// Leftover from a different party stays out.
         /// </summary>
         public static List<Dictionary<string, string>> BankLinesForPayment(
             Dictionary<string, string> invoice)
@@ -1274,29 +1275,35 @@ namespace CastRightCatchInvManagement
             BankFeed.EnsureSchema();
             string number = GetRecord(invoice, "Invoice #").Trim();
             bool received = IsReceivedInvoice(invoice);
+            string partyCode = PartyCodeFromInvoice(invoice, received);
+            string partyName = received
+                ? GetRecord(invoice, "Vendor")
+                : GetRecordAny(invoice, "Customer", "Customer Name");
             var list = new List<Dictionary<string, string>>();
             foreach (var row in ReadRecords(BankTransactions))
             {
                 // Queued adds are not live statement lines yet.
                 if (IsWaitingAdd(row))
                     continue;
-                string tagged = GetRecord(row, "Invoice #").Trim();
-                bool applied = number.Length > 0 &&
-                               tagged.Equals(number, StringComparison.OrdinalIgnoreCase);
+                decimal amount = ParseMoney(GetRecord(row, "Amount"));
+                // Issued invoices collect deposits; received invoices are paid with withdrawals.
+                if (received ? amount >= 0 : amount <= 0)
+                    continue;
+
+                decimal here = BankFeed.AllocatedTo(row, number);
+                decimal available = BankFeed.AvailableFor(row, number);
                 // Already on this invoice: keep it so the matcher can unmatch.
-                if (applied)
+                if (here > 0)
                 {
+                    BankFeed.SetAppliedHere(row, here);
                     list.Add(row);
                     continue;
                 }
 
-                // Tagged to a different invoice: that payment is already spoken for.
-                if (tagged.Length > 0)
+                // Fully allocated to other invoices: nothing left to apply here.
+                if (available <= 0)
                     continue;
-
-                decimal amount = ParseMoney(GetRecord(row, "Amount"));
-                // Issued invoices collect deposits; received invoices are paid with withdrawals.
-                if (received ? amount >= 0 : amount <= 0)
+                if (!PaymentBelongsToParty(row, received, partyCode, partyName))
                     continue;
                 list.Add(row);
             }
@@ -1305,9 +1312,33 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>
-        /// Tag matched bank lines with this Invoice #, clear lines that were unmatched,
-        /// and write Paid / Outstanding / Status on the invoice. Live write so the balance
-        /// updates immediately (invoice field edits still go to Review).
+        /// Untagged lines are open to any party. Once a customer or vendor is stamped,
+        /// leftover can only be applied to that party's invoices.
+        /// </summary>
+        private static bool PaymentBelongsToParty(
+            Dictionary<string, string> row,
+            bool vendor,
+            string partyCode,
+            string partyName)
+        {
+            string rowCode = vendor
+                ? GetRecord(row, "Vendor Code").Trim()
+                : GetRecord(row, "Customer Code").Trim();
+            // No party on the line yet: first match assigns it.
+            if (rowCode.Length == 0)
+                return true;
+            if (partyCode.Length > 0 &&
+                rowCode.Equals(partyCode, StringComparison.OrdinalIgnoreCase))
+                return true;
+            return vendor
+                ? MatchesVendor(row, partyCode, partyName)
+                : MatchesCustomer(row, partyCode, partyName);
+        }
+
+        /// <summary>
+        /// Allocate matched bank lines onto this invoice (only the amount still due),
+        /// keep leftover on the same customer or vendor, and write Paid / Outstanding / Status.
+        /// Live write so the balance updates immediately (invoice field edits still go to Review).
         /// </summary>
         public static MutateResult ApplyInvoicePayment(
             Dictionary<string, string> invoice,
@@ -1321,21 +1352,30 @@ namespace CastRightCatchInvManagement
             if (number.Length == 0)
                 return MutateResult.Deny("This invoice has no invoice number.");
 
-            var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            decimal amount = ParseMoney(GetRecord(invoice, "Amount"));
+            var keep = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
             decimal paid = 0;
             string method = "";
             foreach (var row in matched)
             {
                 string key = BankFeed.RowIdentity(row);
                 // Duplicate identity in the matched list: count the payment once.
-                if (!keep.Add(key))
+                if (keep.ContainsKey(key))
                     continue;
-                paid += BankFeed.PaymentAmount(row);
+                decimal free = BankFeed.AvailableFor(row, number);
+                decimal want = BankFeed.AppliedHere(row);
+                if (want <= 0)
+                    want = free;
+                decimal use = Math.Min(free, Math.Min(want, Math.Max(0m, amount - paid)));
+                // Nothing left on the invoice or on this line: skip so leftover stays for other invoices.
+                if (use <= 0)
+                    continue;
+                keep[key] = use;
+                paid += use;
                 if (method.Length == 0)
                     method = GetRecordAny(row, "Method", "Type").Trim();
             }
 
-            decimal amount = ParseMoney(GetRecord(invoice, "Amount"));
             decimal remaining = Math.Max(0m, amount - paid);
             bool received = IsReceivedInvoice(invoice);
             string customerCode = PartyCodeFromInvoice(invoice, vendor: false);
@@ -1347,19 +1387,17 @@ namespace CastRightCatchInvManagement
                 BankTransactions,
                 row =>
                 {
-                    string tagged = GetRecord(row, "Invoice #").Trim();
                     string key = BankFeed.RowIdentity(row);
-                    return keep.Contains(key) ||
-                           tagged.Equals(number, StringComparison.OrdinalIgnoreCase);
+                    return keep.ContainsKey(key) || BankFeed.AllocatedTo(row, number) > 0;
                 },
                 row =>
                 {
                     string key = BankFeed.RowIdentity(row);
-                    // This line was matched: stamp the invoice so later loads keep it on the applied side.
-                    if (keep.Contains(key))
+                    decimal use = keep.TryGetValue(key, out var applied) ? applied : 0m;
+                    BankFeed.SetAllocation(row, number, use);
+                    // Matched or leftover still belongs to this party so it cannot be spent on someone else.
+                    if (use > 0 || BankFeed.Unapplied(row) > 0)
                     {
-                        row["Invoice #"] = number;
-                        // Issued invoices belong to a customer; received invoices belong to a vendor.
                         if (received)
                         {
                             if (vendorCode.Length > 0)
@@ -1374,14 +1412,7 @@ namespace CastRightCatchInvManagement
                             if (so.Length > 0)
                                 row["SO #"] = so;
                         }
-
-                        return;
                     }
-
-                    // Was tagged to this invoice and is no longer matched: free the line for another invoice.
-                    if (GetRecord(row, "Invoice #").Trim()
-                        .Equals(number, StringComparison.OrdinalIgnoreCase))
-                        row["Invoice #"] = "";
                 });
 
             string status = remaining <= 0 && amount > 0
@@ -1705,7 +1736,8 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>
-        /// Money this customer still owes us: remaining amounts on open invoices we issued.
+        /// Money this customer still owes us: remaining amounts on open invoices we issued,
+        /// minus leftover deposits still sitting on that customer.
         /// Received (vendor) invoices, queued adds, and paid/closed invoices are skipped.
         /// </summary>
         public static decimal CustomerCurrentBalance(Dictionary<string, string> customer) =>
@@ -1751,7 +1783,7 @@ namespace CastRightCatchInvManagement
                 owed += due;
             }
 
-            return owed;
+            return owed - UnappliedCustomerCredit(code, name, company);
         }
 
         /// <summary>Current Balance per customer Code from open issued invoices.</summary>
@@ -1803,7 +1835,71 @@ namespace CastRightCatchInvManagement
                 }
             }
 
+            ApplyUnappliedCustomerCredits(map, customers);
             return map;
+        }
+
+        /// <summary>Leftover deposits tagged to this customer after invoices took their share.</summary>
+        private static decimal UnappliedCustomerCredit(string code, string name, string company)
+        {
+            if (!TableAccess.Can(TableAccess.Banking))
+                return 0;
+            decimal credit = 0;
+            foreach (var row in ReadRecords(BankTransactions))
+            {
+                if (IsWaitingAdd(row))
+                    continue;
+                // Withdrawals are vendor payments, not customer leftover.
+                if (ParseMoney(GetRecord(row, "Amount")) <= 0)
+                    continue;
+                decimal left = BankFeed.Unapplied(row);
+                if (left <= 0)
+                    continue;
+                if (!MatchesCustomer(row, code, name) &&
+                    (company.Length == 0 ||
+                     company.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+                     !MatchesCustomer(row, code, company)))
+                    continue;
+                credit += left;
+            }
+
+            return credit;
+        }
+
+        /// <summary>Subtract leftover deposits from each customer's computed balance.</summary>
+        private static void ApplyUnappliedCustomerCredits(
+            Dictionary<string, decimal> map,
+            List<Dictionary<string, string>> customers)
+        {
+            if (!TableAccess.Can(TableAccess.Banking) || map.Count == 0)
+                return;
+            foreach (var row in ReadRecords(BankTransactions))
+            {
+                if (IsWaitingAdd(row))
+                    continue;
+                if (ParseMoney(GetRecord(row, "Amount")) <= 0)
+                    continue;
+                decimal left = BankFeed.Unapplied(row);
+                if (left <= 0)
+                    continue;
+                string rowCode = GetRecord(row, "Customer Code").Trim();
+                if (rowCode.Length > 0 && map.ContainsKey(rowCode))
+                {
+                    map[rowCode] -= left;
+                    continue;
+                }
+
+                foreach (var customer in customers)
+                {
+                    string code = GetRecord(customer, "Code").Trim();
+                    if (code.Length == 0 || !map.ContainsKey(code))
+                        continue;
+                    if (!MatchesCustomer(row, code, PartyCompanyName(customer)))
+                        continue;
+                    map[code] -= left;
+                    break;
+                }
+            }
         }
 
         /// <summary>Write Current Balance from open issued invoices. Credit Limit stays in Amount.</summary>
@@ -3875,6 +3971,8 @@ namespace CastRightCatchInvManagement
                 return true;
             if (key.Equals(InvoiceLinesColumn, StringComparison.OrdinalIgnoreCase))
                 return false;
+            if (key.Equals(BankFeed.AllocationsColumn, StringComparison.OrdinalIgnoreCase))
+                return true;
             return key.Contains("Json", StringComparison.OrdinalIgnoreCase);
         }
 
@@ -4063,6 +4161,8 @@ namespace CastRightCatchInvManagement
                 return true;
             if (key.Equals(InvoiceLinesColumn, StringComparison.OrdinalIgnoreCase))
                 return false;
+            if (key.Equals(BankFeed.AllocationsColumn, StringComparison.OrdinalIgnoreCase))
+                return true;
             return key.Contains("Json", StringComparison.OrdinalIgnoreCase);
         }
 
@@ -4326,8 +4426,8 @@ namespace CastRightCatchInvManagement
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (DataGridViewColumn col in grid.Columns)
             {
-                // This is the "+" add-column button: it is not a data field; including it would store a junk key.
-                if (Theme.IsAddColumn(col))
+                // "+" and Receive Payment are not data fields; including them would store a junk key.
+                if (Theme.IsControlColumn(col))
                     continue;
                 // File column name from Tag or Name, used as the dictionary key.
                 string key = col.Tag as string ?? col.Name;
@@ -4559,8 +4659,8 @@ namespace CastRightCatchInvManagement
                 var summary = new List<string>();
                 foreach (DataGridViewColumn col in grid.Columns)
                 {
-                    // Add-column button: that column is not part of the summary set.
-                    if (Theme.IsAddColumn(col))
+                    // "+" and Receive Payment are not part of the summary set.
+                    if (Theme.IsControlColumn(col))
                         continue;
 
                     bool show = IsSummaryColumn(baseName ?? "", col.HeaderText);
@@ -4586,8 +4686,8 @@ namespace CastRightCatchInvManagement
             {
                 foreach (DataGridViewColumn col in grid.Columns)
                 {
-                    // Add-column button: do not hide it as a "hidden data column".
-                    if (Theme.IsAddColumn(col))
+                    // "+" and Receive Payment: do not hide them as "hidden data columns".
+                    if (Theme.IsControlColumn(col))
                         continue;
                     // File column name from Tag or Name, used for the hidden-column check.
                     string key = col.Tag as string ?? col.Name;
@@ -4603,6 +4703,9 @@ namespace CastRightCatchInvManagement
                         col.Visible = false;
                     // Warehouse list is JSON in Shipping Address; edit it on New Customer.
                     if (IsWarehouseListColumn(baseName, key))
+                        col.Visible = false;
+                    // Split leftover is stored as JSON; Invoice # and party code are the visible fields.
+                    if (IsBankAllocationsColumn(baseName, key))
                         col.Visible = false;
                 }
             }
@@ -4654,6 +4757,13 @@ namespace CastRightCatchInvManagement
         {
             return baseName == Customers &&
                    fileName.Equals(ShippingAddressColumn, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>True for the bank-line allocations JSON; leftover is applied through Receive Payment.</summary>
+        internal static bool IsBankAllocationsColumn(string? baseName, string fileName)
+        {
+            return baseName == BankTransactions &&
+                   fileName.Equals(BankFeed.AllocationsColumn, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>True when the column is Record Status.</summary>
@@ -4889,13 +4999,15 @@ namespace CastRightCatchInvManagement
                 }
 
                 Theme.EnsureAddColumn(grid);
+                if (baseName == Invoices)
+                    Theme.EnsureActionColumn(grid);
                 grid.CellFormatting -= MaskAccountCells;
                 grid.CellFormatting += MaskAccountCells;
                 GridLayout.Apply(grid, baseName);
                 foreach (DataGridViewColumn col in grid.Columns)
                 {
-                    // Add-column button: skip hidden-column checks so the "+" stays visible.
-                    if (Theme.IsAddColumn(col))
+                    // "+" and Receive Payment stay visible even when other columns are hidden.
+                    if (Theme.IsControlColumn(col))
                         continue;
                     // File column name from Tag or Name, used for the hidden-column check.
                     string key = col.Tag as string ?? col.Name;
@@ -4916,6 +5028,9 @@ namespace CastRightCatchInvManagement
                     // Warehouse list is JSON in Shipping Address; edit it on New Customer.
                     if (IsWarehouseListColumn(baseName, key))
                         col.Visible = false;
+                    // Split leftover is stored as JSON; Invoice # and party code are the visible fields.
+                    if (IsBankAllocationsColumn(baseName, key))
+                        col.Visible = false;
                 }
 
                 // row is one prepared grid line: cell values in display order plus Record Status for coloring.
@@ -4924,6 +5039,8 @@ namespace CastRightCatchInvManagement
                     int rowIndex = grid.Rows.Add(row.Cells);
                     StyleRecordStatusRow(grid.Rows[rowIndex], row.Status);
                 }
+
+                MarkReceivePaymentCells(grid, baseName);
             }
             finally
             {
@@ -4934,6 +5051,26 @@ namespace CastRightCatchInvManagement
                     search.FileBaseName = baseName;
                     search.Rebuild();
                 }
+            }
+        }
+
+        /// <summary>Put a Receive Payment chip on each invoice row; grey it when remaining is zero.</summary>
+        private static void MarkReceivePaymentCells(DataGridView grid, string baseName)
+        {
+            if (baseName != Invoices)
+                return;
+            int action = Theme.ActionColumnIndex(grid);
+            if (action < 0)
+                return;
+
+            foreach (DataGridViewRow row in grid.Rows)
+            {
+                if (row.IsNewRow)
+                    continue;
+                var record = GridRowToRecord(grid, row.Index);
+                var cell = row.Cells[action];
+                cell.Value = "Receive Payment";
+                cell.Tag = CanReceiveInvoicePayment(record);
             }
         }
 

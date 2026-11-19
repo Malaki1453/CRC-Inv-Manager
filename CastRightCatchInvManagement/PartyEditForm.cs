@@ -584,11 +584,15 @@ namespace CastRightCatchInvManagement
                     return;
                 if (bank.Rows[e.RowIndex].Tag is not Dictionary<string, string> row)
                     return;
-                string invoiceNumber = DataFiles.GetRecord(row, "Invoice #").Trim();
-                // No invoice tag: this line is only a bank memo, not a payment match.
-                if (invoiceNumber.Length == 0)
-                    return;
-                var invoice = DataFiles.FindInvoice(invoiceNumber);
+                Dictionary<string, string>? invoice = null;
+                foreach (var invoiceNumber in BankFeed.InvoiceNumbers(row))
+                {
+                    invoice = DataFiles.FindInvoice(invoiceNumber);
+                    if (invoice != null)
+                        break;
+                }
+
+                // No invoice tag: leftover credit or a bank memo, not a payment match.
                 if (invoice == null)
                     return;
                 RecordDetailsForm.ShowRecord(bank.FindForm(), "Invoice", invoice, DataFiles.Invoices);

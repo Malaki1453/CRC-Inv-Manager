@@ -1838,6 +1838,9 @@ namespace CastRightCatchInvManagement
                 // Amount on a party card is Credit Limit (customer) or Current Balance (vendor).
                 if (partyCard && key.Equals("Amount", StringComparison.OrdinalIgnoreCase))
                     continue;
+                // Split leftover JSON is not a field to edit on a statement card.
+                if (key.Equals(BankFeed.AllocationsColumn, StringComparison.OrdinalIgnoreCase))
+                    continue;
                 // Invoice details show the prefer list plus statements; skip the JSON blob and extra columns.
                 if (invoiceCard)
                     continue;

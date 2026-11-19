@@ -328,17 +328,80 @@ namespace CastRightCatchInvManagement
             // Headers use their own painter.
             if (e.RowIndex < 0 || e.ColumnIndex < 0)
                 return;
-
-            e.Paint(e.CellBounds, DataGridViewPaintParts.All & ~DataGridViewPaintParts.Border);
-            // Graphics can be null in some accessibility paint paths.
-            if (e.Graphics != null)
+            if (sender is DataGridView grid &&
+                e.ColumnIndex < grid.Columns.Count &&
+                IsActionColumn(grid.Columns[e.ColumnIndex]))
             {
-                using var pen = new Pen(GridLine, 1);
-                int y = e.CellBounds.Bottom - 1;
-                e.Graphics.DrawLine(pen, e.CellBounds.Left, y, e.CellBounds.Right, y);
+                PaintActionCell(grid, e);
+                return;
             }
 
+            e.Paint(e.CellBounds, DataGridViewPaintParts.All & ~DataGridViewPaintParts.Border);
+            PaintCellHairline(e);
             e.Handled = true;
+        }
+
+        /// <summary>Gold Receive Payment chip, or grey when the invoice is already paid.</summary>
+        private static void PaintActionCell(DataGridView grid, DataGridViewCellPaintingEventArgs e)
+        {
+            e.Paint(e.CellBounds, DataGridViewPaintParts.Background | DataGridViewPaintParts.SelectionBackground);
+            var g = e.Graphics;
+            if (g == null)
+            {
+                e.Handled = true;
+                return;
+            }
+
+            string text = e.Value?.ToString() ?? "";
+            // Parent aging rows leave this cell blank so only invoices show a button.
+            if (text.Length > 0)
+            {
+                bool enabled = grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Tag is true;
+                var inner = Rectangle.Inflate(e.CellBounds, -6, -6);
+                if (inner.Width >= 8 && inner.Height >= 8)
+                {
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    using var path = RoundedRect(inner, 4);
+                    using var fill = new SolidBrush(enabled ? Gold : CreamDark);
+                    g.FillPath(fill, path);
+                    TextRenderer.DrawText(
+                        g,
+                        text,
+                        BodyBold,
+                        inner,
+                        enabled ? NavyDark : Muted,
+                        TextFormatFlags.HorizontalCenter |
+                        TextFormatFlags.VerticalCenter |
+                        TextFormatFlags.EndEllipsis |
+                        TextFormatFlags.NoPrefix);
+                }
+            }
+
+            PaintCellHairline(e);
+            e.Handled = true;
+        }
+
+        /// <summary>Hairline under a data cell so rows still separate when owner-drawn.</summary>
+        private static void PaintCellHairline(DataGridViewCellPaintingEventArgs e)
+        {
+            if (e.Graphics == null)
+                return;
+            using var pen = new Pen(GridLine, 1);
+            int y = e.CellBounds.Bottom - 1;
+            e.Graphics.DrawLine(pen, e.CellBounds.Left, y, e.CellBounds.Right, y);
+        }
+
+        /// <summary>Rounded rectangle path for in-grid action chips.</summary>
+        private static GraphicsPath RoundedRect(Rectangle bounds, int radius)
+        {
+            int d = radius * 2;
+            var path = new GraphicsPath();
+            path.AddArc(bounds.X, bounds.Y, d, d, 180, 90);
+            path.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90);
+            path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
+            path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
         }
 
         /// <summary>Manual column widths with both scrollbars so FitAllColumns can stretch leftover space.</summary>
@@ -359,8 +422,8 @@ namespace CastRightCatchInvManagement
             EnsureManualColumnWidths(grid);
             for (int i = 0; i < grid.Columns.Count; i++)
             {
-                // Hidden and "+" columns are not measured.
-                if (!grid.Columns[i].Visible || IsAddColumn(grid.Columns[i]))
+                // Hidden, "+", and action-button columns keep a fixed width.
+                if (!grid.Columns[i].Visible || IsControlColumn(grid.Columns[i]))
                     continue;
                 FitLongest(grid, i);
             }
@@ -369,13 +432,38 @@ namespace CastRightCatchInvManagement
         }
 
         public const string AddColumnTag = "__add_column__";
+        public const string ActionColumnTag = "__action_column__";
         public const int AddColumnWidth = 42;
+        public const int ActionColumnWidth = 156;
 
         /// <summary>True for the trailing "+" column that opens the add-column menu.</summary>
         public static bool IsAddColumn(DataGridViewColumn? column)
         {
             return column != null &&
                    string.Equals(column.Tag as string, AddColumnTag, StringComparison.Ordinal);
+        }
+
+        /// <summary>True for the Receive Payment (or similar) in-grid action column.</summary>
+        public static bool IsActionColumn(DataGridViewColumn? column)
+        {
+            return column != null &&
+                   string.Equals(column.Tag as string, ActionColumnTag, StringComparison.Ordinal);
+        }
+
+        /// <summary>True for "+" and in-grid action buttons, which are not data fields.</summary>
+        public static bool IsControlColumn(DataGridViewColumn? column) =>
+            IsAddColumn(column) || IsActionColumn(column);
+
+        /// <summary>Index of the action-button column, or -1 when the grid has none.</summary>
+        public static int ActionColumnIndex(DataGridView grid)
+        {
+            foreach (DataGridViewColumn col in grid.Columns)
+            {
+                if (IsActionColumn(col))
+                    return col.Index;
+            }
+
+            return -1;
         }
 
         /// <summary>Append the "+" column once, skipping empty or status-only grids.</summary>
@@ -410,11 +498,51 @@ namespace CastRightCatchInvManagement
             grid.Columns.Add(add);
         }
 
+        /// <summary>Fixed-width Receive Payment column, inserted in front of the "+" so it stays on the row.</summary>
+        public static void EnsureActionColumn(
+            DataGridView grid,
+            string header = "Receive Payment",
+            int width = ActionColumnWidth)
+        {
+            if (grid.Columns.Cast<DataGridViewColumn>().Any(IsActionColumn))
+                return;
+            if (grid.Columns.Count == 0)
+                return;
+
+            var action = new DataGridViewTextBoxColumn
+            {
+                Name = "ReceivePayment",
+                HeaderText = header,
+                Tag = ActionColumnTag,
+                Width = width,
+                MinimumWidth = width,
+                Resizable = DataGridViewTriState.False,
+                SortMode = DataGridViewColumnSortMode.NotSortable,
+                ReadOnly = true,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+            };
+            action.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            int addIndex = -1;
+            for (int i = 0; i < grid.Columns.Count; i++)
+            {
+                if (IsAddColumn(grid.Columns[i]))
+                {
+                    addIndex = i;
+                    break;
+                }
+            }
+
+            if (addIndex >= 0)
+                grid.Columns.Insert(addIndex, action);
+            else
+                grid.Columns.Add(action);
+        }
+
         /// <summary>Give leftover client width to visible data columns so the row fills the card.</summary>
         public static void StretchVisibleColumns(DataGridView grid)
         {
             var visible = grid.Columns.Cast<DataGridViewColumn>()
-                .Where(c => c.Visible && !IsAddColumn(c))
+                .Where(c => c.Visible && !IsControlColumn(c))
                 .ToList();
             // Nothing to stretch when every data column is hidden.
             if (visible.Count == 0)
@@ -423,12 +551,15 @@ namespace CastRightCatchInvManagement
             int used = 0;
             foreach (var col in visible)
                 used += col.Width;
-            var add = grid.Columns.Cast<DataGridViewColumn>().FirstOrDefault(IsAddColumn);
-            // Include the fixed-width "+" column in used so leftover space is given only to data columns.
-            if (add != null && add.Visible)
+            foreach (DataGridViewColumn col in grid.Columns)
             {
-                add.Width = AddColumnWidth;
-                used += add.Width;
+                if (!col.Visible || !IsControlColumn(col))
+                    continue;
+                if (IsAddColumn(col))
+                    col.Width = AddColumnWidth;
+                if (IsActionColumn(col))
+                    col.Width = Math.Max(ActionColumnWidth, col.MinimumWidth);
+                used += col.Width;
             }
 
             int available = Math.Max(0, grid.ClientSize.Width - 2);

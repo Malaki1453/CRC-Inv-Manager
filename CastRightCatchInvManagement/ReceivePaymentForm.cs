@@ -11,7 +11,7 @@ namespace CastRightCatchInvManagement
         private readonly string _number;
         private readonly List<Dictionary<string, string>> _available = new();
         private readonly List<Dictionary<string, string>> _applied = new();
-        private readonly HashSet<string> _original = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, decimal> _original = new(StringComparer.OrdinalIgnoreCase);
 
         private readonly DataGridView _availableGrid = new();
         private readonly DataGridView _appliedGrid = new();
@@ -102,7 +102,8 @@ namespace CastRightCatchInvManagement
             };
             var subtitle = new Label
             {
-                Text = who + "  ·  Match banking statements to this invoice.",
+                Text = who + "  ·  Match banking statements. Extra on a payment stays with this " +
+                       (_received ? "vendor" : "customer") + " for other invoices.",
                 Dock = DockStyle.Top,
                 Height = 22,
                 Font = Theme.Small,
@@ -258,12 +259,14 @@ namespace CastRightCatchInvManagement
             grid.RowHeadersVisible = false;
             grid.Columns.Add("Date", "Date");
             grid.Columns.Add("Amount", "Amount");
+            grid.Columns.Add("Use", "Use");
             grid.Columns.Add("Account", "Account");
             grid.Columns.Add("Memo", "Memo");
             grid.Columns[0].Width = 90;
-            grid.Columns[1].Width = 100;
-            grid.Columns[2].Width = 120;
-            grid.Columns[3].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+            grid.Columns[1].Width = 90;
+            grid.Columns[2].Width = 90;
+            grid.Columns[3].Width = 110;
+            grid.Columns[4].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
         }
 
         /// <summary>Save applies the matched set; Cancel leaves the invoice unchanged.</summary>
@@ -359,13 +362,13 @@ namespace CastRightCatchInvManagement
             _original.Clear();
             foreach (var row in rows)
             {
-                string tagged = DataFiles.GetRecord(row, "Invoice #").Trim();
-                bool applied = _number.Length > 0 &&
-                               tagged.Equals(_number, StringComparison.OrdinalIgnoreCase);
+                bool applied = _number.Length > 0 && BankFeed.AllocatedTo(row, _number) > 0;
                 if (applied)
                 {
+                    decimal here = BankFeed.AllocatedTo(row, _number);
+                    BankFeed.SetAppliedHere(row, here);
                     _applied.Add(row);
-                    _original.Add(BankFeed.RowIdentity(row));
+                    _original[BankFeed.RowIdentity(row)] = here;
                 }
                 else
                     _available.Add(row);
@@ -403,8 +406,22 @@ namespace CastRightCatchInvManagement
             if (move.Count == 0)
                 return;
 
+            bool matching = ReferenceEquals(from, _available);
+            decimal remaining = Math.Max(0m, _amount - AppliedTotal());
             foreach (var row in move)
             {
+                if (matching)
+                {
+                    decimal use = Math.Min(BankFeed.AvailableFor(row, _number), remaining);
+                    // Invoice is already covered, or this line has no leftover for this party.
+                    if (use <= 0)
+                        continue;
+                    BankFeed.SetAppliedHere(row, use);
+                    remaining -= use;
+                }
+                else
+                    BankFeed.SetAppliedHere(row, 0);
+
                 from.RemoveAll(item =>
                     BankFeed.RowIdentity(item).Equals(BankFeed.RowIdentity(row), StringComparison.OrdinalIgnoreCase));
                 string key = BankFeed.RowIdentity(row);
@@ -421,17 +438,21 @@ namespace CastRightCatchInvManagement
         }
 
         /// <summary>Fill a statement grid from the in-memory list, optionally filtered by search text.</summary>
-        private static void PaintGrid(
+        private void PaintGrid(
             DataGridView grid,
             List<Dictionary<string, string>> rows,
             string filter)
         {
             string needle = (filter ?? "").Trim();
+            bool available = ReferenceEquals(grid, _availableGrid);
             grid.Rows.Clear();
             foreach (var row in rows)
             {
                 string date = DataFiles.GetRecord(row, "Date");
                 string amount = DataFiles.GetRecord(row, "Amount");
+                decimal use = available
+                    ? BankFeed.AvailableFor(row, _number)
+                    : BankFeed.AppliedHere(row);
                 string account = DataFiles.GetRecord(row, "Account");
                 string memo = DataFiles.GetRecordAny(row, "Description", "Notes", "Reference");
                 // Search is set: skip lines that do not contain the typed text.
@@ -442,36 +463,55 @@ namespace CastRightCatchInvManagement
                         continue;
                 }
 
-                int i = grid.Rows.Add(date, amount, account, memo);
+                int i = grid.Rows.Add(date, amount, MoneyFormat.Display(use), account, memo);
                 grid.Rows[i].Tag = row;
             }
         }
 
-        /// <summary>Paid is the sum of matched statement amounts; remaining is invoice amount minus that.</summary>
+        /// <summary>Paid is the sum applied to this invoice; leftover on a line stays for other invoices of this party.</summary>
         private void UpdateTotals()
         {
-            decimal paid = 0;
-            foreach (var row in _applied)
-                paid += BankFeed.PaymentAmount(row);
+            decimal paid = AppliedTotal();
             decimal remaining = Math.Max(0m, _amount - paid);
+            decimal leftover = 0;
+            foreach (var row in _applied)
+                leftover += Math.Max(0m, BankFeed.AvailableFor(row, _number) - BankFeed.AppliedHere(row));
             _paidValue.Text = MoneyFormat.Display(paid);
             _remainingValue.Text = MoneyFormat.Display(remaining);
             _remainingValue.ForeColor = remaining <= 0 ? Theme.Success : Theme.Navy;
-            bool dirty = !SameSet(_original, _applied);
-            _save.Enabled = dirty;
-            _hint.Text = remaining <= 0 && _applied.Count > 0
-                ? "This invoice is fully paid."
-                : "Select statement lines and press Match. Remaining updates as you match.";
+            _save.Enabled = !SameApply(_original, _applied);
+            if (remaining <= 0 && _applied.Count > 0 && leftover > 0)
+            {
+                _hint.Text = "This invoice is fully paid. " + MoneyFormat.Display(leftover) +
+                             " is left for other invoices for this " +
+                             (_received ? "vendor." : "customer.");
+            }
+            else if (remaining <= 0 && _applied.Count > 0)
+                _hint.Text = "This invoice is fully paid.";
+            else
+                _hint.Text = "Select statement lines and press Match. Only the amount still due is taken from a larger payment.";
         }
 
-        /// <summary>True when the matched set is the same identities as when the dialog opened.</summary>
-        private static bool SameSet(HashSet<string> original, List<Dictionary<string, string>> applied)
+        /// <summary>Dollars the current matched set puts on this invoice.</summary>
+        private decimal AppliedTotal()
+        {
+            decimal paid = 0;
+            foreach (var row in _applied)
+                paid += BankFeed.AppliedHere(row);
+            return paid;
+        }
+
+        /// <summary>True when identities and applied amounts match what was stored when the dialog opened.</summary>
+        private static bool SameApply(
+            Dictionary<string, decimal> original,
+            List<Dictionary<string, string>> applied)
         {
             if (original.Count != applied.Count)
                 return false;
             foreach (var row in applied)
             {
-                if (!original.Contains(BankFeed.RowIdentity(row)))
+                string key = BankFeed.RowIdentity(row);
+                if (!original.TryGetValue(key, out decimal was) || was != BankFeed.AppliedHere(row))
                     return false;
             }
 

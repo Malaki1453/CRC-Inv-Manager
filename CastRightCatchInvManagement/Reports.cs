@@ -186,6 +186,7 @@ namespace CastRightCatchInvManagement
             };
             Theme.StyleGrid(_grid);
             _grid.CellMouseClick += OnReportCellMouseClick;
+            UiStyle.BindReceivePaymentColumn(_grid);
 
             _tabs = new TabControl
             {
@@ -410,6 +411,9 @@ namespace CastRightCatchInvManagement
             _grid.Rows.Clear();
             foreach (var column in columns)
                 _grid.Columns.Add(column, column);
+            bool aging = groups is { Count: > 0 } && groups.Exists(g => g.Party != null);
+            if (aging)
+                Theme.EnsureActionColumn(_grid);
 
             // Species and aging use expandable parent rows; children stay hidden until the parent is open.
             if (groups is { Count: > 0 })
@@ -424,14 +428,19 @@ namespace CastRightCatchInvManagement
                     int index = _grid.Rows.Add(PadRow(parent, columns.Length));
                     _grid.Rows[index].Tag = group;
                     _grid.Rows[index].DefaultCellStyle.Font = Theme.BodyBold;
+                    MarkAgingPaymentCell(_grid.Rows[index], null);
                     // Collapsed groups hide invoice or item-code children.
                     if (!open)
                         continue;
-                    foreach (var child in group.Children)
+                    for (int i = 0; i < group.Children.Count; i++)
                     {
-                        int childIndex = _grid.Rows.Add(PadRow(child, columns.Length));
-                        _grid.Rows[childIndex].Tag = null;
+                        int childIndex = _grid.Rows.Add(PadRow(group.Children[i], columns.Length));
+                        var line = group.Party != null && i < group.Party.Invoices.Count
+                            ? group.Party.Invoices[i]
+                            : null;
+                        _grid.Rows[childIndex].Tag = line;
                         _grid.Rows[childIndex].DefaultCellStyle.ForeColor = Theme.Muted;
+                        MarkAgingPaymentCell(_grid.Rows[childIndex], line);
                     }
                 }
 
@@ -473,6 +482,8 @@ namespace CastRightCatchInvManagement
                 bool match = false;
                 foreach (DataGridViewCell cell in row.Cells)
                 {
+                    if (cell.OwningColumn != null && Theme.IsControlColumn(cell.OwningColumn))
+                        continue;
                     string text = cell.Value?.ToString() ?? "";
                     // Any cell containing the text keeps the row visible.
                     if (text.Contains(query, StringComparison.OrdinalIgnoreCase))
@@ -498,6 +509,10 @@ namespace CastRightCatchInvManagement
             }
 
             if (e.Button != MouseButtons.Left || e.ColumnIndex < 0)
+                return;
+            // Receive Payment has its own click; do not expand or collapse the party.
+            if (e.ColumnIndex < _grid.Columns.Count &&
+                Theme.IsActionColumn(_grid.Columns[e.ColumnIndex]))
                 return;
             // Child invoice / item-code rows are not toggles.
             if (_grid.Rows[e.RowIndex].Tag is not ReportGroup group)
@@ -537,6 +552,31 @@ namespace CastRightCatchInvManagement
             }
 
             return null;
+        }
+
+        /// <summary>Gold Receive Payment chip on open invoice children; parent rows stay blank.</summary>
+        private static void MarkAgingPaymentCell(DataGridViewRow row, AgingInvoiceLine? line)
+        {
+            var grid = row.DataGridView;
+            if (grid == null)
+                return;
+            int action = Theme.ActionColumnIndex(grid);
+            if (action < 0)
+                return;
+            var cell = row.Cells[action];
+            if (line == null)
+            {
+                cell.Value = "";
+                cell.Tag = false;
+                return;
+            }
+
+            cell.Value = "Receive Payment";
+            cell.Tag = line.Outstanding > 0 &&
+                       TableAccess.Can(TableAccess.Invoices) &&
+                       TableAccess.Can(TableAccess.Banking) &&
+                       DataAccess.CanMutate(DataFiles.Invoices) &&
+                       DataAccess.CanMutate(DataFiles.BankTransactions);
         }
 
         /// <summary>Empty-state row with the message in the first cell.</summary>

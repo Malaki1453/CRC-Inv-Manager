@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace CastRightCatchInvManagement
@@ -16,7 +18,16 @@ namespace CastRightCatchInvManagement
             "External Id",
             "Type",
             "Vendor Code",
-            "PO #"
+            "PO #",
+            AllocationsColumn
+        };
+
+        public const string AllocationsColumn = "Allocations";
+        internal const string AppliedHereKey = "__apply";
+
+        private static readonly JsonSerializerOptions AllocJson = new()
+        {
+            PropertyNameCaseInsensitive = true
         };
 
         /// <summary>One parsed bank line before it is written to the database.</summary>
@@ -55,6 +66,174 @@ namespace CastRightCatchInvManagement
         /// <summary>Absolute dollars on a bank line, used as a payment amount.</summary>
         public static decimal PaymentAmount(Dictionary<string, string> row) =>
             Math.Abs(DataFiles.ParseMoney(DataFiles.GetRecord(row, "Amount")));
+
+        /// <summary>Dollars from this line not yet sitting on an invoice.</summary>
+        public static decimal Unapplied(Dictionary<string, string> row) =>
+            Math.Max(0m, PaymentAmount(row) - AllocatedTotal(row));
+
+        /// <summary>Dollars from this line already sitting on <paramref name="invoiceNumber"/>.</summary>
+        public static decimal AllocatedTo(Dictionary<string, string> row, string invoiceNumber)
+        {
+            string number = (invoiceNumber ?? "").Trim();
+            if (number.Length == 0)
+                return 0;
+            decimal sum = 0;
+            foreach (var item in ParseAllocations(row))
+            {
+                if (item.Invoice.Equals(number, StringComparison.OrdinalIgnoreCase))
+                    sum += item.Amount;
+            }
+
+            return sum;
+        }
+
+        /// <summary>
+        /// Dollars this invoice may take from the line: the leftover plus whatever is already
+        /// allocated to this invoice (other invoices' shares stay locked).
+        /// </summary>
+        public static decimal AvailableFor(Dictionary<string, string> row, string invoiceNumber)
+        {
+            decimal locked = 0;
+            string number = (invoiceNumber ?? "").Trim();
+            foreach (var item in ParseAllocations(row))
+            {
+                if (number.Length == 0 ||
+                    !item.Invoice.Equals(number, StringComparison.OrdinalIgnoreCase))
+                    locked += item.Amount;
+            }
+
+            return Math.Max(0m, PaymentAmount(row) - locked);
+        }
+
+        /// <summary>Working amount applied to the open invoice in Receive Payment, before save.</summary>
+        public static decimal AppliedHere(Dictionary<string, string> row)
+        {
+            if (!row.TryGetValue(AppliedHereKey, out var text))
+                return 0;
+            return Math.Max(0m, DataFiles.ParseMoney(text));
+        }
+
+        /// <summary>Remember the working apply amount on an in-memory bank row.</summary>
+        public static void SetAppliedHere(Dictionary<string, string> row, decimal amount)
+        {
+            row[AppliedHereKey] = MoneyFormat.Plain(Math.Max(0m, amount));
+        }
+
+        /// <summary>Invoice numbers this line funds, for history grids and invoice lookup.</summary>
+        public static IReadOnlyList<string> InvoiceNumbers(Dictionary<string, string> row)
+        {
+            var list = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in ParseAllocations(row))
+            {
+                if (item.Invoice.Length == 0 || !seen.Add(item.Invoice))
+                    continue;
+                list.Add(item.Invoice);
+            }
+
+            return list;
+        }
+
+        /// <summary>Invoice # cell for party history: allocated numbers, or Unapplied when leftover sits on the party.</summary>
+        public static string InvoiceLabel(Dictionary<string, string> row)
+        {
+            var numbers = InvoiceNumbers(row);
+            if (numbers.Count > 0)
+                return string.Join(", ", numbers);
+            if (Unapplied(row) > 0 &&
+                (DataFiles.GetRecord(row, "Customer Code").Trim().Length > 0 ||
+                 DataFiles.GetRecord(row, "Vendor Code").Trim().Length > 0))
+                return "Unapplied";
+            return DataFiles.GetRecord(row, "Invoice #").Trim();
+        }
+
+        /// <summary>Replace this invoice's share on the line; keep other invoices' shares.</summary>
+        public static void SetAllocation(
+            Dictionary<string, string> row,
+            string invoiceNumber,
+            decimal amount)
+        {
+            string number = (invoiceNumber ?? "").Trim();
+            var list = new List<AllocItem>();
+            foreach (var item in ParseAllocations(row))
+            {
+                if (number.Length > 0 &&
+                    item.Invoice.Equals(number, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                list.Add(item);
+            }
+
+            if (number.Length > 0 && amount > 0)
+                list.Add(new AllocItem { Invoice = number, Amount = decimal.Round(amount, 2) });
+
+            WriteAllocations(row, list);
+            row.Remove(AppliedHereKey);
+        }
+
+        private static decimal AllocatedTotal(Dictionary<string, string> row)
+        {
+            decimal sum = 0;
+            foreach (var item in ParseAllocations(row))
+                sum += item.Amount;
+            return sum;
+        }
+
+        private static List<AllocItem> ParseAllocations(Dictionary<string, string> row)
+        {
+            var list = new List<AllocItem>();
+            string raw = DataFiles.GetRecord(row, AllocationsColumn).Trim();
+            if (raw.Length > 0)
+            {
+                try
+                {
+                    var parsed = JsonSerializer.Deserialize<List<AllocItem>>(raw, AllocJson);
+                    if (parsed != null)
+                    {
+                        foreach (var item in parsed)
+                        {
+                            string invoice = (item.Invoice ?? "").Trim();
+                            if (invoice.Length == 0 || item.Amount <= 0)
+                                continue;
+                            list.Add(new AllocItem { Invoice = invoice, Amount = item.Amount });
+                        }
+                    }
+
+                    return list;
+                }
+                catch
+                {
+                    // Bad JSON: fall through to the Invoice # cell so older rows still apply in full.
+                }
+            }
+
+            string tagged = DataFiles.GetRecord(row, "Invoice #").Trim();
+            // No Allocations cell: a tagged Invoice # is a legacy full-amount match.
+            if (tagged.Length > 0 && !tagged.Contains(','))
+                list.Add(new AllocItem { Invoice = tagged, Amount = PaymentAmount(row) });
+            return list;
+        }
+
+        private static void WriteAllocations(Dictionary<string, string> row, List<AllocItem> list)
+        {
+            if (list.Count == 0)
+            {
+                row[AllocationsColumn] = "[]";
+                row["Invoice #"] = "";
+                return;
+            }
+
+            row[AllocationsColumn] = JsonSerializer.Serialize(list, AllocJson);
+            row["Invoice #"] = string.Join(", ", list.Select(item => item.Invoice).Distinct(StringComparer.OrdinalIgnoreCase));
+        }
+
+        private sealed class AllocItem
+        {
+            [JsonPropertyName("Invoice #")]
+            public string Invoice { get; set; } = "";
+
+            [JsonPropertyName("Amount")]
+            public decimal Amount { get; set; }
+        }
 
         /// <summary>Parse OFX/QFX or a bank CSV. Returns an error if the file cannot be read.</summary>
         public static bool TryParseFile(string path, out List<Parsed> rows, out string error)
@@ -231,8 +410,7 @@ namespace CastRightCatchInvManagement
                 // Queued adds are not live statement lines yet.
                 if (DataFiles.IsWaitingAdd(row))
                     continue;
-                if (!DataFiles.GetRecord(row, "Invoice #").Trim()
-                    .Equals(number, StringComparison.OrdinalIgnoreCase))
+                if (AllocatedTo(row, number) <= 0)
                     continue;
                 list.Add(row);
             }
@@ -336,7 +514,7 @@ namespace CastRightCatchInvManagement
                         DataFiles.GetRecordAny(row, "Type", "Method"),
                         vendor
                             ? DataFiles.GetRecordAny(row, "PO #", "Reference")
-                            : DataFiles.GetRecordAny(row, "Invoice #", "SO #"),
+                            : InvoiceLabel(row),
                         DataFiles.GetRecordAny(row, "Description", "Notes"));
                 }
 
@@ -412,7 +590,7 @@ namespace CastRightCatchInvManagement
                 string hay = DataFiles.GetRecord(row, "Description") + " " +
                              DataFiles.GetRecord(row, "Notes") + " " +
                              DataFiles.GetRecord(row, "Reference") + " " +
-                             DataFiles.GetRecord(row, "Invoice #") + " " +
+                             InvoiceLabel(row) + " " +
                              DataFiles.GetRecord(row, "SO #") + " " +
                              DataFiles.GetRecord(row, "PO #");
                 // Memo/name match covers lines that were never tagged to a code.
@@ -432,10 +610,19 @@ namespace CastRightCatchInvManagement
                     continue;
                 }
 
-                string invoice = DataFiles.GetRecord(row, "Invoice #").Trim();
                 string so = DataFiles.GetRecord(row, "SO #").Trim();
+                bool invoiceHit = false;
+                foreach (var invoice in InvoiceNumbers(row))
+                {
+                    if (primaryKeys.Contains(invoice))
+                    {
+                        invoiceHit = true;
+                        break;
+                    }
+                }
+
                 // Invoice or SO already stored on the bank line for this customer.
-                if ((invoice.Length > 0 && primaryKeys.Contains(invoice)) ||
+                if (invoiceHit ||
                     (so.Length > 0 && soKeys != null && soKeys.Contains(so)))
                 {
                     list.Add(row);
@@ -443,11 +630,14 @@ namespace CastRightCatchInvManagement
                 }
 
                 // Invoice # is tagged but was missing from the key set (name-only invoice): still attach it.
-                if (invoice.Length > 0)
+                foreach (var invoice in InvoiceNumbers(row))
                 {
                     var linked = DataFiles.FindInvoice(invoice);
                     if (linked != null && DataFiles.MatchesCustomer(linked, code, name))
+                    {
                         list.Add(row);
+                        break;
+                    }
                 }
             }
 

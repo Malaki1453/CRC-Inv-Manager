@@ -141,6 +141,7 @@ namespace CastRightCatchInvManagement
                 }
 
                 DataGridViewColumn? add = null;
+                DataGridViewColumn? action = null;
                 foreach (DataGridViewColumn col in grid.Columns)
                 {
                     if (Theme.IsAddColumn(col))
@@ -149,10 +150,22 @@ namespace CastRightCatchInvManagement
                         continue;
                     }
 
+                    if (Theme.IsActionColumn(col))
+                    {
+                        action = col;
+                        continue;
+                    }
+
                     if (used.Contains(col))
                         continue;
                     col.Visible = wanted.Contains(Key(col)) || wanted.Contains(col.HeaderText);
                     ordered.Add(col);
+                }
+
+                if (action != null)
+                {
+                    action.Visible = true;
+                    ordered.Add(action);
                 }
 
                 if (add != null)
@@ -178,8 +191,8 @@ namespace CastRightCatchInvManagement
         {
             grid.ColumnDisplayIndexChanged += (_, e) =>
             {
-                // The add-column button is not a user layout column.
-                if (e.Column == null || Theme.IsAddColumn(e.Column))
+                // "+" and Receive Payment are not user layout columns.
+                if (e.Column == null || Theme.IsControlColumn(e.Column))
                     return;
                 Save(grid);
             };
@@ -189,7 +202,7 @@ namespace CastRightCatchInvManagement
         private static List<string> VisibleNames(DataGridView grid)
         {
             return grid.Columns.Cast<DataGridViewColumn>()
-                .Where(col => col.Visible && !Theme.IsAddColumn(col))
+                .Where(col => col.Visible && !Theme.IsControlColumn(col))
                 .OrderBy(col => col.DisplayIndex)
                 .Select(Key)
                 .Where(name => name.Length > 0)
@@ -253,8 +266,8 @@ namespace CastRightCatchInvManagement
         {
             foreach (DataGridViewColumn col in grid.Columns)
             {
-                // The add-column button is never a layout target.
-                if (Theme.IsAddColumn(col))
+                // "+" and Receive Payment are never layout targets.
+                if (Theme.IsControlColumn(col))
                     continue;
                 // Match the stored key (file header / Name) or the visible HeaderText.
                 if (Key(col).Equals(name, StringComparison.OrdinalIgnoreCase) ||
@@ -269,8 +282,8 @@ namespace CastRightCatchInvManagement
         private static string Key(DataGridViewColumn col)
         {
             string tag = col.Tag as string ?? "";
-            // Tag holds the file header; skip the add-column sentinel.
-            if (tag.Length > 0 && tag != Theme.AddColumnTag)
+            // Tag holds the file header; skip "+" and Receive Payment sentinels.
+            if (tag.Length > 0 && tag != Theme.AddColumnTag && tag != Theme.ActionColumnTag)
                 return tag;
             return col.Name.Length > 0 ? col.Name : col.HeaderText;
         }
