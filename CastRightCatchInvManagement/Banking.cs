@@ -19,6 +19,7 @@ namespace CastRightCatchInvManagement
                 UiStyle.AddDataPageAction(this, "Sync live feed", async (_, _) => await BankLive.SyncAllAsync(this));
                 UiStyle.AddDataPageAction(this, "Connect bank", async (_, _) => await ConnectLiveFeed(), gold: true);
             }
+            BankFeed.BindUnmatchMenu(dataGridView1);
             DataFiles.DataChanged += LoadTable;
             BankFeed.EnsureSchema();
             LoadTable();

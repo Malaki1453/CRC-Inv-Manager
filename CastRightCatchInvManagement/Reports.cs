@@ -554,7 +554,7 @@ namespace CastRightCatchInvManagement
             return null;
         }
 
-        /// <summary>Gold Receive Payment chip on open invoice children; parent rows stay blank.</summary>
+        /// <summary>Gold Receive Payment chip on invoice children; parent rows stay blank.</summary>
         private static void MarkAgingPaymentCell(DataGridViewRow row, AgingInvoiceLine? line)
         {
             var grid = row.DataGridView;
@@ -572,11 +572,8 @@ namespace CastRightCatchInvManagement
             }
 
             cell.Value = "Receive Payment";
-            cell.Tag = line.Outstanding > 0 &&
-                       TableAccess.Can(TableAccess.Invoices) &&
-                       TableAccess.Can(TableAccess.Banking) &&
-                       DataAccess.CanMutate(DataFiles.Invoices) &&
-                       DataAccess.CanMutate(DataFiles.BankTransactions);
+            var invoice = DataFiles.FindInvoiceByNumber(line.Number);
+            cell.Tag = invoice != null && DataFiles.CanReceiveInvoicePayment(invoice);
         }
 
         /// <summary>Empty-state row with the message in the first cell.</summary>

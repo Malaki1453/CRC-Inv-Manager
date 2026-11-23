@@ -450,6 +450,130 @@ namespace CastRightCatchInvManagement
                 empty: "No bank statements linked. Receive Payment to match statements.");
         }
 
+        /// <summary>
+        /// Right-click Unmatch payment on a tagged bank line. Pass
+        /// <paramref name="invoiceNumber"/> on an invoice's statements grid so
+        /// only that invoice's share is removed. Party and Banking grids list
+        /// each allocated invoice when a line funds more than one.
+        /// </summary>
+        public static void BindUnmatchMenu(
+            DataGridView grid,
+            string? invoiceNumber = null,
+            Action? after = null)
+        {
+            grid.CellMouseClick += (_, e) =>
+            {
+                if (e.Button != MouseButtons.Right || e.RowIndex < 0)
+                    return;
+
+                var row = StatementRow(grid, e.RowIndex);
+                // Placeholder or empty row: leave the Copy-only cell menu.
+                if (row == null || !DataFiles.CanUnmatchBankLine(row))
+                    return;
+
+                var numbers = InvoiceNumbers(row);
+                string hint = (invoiceNumber ?? "").Trim();
+                if (hint.Length > 0)
+                {
+                    // This grid is for one invoice: skip lines that do not fund it.
+                    if (AllocatedTo(row, hint) <= 0)
+                        return;
+                    numbers = new[] { hint };
+                }
+
+                // No invoice share to drop: BindCellCopy still shows Copy.
+                if (numbers.Count == 0)
+                    return;
+
+                grid.ClearSelection();
+                grid.Rows[e.RowIndex].Selected = true;
+                UiStyle.RowContextMenuShown = true;
+                var menu = new ContextMenuStrip();
+                int copyRow = e.RowIndex;
+                int copyCol = e.ColumnIndex;
+                menu.Items.Add("Copy", null, (_, _) => CopyStatementCell(grid, copyRow, copyCol));
+                if (numbers.Count == 1)
+                {
+                    string number = numbers[0];
+                    menu.Items.Add("Unmatch payment", null, (_, _) =>
+                        ConfirmUnmatch(grid, row, number, after));
+                }
+                else
+                {
+                    var parent = new ToolStripMenuItem("Unmatch payment");
+                    foreach (var number in numbers)
+                    {
+                        string target = number;
+                        parent.DropDownItems.Add("Invoice " + target, null, (_, _) =>
+                            ConfirmUnmatch(grid, row, target, after));
+                    }
+
+                    menu.Items.Add(parent);
+                }
+
+                menu.Show(grid, grid.PointToClient(Control.MousePosition));
+            };
+        }
+
+        /// <summary>Ask before dropping this invoice's share, then rewrite Paid / Outstanding.</summary>
+        private static void ConfirmUnmatch(
+            DataGridView grid,
+            Dictionary<string, string> bankRow,
+            string invoiceNumber,
+            Action? after)
+        {
+            var invoice = DataFiles.FindInvoice(invoiceNumber);
+            // Invoice was deleted: nothing left to unmatch against.
+            if (invoice == null)
+                return;
+
+            string text = "Unmatch this payment from invoice " + invoiceNumber + "?";
+            if (MessageBox.Show(
+                    text,
+                    "Unmatch payment",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question) != DialogResult.Yes)
+                return;
+
+            var host = grid.FindForm();
+            var result = DataFiles.UnmatchInvoicePayment(invoice, bankRow);
+            if (host == null)
+                return;
+            if (!result.Ok)
+            {
+                ToastAlert.Error(host, result.Message);
+                return;
+            }
+
+            ToastAlert.Success(host, "Payment unmatched from invoice " + invoiceNumber + ".");
+            after?.Invoke();
+        }
+
+        /// <summary>Bank row stored in Tag (statement grids) or rebuilt from Banking table cells.</summary>
+        private static Dictionary<string, string>? StatementRow(DataGridView grid, int rowIndex)
+        {
+            if (rowIndex < 0 || rowIndex >= grid.Rows.Count)
+                return null;
+            if (grid.Rows[rowIndex].Tag is Dictionary<string, string> tagged)
+                return tagged;
+            if (grid.Tag is ColumnSearch search &&
+                string.Equals(search.FileBaseName, DataFiles.BankTransactions, StringComparison.OrdinalIgnoreCase))
+                return DataFiles.GridRowToRecord(grid, rowIndex);
+            return null;
+        }
+
+        /// <summary>Copy the clicked cell so BindUnmatchMenu can include Copy next to Unmatch.</summary>
+        private static void CopyStatementCell(DataGridView grid, int row, int col)
+        {
+            if (row < 0 || col < 0 || row >= grid.Rows.Count || col >= grid.Columns.Count)
+                return;
+            string text = Convert.ToString(grid.Rows[row].Cells[col].FormattedValue) ?? "";
+            if (text.Length == 0)
+                Clipboard.Clear();
+            else
+                Clipboard.SetText(text);
+        }
+
         /// <summary>Date, amount, account, type, invoice/PO, memo columns for a party history grid.</summary>
         public static void EnsurePartyColumns(DataGridView grid, bool vendor)
         {

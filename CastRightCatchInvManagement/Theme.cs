@@ -341,7 +341,7 @@ namespace CastRightCatchInvManagement
             e.Handled = true;
         }
 
-        /// <summary>Gold Receive Payment chip, or grey when the invoice is already paid.</summary>
+        /// <summary>Gold Receive Payment chip, or dull when remaining is already zero.</summary>
         private static void PaintActionCell(DataGridView grid, DataGridViewCellPaintingEventArgs e)
         {
             e.Paint(e.CellBounds, DataGridViewPaintParts.Background | DataGridViewPaintParts.SelectionBackground);

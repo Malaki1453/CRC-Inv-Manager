@@ -597,6 +597,9 @@ namespace CastRightCatchInvManagement
                     return;
                 RecordDetailsForm.ShowRecord(bank.FindForm(), "Invoice", invoice, DataFiles.Invoices);
             };
+            BankFeed.BindUnmatchMenu(
+                bank,
+                after: () => LoadPartyBankGrid(bank, vendor, code, name, company));
             LoadPartyBankGrid(bank, vendor, code, name, company);
             var bankPage = new TabPage("Bank transactions")
             {

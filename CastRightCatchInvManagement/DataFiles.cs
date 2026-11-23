@@ -1243,7 +1243,7 @@ namespace CastRightCatchInvManagement
             return InvoiceOutstanding(invoice) <= 0 && ParseMoney(GetRecord(invoice, "Amount")) > 0;
         }
 
-        /// <summary>True when the user can open Receive Payment and the invoice still has a balance.</summary>
+        /// <summary>True when remaining is due: the row chip is gold. Right-click still uses CanMatchInvoicePayment after it is paid.</summary>
         public static bool CanReceiveInvoicePayment(Dictionary<string, string> invoice)
         {
             if (!CanMatchInvoicePayment(invoice))
@@ -1355,7 +1355,6 @@ namespace CastRightCatchInvManagement
             decimal amount = ParseMoney(GetRecord(invoice, "Amount"));
             var keep = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
             decimal paid = 0;
-            string method = "";
             foreach (var row in matched)
             {
                 string key = BankFeed.RowIdentity(row);
@@ -1372,11 +1371,8 @@ namespace CastRightCatchInvManagement
                     continue;
                 keep[key] = use;
                 paid += use;
-                if (method.Length == 0)
-                    method = GetRecordAny(row, "Method", "Type").Trim();
             }
 
-            decimal remaining = Math.Max(0m, amount - paid);
             bool received = IsReceivedInvoice(invoice);
             string customerCode = PartyCodeFromInvoice(invoice, vendor: false);
             string vendorCode = PartyCodeFromInvoice(invoice, vendor: true);
@@ -1395,8 +1391,11 @@ namespace CastRightCatchInvManagement
                     string key = BankFeed.RowIdentity(row);
                     decimal use = keep.TryGetValue(key, out var applied) ? applied : 0m;
                     BankFeed.SetAllocation(row, number, use);
+                    // Fully unmatched: drop the party stamp so the line can be applied to a different customer.
+                    if (BankFeed.InvoiceNumbers(row).Count == 0)
+                        ClearPaymentParty(row);
                     // Matched or leftover still belongs to this party so it cannot be spent on someone else.
-                    if (use > 0 || BankFeed.Unapplied(row) > 0)
+                    else if (use > 0 || BankFeed.Unapplied(row) > 0)
                     {
                         if (received)
                         {
@@ -1415,6 +1414,115 @@ namespace CastRightCatchInvManagement
                     }
                 });
 
+            WriteInvoicePaymentFromBank(number);
+            return MutateResult.Saved();
+        }
+
+        /// <summary>
+        /// Remove this invoice's share from one statement line and rewrite Paid / Outstanding
+        /// from whatever is still allocated. A line with no invoices left is untagged so it
+        /// can be matched to a different customer.
+        /// </summary>
+        public static MutateResult UnmatchInvoicePayment(
+            Dictionary<string, string> invoice,
+            Dictionary<string, string> bankRow)
+        {
+            if (!CanMatchInvoicePayment(invoice))
+                return MutateResult.Deny("You cannot unmatch a payment on that invoice.");
+
+            string number = GetRecord(invoice, "Invoice #").Trim();
+            // Invoice # is the allocation key; blank would not identify a share to remove.
+            if (number.Length == 0)
+                return MutateResult.Deny("This invoice has no invoice number.");
+            if (BankFeed.AllocatedTo(bankRow, number) <= 0)
+                return MutateResult.Deny("That statement is not matched to this invoice.");
+
+            string identity = BankFeed.RowIdentity(bankRow);
+            int updated = UpdateRecords(
+                BankTransactions,
+                row => BankFeed.RowIdentity(row).Equals(identity, StringComparison.OrdinalIgnoreCase),
+                row =>
+                {
+                    BankFeed.SetAllocation(row, number, 0);
+                    // No remaining invoices: release the party so leftover is not locked to the wrong customer.
+                    if (BankFeed.InvoiceNumbers(row).Count == 0)
+                        ClearPaymentParty(row);
+                });
+            // Identity did not hit a live bank row (deleted, or a placeholder).
+            if (updated == 0)
+                return MutateResult.Deny("That statement could not be updated.");
+
+            WriteInvoicePaymentFromBank(number);
+            return MutateResult.Saved();
+        }
+
+        /// <summary>True when this bank line is allocated to at least one invoice and the user may unmatch.</summary>
+        public static bool CanUnmatchBankLine(Dictionary<string, string> row)
+        {
+            if (!HasStore() || IsWaitingAdd(row))
+                return false;
+            if (BankFeed.InvoiceNumbers(row).Count == 0)
+                return false;
+            if (!TableAccess.Can(TableAccess.Invoices) || !TableAccess.Can(TableAccess.Banking))
+                return false;
+            return DataAccess.CanMutate(Invoices) && DataAccess.CanMutate(BankTransactions);
+        }
+
+        /// <summary>Drop customer/vendor tags so an unmatched line is open for any party again.</summary>
+        private static void ClearPaymentParty(Dictionary<string, string> row)
+        {
+            row["Customer Code"] = "";
+            row["Vendor Code"] = "";
+            row["SO #"] = "";
+            row["PO #"] = "";
+        }
+
+        /// <summary>
+        /// Take this invoice off every bank line. Leftover stays on that customer or vendor
+        /// so the payment can go on their other invoices. Does not rewrite the invoice row.
+        /// </summary>
+        private static void ReleaseInvoicePayments(string? invoiceNumber)
+        {
+            string number = (invoiceNumber ?? "").Trim();
+            // Blank number would match nothing useful and must not rewrite every bank line.
+            if (number.Length == 0 || !HasStore())
+                return;
+
+            UpdateRecords(
+                BankTransactions,
+                row => !IsWaitingAdd(row) && BankFeed.AllocatedTo(row, number) > 0,
+                row => BankFeed.SetAllocation(row, number, 0));
+        }
+
+        /// <summary>Rewrite invoice Paid / Outstanding / Status from remaining bank allocations.</summary>
+        private static void WriteInvoicePaymentFromBank(string invoiceNumber)
+        {
+            string number = (invoiceNumber ?? "").Trim();
+            // Blank number would match every invoice; skip rather than rewrite the whole table.
+            if (number.Length == 0)
+                return;
+
+            var invoice = FindInvoice(number);
+            // Invoice was deleted between match and unmatch: bank line is already updated.
+            if (invoice == null)
+                return;
+
+            decimal amount = ParseMoney(GetRecord(invoice, "Amount"));
+            decimal paid = 0;
+            string method = "";
+            foreach (var row in ReadRecords(BankTransactions))
+            {
+                if (IsWaitingAdd(row))
+                    continue;
+                decimal here = BankFeed.AllocatedTo(row, number);
+                if (here <= 0)
+                    continue;
+                paid += here;
+                if (method.Length == 0)
+                    method = GetRecordAny(row, "Method", "Type").Trim();
+            }
+
+            decimal remaining = Math.Max(0m, amount - paid);
             string status = remaining <= 0 && amount > 0
                 ? "Paid"
                 : GetRecord(invoice, "Status").Trim();
@@ -1435,16 +1543,13 @@ namespace CastRightCatchInvManagement
                     row["Paid"] = MoneyFormat.Plain(paid);
                     row["Outstanding"] = MoneyFormat.Plain(remaining);
                     row["Status"] = status;
-                    // A payment was applied: stamp today's date so archive/process-complete can see it.
+                    // A payment is still on the invoice: stamp today's date so archive/process-complete can see it.
                     if (paid > 0)
                         row["Payment Date"] = CsvIO.Date(DateTime.Today);
                     else
                         row["Payment Date"] = "";
-                    if (method.Length > 0)
-                        row["Payment Method"] = method;
+                    row["Payment Method"] = method;
                 });
-
-            return MutateResult.Saved();
         }
 
         /// <summary>First live invoice whose Invoice # matches, or null.</summary>
@@ -3501,6 +3606,10 @@ namespace CastRightCatchInvManagement
             // Identity never matched: report missing rather than claiming deleted.
             if (!found)
                 return MutateResult.Deny("Could not find that record to delete.");
+            // The invoice is actually gone (not waiting in Review): drop its payment matches.
+            if (!gate.Queued &&
+                baseName.Equals(Invoices, StringComparison.OrdinalIgnoreCase))
+                ReleaseInvoicePayments(GetRecord(record, "Invoice #"));
             NotifyDataChanged();
             return gate.Queued ? MutateResult.QueuedForReview() : MutateResult.Saved();
         }
@@ -3656,6 +3765,15 @@ namespace CastRightCatchInvManagement
                 // Pending is a delete: remove the live row now that review accepted it.
                 else if (action.Equals("delete", StringComparison.OrdinalIgnoreCase))
                 {
+                    // Invoice is gone: unmatch its bank lines before the row disappears.
+                    if (table.Equals(Invoices, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string number = GetRecord(before, "Invoice #").Trim();
+                        if (number.Length == 0)
+                            number = GetRecord(match, "Invoice #").Trim();
+                        ReleaseInvoicePayments(number);
+                    }
+
                     long rowId = PendingStoredRowId(pending);
                     bool deleted = rowId > 0 && SqliteInventory.DeleteById(table, rowId);
                     if (!deleted)
@@ -5054,7 +5172,7 @@ namespace CastRightCatchInvManagement
             }
         }
 
-        /// <summary>Put a Receive Payment chip on each invoice row; grey it when remaining is zero.</summary>
+        /// <summary>Put a Receive Payment chip on each invoice row; dull it when remaining is zero.</summary>
         private static void MarkReceivePaymentCells(DataGridView grid, string baseName)
         {
             if (baseName != Invoices)

@@ -14,6 +14,9 @@ namespace CastRightCatchInvManagement
         private CancellationTokenSource? _lotsLoad;
         private DataGridView? _statementsGrid;
         private CancellationTokenSource? _statementsLoad;
+        private Panel? _invoiceSplit;
+        private CardPanel? _invoiceFieldsCard;
+        private Button? _receivePayment;
         private string _itemCode = "";
         private string _itemDescription = "";
         private bool _itemFrozen;
@@ -1134,7 +1137,7 @@ namespace CastRightCatchInvManagement
 
             var fields = OrderedFields("Invoice", record);
             int rows = Math.Max(1, (fields.Count + 2) / 3);
-            var fieldsCard = LabeledFieldsCard(
+            _invoiceFieldsCard = LabeledFieldsCard(
                 "INVOICE",
                 fields,
                 "Invoice",
@@ -1142,7 +1145,10 @@ namespace CastRightCatchInvManagement
                 28 + 16 + rows * 40);
 
             split.Controls.Add(statementsCard);
-            split.Controls.Add(fieldsCard);
+            split.Controls.Add(_invoiceFieldsCard);
+            _invoiceSplit = split;
+            string number = DataFiles.GetRecord(record, "Invoice #").Trim();
+            BankFeed.BindUnmatchMenu(_statementsGrid, number, RefreshInvoiceAfterUnmatch);
             return split;
         }
 
@@ -1186,6 +1192,40 @@ namespace CastRightCatchInvManagement
                 else
                     HandleCreated += (_, _) => Apply();
             }, token);
+        }
+
+        /// <summary>Reload Paid / Outstanding and the statements list after Unmatch payment.</summary>
+        private void RefreshInvoiceAfterUnmatch()
+        {
+            string number = DataFiles.GetRecord(_sourceRecord, "Invoice #").Trim();
+            var fresh = DataFiles.FindInvoice(number);
+            // Invoice still exists: copy live Paid / Outstanding / Status onto this details view.
+            if (fresh != null)
+            {
+                foreach (var pair in fresh)
+                    _sourceRecord[pair.Key] = pair.Value;
+            }
+
+            if (_receivePayment != null)
+                _receivePayment.Enabled = DataFiles.CanMatchInvoicePayment(_sourceRecord);
+
+            if (_invoiceSplit != null && _invoiceFieldsCard != null)
+            {
+                var fields = OrderedFields("Invoice", _sourceRecord);
+                int rows = Math.Max(1, (fields.Count + 2) / 3);
+                var next = LabeledFieldsCard(
+                    "INVOICE",
+                    fields,
+                    "Invoice",
+                    3,
+                    28 + 16 + rows * 40);
+                _invoiceSplit.Controls.Remove(_invoiceFieldsCard);
+                _invoiceFieldsCard.Dispose();
+                _invoiceFieldsCard = next;
+                _invoiceSplit.Controls.Add(next);
+            }
+
+            StartStatementsLoad();
         }
 
         /// <summary>Scrollable two-column field list for invoices and other non-order rows.</summary>
@@ -1604,23 +1644,22 @@ namespace CastRightCatchInvManagement
                 footer.Controls.Add(edit);
             }
 
-            Button? receive = null;
             if (IsInvoice(_heading, _table))
             {
-                receive = new Button
+                _receivePayment = new Button
                 {
                     Text = "Receive Payment",
                     Size = new Size(150, 34)
                 };
-                Theme.StyleGoldButton(receive);
-                receive.Enabled = DataFiles.CanReceiveInvoicePayment(_sourceRecord);
-                receive.Click += (_, _) =>
+                Theme.StyleGoldButton(_receivePayment);
+                _receivePayment.Enabled = DataFiles.CanMatchInvoicePayment(_sourceRecord);
+                _receivePayment.Click += (_, _) =>
                 {
-                    // Payment was saved: close details so the grid shows the new remaining / greyed button.
+                    // Payment was saved: close details so the grid shows the new remaining.
                     if (ReceivePaymentForm.ShowFor(this, _sourceRecord))
                         Close();
                 };
-                footer.Controls.Add(receive);
+                footer.Controls.Add(_receivePayment);
             }
 
             footer.Resize += (_, _) =>
@@ -1633,8 +1672,8 @@ namespace CastRightCatchInvManagement
                     x = edit.Right + 12;
                 }
 
-                if (receive != null)
-                    receive.Location = new Point(x, 13);
+                if (_receivePayment != null)
+                    _receivePayment.Location = new Point(x, 13);
             };
             return footer;
         }

@@ -384,7 +384,7 @@ namespace CastRightCatchInvManagement
                 if (!Theme.IsActionColumn(grid.Columns[e.ColumnIndex]))
                     return;
                 var cell = grid.Rows[e.RowIndex].Cells[e.ColumnIndex];
-                // Grey chips (paid invoices, parent aging rows) do not open the matcher.
+                // Dull chips (paid invoices, parent aging rows) do not open the matcher; right-click still does.
                 if (cell.Tag is not true)
                     return;
 
@@ -449,7 +449,7 @@ namespace CastRightCatchInvManagement
                 {
                     var item = extra;
                     var menuItem = menu.Items.Add(item.Text, null, (_, _) => item.Click(record));
-                    // EnabledFor is set when this action is only valid on some rows (paid invoices grey Receive Payment).
+                    // EnabledFor is set when this action is only valid on some rows (Receive Payment needs invoices+banking access, including paid).
                     if (item.EnabledFor != null)
                         menuItem.Enabled = item.EnabledFor(record);
                 }
